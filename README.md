@@ -18,9 +18,7 @@ Additional header-only dependencies are automatically downloaded by cmake during
 These are:
 * [json](https://github.com/nlohmann/json)
 * [cudnn-frontend](https://github.com/NVIDIA/cudnn-frontend)
-* [cutlass](https://github.com/NVIDIA/cutlass)
 * [CLI11](https://github.com/CLIUtils/CLI11)
-* [Catch2](https://github.com/catchorg/Catch2) (tests only)
 
 To build the training executable, run
 ```shell
@@ -338,13 +336,13 @@ The run marked with * uses additional arguments `--shard-weights --memcpy-all-ga
 | Qwen2.5-14B⁶  | 4    | fp8   | 4     | 3.2k | 22% | 87h   |
 | Qwen2.5-14B⁷  | 4    | bf16  | 4     | 2.5k | 33% | 111h  |
 
-^1: `--offload-opt-m --offload-opt-v --recompute-swiglu --recompute-norm --offload-master`
-^2: `--offload-opt-m --offload-opt-v --recompute-swiglu --recompute-norm`
-^3: `--offload-opt-m --offload-opt-v --recompute-ffn --recompute-norm --recompute-att --offload-master --shard-weights --persistent-quants --offload-quants`
-^4: `--offload-opt-m --offload-opt-v --recompute-ffn --recompute-norm --recompute-att --offload-master --shard-weights --memcpy-all-gather`
-^5: `--recompute-norm --recompute-swiglu`
-^6: `--offload-opt-m --offload-opt-v --recompute-ffn --recompute-norm --recompute-att --offload-master --shard-weights --memcpy-all-gather --shard-gradients --memcpy-send-recv --all-to-all-reduce --persistent-quants --offload-quants`
-^7: `--offload-opt-m --offload-opt-v --recompute-ffn --recompute-norm --recompute-att --offload-master --shard-weights --memcpy-all-gather --shard-gradients --memcpy-send-recv --all-to-all-reduce`
+^1: `--offload-opt-m --offload-opt-v --recompute-swiglu --recompute-norm --offload-master`  
+^2: `--offload-opt-m --offload-opt-v --recompute-swiglu --recompute-norm`  
+^3: `--offload-opt-m --offload-opt-v --recompute-ffn --recompute-norm --recompute-att --offload-master --shard-weights --persistent-quants --offload-quants`  
+^4: `--offload-opt-m --offload-opt-v --recompute-ffn --recompute-norm --recompute-att --offload-master --shard-weights --memcpy-all-gather`  
+^5: `--recompute-norm --recompute-swiglu`  
+^6: `--offload-opt-m --offload-opt-v --recompute-ffn --recompute-norm --recompute-att --offload-master --shard-weights --memcpy-all-gather --shard-gradients --memcpy-send-recv --all-to-all-reduce --persistent-quants --offload-quants`  
+^7: `--offload-opt-m --offload-opt-v --recompute-ffn --recompute-norm --recompute-att --offload-master --shard-weights --memcpy-all-gather --shard-gradients --memcpy-send-recv --all-to-all-reduce`  
 
 ### L40S
 
@@ -369,10 +367,10 @@ The run marked with * uses additional arguments `--shard-weights --memcpy-all-ga
 | Qwen2.5-14B³ | 4    | fp8   | 4     | 7.1k | 45% | 39h   |
 | Qwen2.5-14B³ | 4    | bf16  | 4     | 4.8k | 57% | 58h   |
 
-^1: `--offload-opt-m --offload-opt-v --recompute-swiglu --recompute-norm --offload-master`
-^2: `--offload-opt-m --offload-opt-v --recompute-swiglu --recompute-norm`
-^3: `--offload-opt-m --offload-opt-v --recompute-ffn --recompute-norm --offload-master --shard-weights --persistent-quants --offload-quants`
-^4: `--offload-opt-m --offload-opt-v --recompute-ffn --recompute-norm --offload-master --shard-weights`
+^1: `--offload-opt-m --offload-opt-v --recompute-swiglu --recompute-norm --offload-master`  
+^2: `--offload-opt-m --offload-opt-v --recompute-swiglu --recompute-norm`  
+^3: `--offload-opt-m --offload-opt-v --recompute-ffn --recompute-norm --offload-master --shard-weights --persistent-quants --offload-quants`  
+^4: `--offload-opt-m --offload-opt-v --recompute-ffn --recompute-norm --offload-master --shard-weights`  
 
 ## Testing
 ### Bit-perfect recomputation

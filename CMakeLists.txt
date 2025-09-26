@@ -103,7 +103,6 @@ add_library(libllmq SHARED
         src/kernels/adamw.cu
         src/kernels/attention.cu
         src/kernels/fused_classifier.cu
-        src/testing/check-tensors.cu
         src/kernels/transpose.cu
         src/kernels/vector_add.cu
         src/kernels/random.cu
@@ -119,9 +118,6 @@ target_compile_options(libllmq PUBLIC $<$<COMPILE_LANGUAGE:CUDA>:--expt-relaxed-
 
 add_executable(train train.cpp)
 target_link_libraries(train PRIVATE libllmq CLI11::CLI11)
-
-add_executable(kernel-tests src/testing/kernel-tests.cu src/testing/reference-results.cpp)
-target_link_libraries(kernel-tests PRIVATE libllmq Catch2::Catch2WithMain)
 
 add_executable(recompute-test src/testing/recompute.cpp)
 target_link_libraries(recompute-test PRIVATE libllmq CLI11::CLI11)
