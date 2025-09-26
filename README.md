@@ -27,7 +27,7 @@ cmake -S . -B build
 cmake --build build --parallel --target train
 ```
 
-## How to train your llm
+## How to train your (quantized) llm
 ### Data preparation
 In order to train/fine-tune a model, you first need some data. The [tokenize_data](tokenize_data.py) script provides a utility to prepare token files for training.
 It only supports a limited number of datasets, but hacking it for your own dataset should be straightforward.
