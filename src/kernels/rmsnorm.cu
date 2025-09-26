@@ -1,0 +1,481 @@
+// Copyright (c) 2025, IST Austria, developed by Erik Schultheis
+//
+// Based on llm.c https://github.com/karpathy/llm.c
+
+#include <cassert>
+
+#include "utilities/utils.h"
+#include "utilities/vec.cuh"
+
+// ----------------------------------------------------------------------------
+// CUDA kernels
+
+constexpr const int WARP_SIZE = 32;
+
+__device__ inline float warpReduceSum(float val) {
+    for (int offset = 16; offset > 0; offset /= 2) {
+        val += __shfl_xor_sync(0xFFFFFFFF, val, offset);
+    }
+    return val;
+}
+
+template<class floatX>
+__global__ void rmsnorm_forward_kernel6(floatX* __restrict__ out, float* __restrict__ rms,
+                                        const floatX*  __restrict__ inp, const floatX*  __restrict__ weight,
+                                        float* __restrict__ abs_max_ptr, float epsilon, int N, int C) {
+    using x128 = GenericVector<floatX, 16/sizeof(floatX)>;
+
+    // this kernel is a simplified version of layernorm_forward_kernel6
+    assert(blockDim.x == WARP_SIZE);
+
+    // load weights into shared memory
+    // do this before we allow any threads to exit!
+    extern __shared__ char* params[];
+    __shared__ float block_max;
+    // load128/store128 sometimes generated multiple instructions when the types here were floatX*, so
+    // let's keep everything as x128
+    x128* s_weight = reinterpret_cast<x128*>(params);
+    x128* s_in = reinterpret_cast<x128*>(params) + ((1 + threadIdx.y) * C / x128::size);
+
+    int sidx = (threadIdx.x + WARP_SIZE * threadIdx.y) * x128::size;
+    for(int i = sidx; i < C; i += blockDim.y * WARP_SIZE * x128::size) {
+        s_weight[i/x128::size] = x128::load(weight + i);
+    }
+    if (abs_max_ptr && threadIdx.x == 0) {
+        block_max = 1e-10f;
+    }
+    __syncthreads();
+
+    int idx = blockIdx.x * blockDim.y + threadIdx.y;
+    if(idx >= N) { return; } // guard
+
+    // adjust pointers to current token
+    inp += idx * C;
+    out += idx * C;
+
+    float acc = 0.f;
+
+    for(int c = threadIdx.x * x128::size; c < C; c += WARP_SIZE * x128::size) {
+        const x128 in_data = x128::load_cs(inp + c);
+        s_in[c / x128::size] = in_data;
+        for(int k = 0; k < x128::size; ++k) {
+            float data_k = (float)in_data[k];
+            acc += data_k * data_k;
+        }
+    }
+
+    acc = warpReduceSum(acc) / C;
+    float s = rsqrtf(acc + epsilon);
+    float thread_max = -1.f;
+
+    for(int c = threadIdx.x * x128::size; c < C; c += WARP_SIZE * x128::size) {
+        const x128 in_data = s_in[c / x128::size];
+        const x128 w = s_weight[c / x128::size];
+        x128 out_data;
+        for(int k = 0; k < x128::size; ++k) {
+            float n = s * (float)in_data[k]; // normalized output
+            // Note: would make sense to do this in fp32, but transformers uses bf16 here,
+            // so we try to match
+            out_data[k] = (floatX)n * (floatX)w[k]; // scale
+            if (abs_max_ptr) {
+                thread_max = std::max(thread_max, fabsf(out_data[k]));
+            }
+        }
+
+        out_data.store(out + c);    // TODO cs
+    }
+
+    // if we requested an absmax, do the block-wise and global reduction
+    if (abs_max_ptr) {
+        atomicMax_block(reinterpret_cast<unsigned int*>(&block_max), __float_as_uint(thread_max));
+        __syncthreads();
+        if(threadIdx.x == 0) {
+            atomicMax(reinterpret_cast<unsigned int*>(abs_max_ptr), __float_as_uint(block_max));
+        }
+    }
+
+    // store the rms, no need to cache it
+    if(threadIdx.x == 0 && rms != nullptr) {
+        __stcs(rms + idx, s);
+    }
+}
+
+template<typename floatX>
+__global__ void fused_residual_rmsnorm_forward_kernel5(floatX* residual, floatX* normed, float* rrms,
+                                               const floatX* inp1, const floatX* inp2,
+                                               const floatX* weight, float* __restrict__ abs_max_ptr, float epsilon,
+                                               int N, int C) {
+    using x128 = GenericVector<floatX, 16/sizeof(floatX)>;
+    assert(blockDim.x == WARP_SIZE);
+
+    // load weights and biases into shared memory
+    // do this before we allow any threads to exit!
+    extern __shared__ char* params[];
+    __shared__ float block_max;
+    // load128/store128 sometimes generated multiple instructions when the types here were floatX*, so
+    // let's keep everything as x128
+    x128* s_weight = reinterpret_cast<x128*>(params);
+    x128* s_res = reinterpret_cast<x128*>(params) + ((1 + threadIdx.y) * C / x128::size);
+
+    int sidx = (threadIdx.x + WARP_SIZE * threadIdx.y) * x128::size;
+    for(int i = sidx; i < C; i += blockDim.y * WARP_SIZE * x128::size) {
+        s_weight[i/x128::size] = x128::load(weight + i);
+    }
+    if (abs_max_ptr && threadIdx.x == 0) {
+        block_max = 1e-10f;
+    }
+    __syncthreads();
+
+    int idx = blockIdx.x * blockDim.y + threadIdx.y;
+    if(idx >= N) return;
+
+    // adjust pointers to current token
+    residual += C * idx;
+    normed += C * idx;
+    inp1 += C * idx;
+    inp2 += C * idx;
+
+    float sum_squared = 0.f;
+
+    for(int c = threadIdx.x * x128::size; c < C; c += WARP_SIZE * x128::size) {
+        const x128 in1 = x128::load_cs(inp1 + c);
+        const x128 in2 = x128::load_cs(inp2 + c);
+        x128 out;
+        for(int k = 0; k < x128::size; ++k) {
+            out[k] = static_cast<floatX>((float)in1[k] + (float)in2[k]);
+            sum_squared += (float)out[k] * (float)out[k];
+        }
+        out.store(residual + c);   // TODO cs
+        s_res[c / x128::size] = out;
+    }
+
+    sum_squared = warpReduceSum(sum_squared) / C;
+    float s = rsqrtf(sum_squared + epsilon);
+    float thread_max = -1.f;
+
+    for(int c = threadIdx.x * x128::size; c < C; c += WARP_SIZE * x128::size) {
+        const x128 res = s_res[c / x128::size];
+        const x128 w = s_weight[c / x128::size];
+        x128 out;
+        for(int k = 0; k < x128::size; ++k) {
+            float n = s * (float)res[k]; // normalized output
+            out[k] = (floatX)n * (floatX)w[k]; // scale
+            if (abs_max_ptr) {
+                thread_max = std::max(thread_max, fabsf(out[k]));
+            }
+        }
+
+        out.store(normed + c);
+    }
+
+    // if we requested an absmax, do the block-wise and global reduction
+    if (abs_max_ptr) {
+        atomicMax_block(reinterpret_cast<unsigned int*>(&block_max), __float_as_uint(thread_max));
+        __syncthreads();
+        if(threadIdx.x == 0) {
+            atomicMax(reinterpret_cast<unsigned int*>(abs_max_ptr), __float_as_uint(block_max));
+        }
+    }
+
+    // cache the rrms for the backward pass later
+    if(threadIdx.x == 0) {
+        rrms[idx] = s;
+    }
+}
+
+
+
+// ----------------------------------------------------------------------------
+// Kernel launchers
+
+template<typename floatX>
+void rmsnorm_forward_imp(floatX* out, float* rms,
+                         const floatX* inp, const floatX* weight, float* abs_max_ptr,
+                         float epsilon, int B, int T, int C, cudaStream_t stream) {
+    NVTX_RANGE_FN();
+    const int block_size = 256;
+    int block_y = block_size / WARP_SIZE;
+    const int N = B * T;
+    const int grid_size = div_ceil(N, block_y);
+    size_t smem = (1 + block_y) * C * sizeof(floatX);
+
+    if (abs_max_ptr)
+        CUDA_CHECK(cudaMemsetAsync(abs_max_ptr, 0, sizeof(float), stream));
+
+    // in order to use more than 48 KiB of smem, need to call cudaFuncSetAttribute
+    // this may fail, in which case we fall back to the smem free implementation.
+    CUDA_CHECK(cudaGetLastError());
+    auto status = cudaFuncSetAttribute(rmsnorm_forward_kernel6<floatX>, cudaFuncAttributeMaxDynamicSharedMemorySize, smem);
+    CUDA_CHECK(cudaGetLastError());
+    if (status == cudaSuccess) {
+        rmsnorm_forward_kernel6<<<grid_size, dim3(WARP_SIZE, block_y), smem, stream>>>(out, rms, inp, weight, abs_max_ptr, epsilon, N, C);
+    } else {
+        // We should not allow for these perf regressions for now - just throw an error
+        assert(false);
+    }
+    CUDA_CHECK(cudaGetLastError());
+}
+
+void rmsnorm_forward(float* out, float* rms, const float* inp, const float* weight, float* abs_max_ptr, float epsilon, int B, int T, int C, cudaStream_t stream) {
+    rmsnorm_forward_imp(out, rms, inp, weight, abs_max_ptr, epsilon, B, T, C, stream);
+}
+void rmsnorm_forward(nv_bfloat16* out, float* rms, const nv_bfloat16* inp, const nv_bfloat16* weight, float* abs_max_ptr, float epsilon, int B, int T, int C, cudaStream_t stream)  {
+    rmsnorm_forward_imp(out, rms, inp, weight, abs_max_ptr, epsilon, B, T, C, stream);
+}
+
+template<typename floatX>
+void fused_residual_rmsnorm_forward_impl(floatX* residual, floatX* normed, float* rrms,
+                             const floatX* inp1, const floatX* inp2,
+                             const floatX* weight, float* abs_max_ptr,
+                             float epsilon, int N, int C, cudaStream_t stream) {
+    // same as forward kernel but has a fused residual connection
+    const int block_size = 256;
+    int block_y = block_size / WARP_SIZE;
+    const int grid_size = div_ceil(N, block_y);
+    size_t smem = (1 + block_y) * C * sizeof(floatX);
+
+    if (abs_max_ptr)
+        CUDA_CHECK(cudaMemsetAsync(abs_max_ptr, 0, sizeof(float), stream));
+
+    // in order to use more than 48 KiB of smem, need to call cudaFuncSetAttribute
+    // this may fail, in which case we fall back to the smem free implementation.
+    CUDA_CHECK(cudaGetLastError());
+    auto status = cudaFuncSetAttribute(fused_residual_rmsnorm_forward_kernel5<floatX>, cudaFuncAttributeMaxDynamicSharedMemorySize, smem);
+    CUDA_CHECK(cudaGetLastError());
+    if(status == cudaSuccess) {
+        fused_residual_rmsnorm_forward_kernel5<<<grid_size, dim3(WARP_SIZE, block_y), smem, stream>>>(residual, normed,
+                                                                                              rrms, inp1, inp2,
+                                                                                              weight, abs_max_ptr, epsilon, N, C);
+    } else {
+        assert(false);
+    }
+    CUDA_CHECK(cudaGetLastError());
+}
+
+void fused_residual_rmsnorm_forward(float* residual, float* normed, float* rrms, const float* inp1, const float* inp2, const float* weight, float* abs_max_ptr,
+                                    float epsilon, int N, int C, cudaStream_t stream) {
+    fused_residual_rmsnorm_forward_impl(residual, normed, rrms, inp1, inp2, weight, abs_max_ptr, epsilon, N, C, stream);
+}
+
+void fused_residual_rmsnorm_forward(nv_bfloat16* residual, nv_bfloat16* normed, float* rrms, const nv_bfloat16* inp1, const nv_bfloat16* inp2, const nv_bfloat16* weight, float* abs_max_ptr,
+                                    float epsilon, int N, int C, cudaStream_t stream) {
+    fused_residual_rmsnorm_forward_impl(residual, normed, rrms, inp1, inp2, weight, abs_max_ptr, epsilon, N, C, stream);
+}
+
+template<class floatX>
+__global__ void __launch_bounds__(512, 2)
+rmsnorm_backward_kernel10(floatX* dinp, floatX* dweight, std::byte* scratch,
+                          const floatX* dout, const floatX* inp, const floatX* weight,
+                          const float* rstd, int B, int T, int C) {
+    // size of scratch: sizeof(float) * C + 128
+    using x128 = GenericVector<floatX, 16/sizeof(floatX)>;
+    using f128 = GenericVector<float, 16/sizeof(float)>;
+    // TODO: this kernel uses too much shared memory due to historical reasons of it coming from layernorm_backward.cu
+    // this memory use can be reduced by half later
+    int BLOCK_SIZE = blockDim.x;
+    int warpsInBlock = BLOCK_SIZE / WARP_SIZE; //number of warps in block
+    extern __shared__ float shared[];
+
+    int warpId = threadIdx.x / WARP_SIZE; // warp index within a block
+    int baseIdx = blockIdx.x * warpsInBlock + warpId;
+    int warpThreadIdx = threadIdx.x % WARP_SIZE; // Thread index within the warp
+    int warpsInGrid = gridDim.x * warpsInBlock;
+    int C_per_iteration = WARP_SIZE * x128::size;
+    int iterations_C = div_ceil(C, C_per_iteration); // + 2;
+
+    // the first half of shared memory is bias, second is weight
+    size_t rounded_C = div_ceil(C, (int)(32 * x128::size)) * (32 * x128::size);
+    float* dweight_shared = shared + rounded_C;
+    // warp zero doesn't actually write to the _tmp_shared memory locations, so we don't need to reserve memory
+    // the obvious solution is to change the addressing below to use (threadId.x-32) as offset, but that causes
+    // register spills, so instead we mess with the base pointer here, which doesn't increase register usage.
+    float* dweight_tmp_shared = shared + 2 * rounded_C + f128::size * BLOCK_SIZE - 2 * WARP_SIZE * f128::size;
+
+    // init shared memory to zero
+    for(int i = threadIdx.x * f128::size; i < rounded_C; i += BLOCK_SIZE * f128::size) {
+        f128::zeros().store(dweight_shared + i);
+    }
+    __syncthreads();
+
+    if(baseIdx >= B * T) {
+        // make sure we're not reading uninitialized memory below
+        f128::zeros().store(dweight_tmp_shared + threadIdx.x * f128::size);
+    }
+
+    for (int bt = baseIdx; bt < B * T; bt += warpsInGrid) {
+        const floatX* dout_bt = dout + bt * C;
+        const floatX* inp_bt = inp +bt * C;
+        floatX* dinp_bt = dinp + bt * C;
+
+        // first: two reduce operations
+        float dnorm_mean = 0.0f;
+        float dnorm_norm_mean = 0.0f;
+        for (int i = warpThreadIdx * x128::size; i < C; i += WARP_SIZE * x128::size) {
+            x128 dout128_i   = x128::load(dout_bt + i);
+            x128 inp128_i    = x128::load(inp_bt  + i);
+            x128 weight128_i = x128::load(weight  + i);
+            for (int k = 0; k < x128::size; k++) {
+                float dnorm_i = (float)weight128_i[k] * (float)dout128_i[k];
+                dnorm_mean += dnorm_i;
+                dnorm_norm_mean += dnorm_i * (float)inp128_i[k];
+            }
+        }
+
+        const float rstd_bt = rstd[bt];
+        dnorm_norm_mean = warpReduceSum(dnorm_norm_mean) / C * rstd_bt;
+
+        for (int c = 0; c < iterations_C; c++) {
+            int global_index = (warpThreadIdx * x128::size) + (c * C_per_iteration);
+
+            x128 dout128   = x128::zeros();
+            x128 inp128    = x128::zeros();
+            x128 dinp128   = x128::zeros();
+            x128 weight128 = x128::zeros();
+
+            if(global_index < C) {
+                dout128 = x128::load_cs(dout_bt + global_index);
+                inp128 = x128::load_cs(inp_bt + global_index);
+                dinp128 = x128::load(dinp_bt + global_index);
+                weight128 = x128::load(weight + global_index);
+            }
+
+            for(int o = 0; o < x128::size / f128::size; ++o) {
+                f128 dweight_f;
+                for(int i = 0; i < f128::size; ++i) {
+                    int x = o * f128::size + i;
+                    float dout_i = (float)dout128[x];
+                    float norm_bti = ((float)inp128[x]) * rstd_bt;
+                    dweight_f[i] = norm_bti * dout_i;
+
+                    float dval = 0.0f;
+                    dval += (float) weight128[x] * (float)dout128[x]; // term 1
+                    dval -= norm_bti * dnorm_norm_mean; // term 2
+                    dval *= rstd_bt; // final scale
+                    dinp128[x] = (floatX) ((float) dinp128[x] + dval);
+                }
+
+                if (warpId != 0) {
+                    // this seems to generate a 64-bit store, instead of 128-bit.
+                    // however, forcing 128-bit (e.g., using inline ptx), results in register
+                    // spilling and much worse performance, so we'll keep it like this for now
+                    // but ideally, we could reduce the register pressure a little.
+                    dweight_f.store(dweight_tmp_shared + threadIdx.x * f128::size);
+                }
+                __syncthreads();
+                if (warpId == 0) {
+                    for (int j = 1; j < warpsInBlock; j++) {
+                        f128 dweight_tmp = f128::load(dweight_tmp_shared + f128::size * (threadIdx.x + j * WARP_SIZE));
+                        for(int i = 0; i < f128::size; ++i) {
+                            dweight_f[i] += dweight_tmp[i];
+                        }
+                    }
+                }
+                __syncthreads();
+                if (warpId == 0) {
+                    f128 dw_old = f128::load(dweight_shared + global_index + f128::size * o);
+                    for(int i = 0; i < f128::size; ++i) {
+                        dweight_f[i] += dw_old[i];
+                    }
+                    dweight_f.store(dweight_shared + global_index + f128::size * o);
+                }
+            }
+            if(global_index < C) {
+                // cache in L2 as this is read by the next kernel, but bypass L1 to minimise thrashing
+                // TODO cache hint
+                dinp128.store(dinp_bt + global_index);
+            }
+        }
+    }
+    __syncthreads();
+    // Each block writes its partial sum to global memory
+    // The last block to finish becomes responsible for summing up all the partial sums
+    // This is done by atomically incrementing a flag (cleared to 0 before launching the kernel)
+    unsigned int* scratchFlag = reinterpret_cast<unsigned int*>(scratch);
+    // Increment scratch pointer by a full cacheline so that everything remains cacheline aligned
+    float* scratch_dweight = reinterpret_cast<float*>(scratch + 128);
+    for(int i = threadIdx.x * f128::size; i < C; i += BLOCK_SIZE * f128::size) {
+        // Write to global memory in the same "shared memory banking friendly" order
+        f128::load(dweight_shared + i).store(scratch_dweight + i + C*blockIdx.x);
+    }
+    __syncthreads();
+    // that portion of shared memory is no longer used, so we can repurpose it for the scratch flag.
+    unsigned int *tmp_flag = (unsigned int*)(shared + 2*rounded_C);
+    if (threadIdx.x == 0) {
+        *tmp_flag = atomicInc(scratchFlag, gridDim.x);
+    }
+    __syncthreads();
+    if (*tmp_flag == gridDim.x-1) {
+        // Reduction of the partial sums by the final block
+        // todo - there isn't enough parallelism even inside that single SM...
+        // ==> so could maybe split into another kernel with YET ANOTHER level of reduction?!
+        for(int i = threadIdx.x * f128::size; i < C; i += BLOCK_SIZE * f128::size) {
+            f128 dweight_accum = f128::zeros();
+
+            for (int read_block_idx = 0; read_block_idx < gridDim.x; read_block_idx++) {
+                int offset = i + C*read_block_idx;
+                f128 dweight128 = f128::load(scratch_dweight + offset);
+                for(int k = 0; k < f128::size; k++) {
+                    dweight_accum[k] += dweight128[k];
+                }
+            }
+            dweight_accum.store(dweight_shared + i);
+        }
+        __syncthreads();
+
+        // convert from float/FP32 to floatX/BF16 for the final write
+        // this is separate because it cannot use as many warps as the above (f128 vs x128)
+        // todo - if we split this code into another kernel, we could maybe do it at the same time?
+        for (int c = warpId; c < iterations_C; c += warpsInBlock) {
+            int global_index = (warpThreadIdx * x128::size) + (c * C_per_iteration);
+            if (global_index >= C) {
+                break;
+            }
+            x128 dweight128 = x128::load(dweight + global_index);
+            for(int o = 0; o < x128::size / f128::size; ++o) {
+                f128 s_dw = f128::load(dweight_shared + global_index + o * f128::size);
+                for(int i = 0; i < f128::size; ++i) {
+                    int x = o * f128::size + i;
+                    dweight128[x] = (floatX)(s_dw[i] + (float)dweight128[x]);
+                }
+            }
+            dweight128.store(dweight + global_index);
+        }
+    }
+}
+
+int get_rmsnorm_backward_scratch_size(int C, const cudaDeviceProp& dp) {
+    int per_block = 128 + C * sizeof(float);
+    return per_block * dp.multiProcessorCount * 2;
+}
+
+template<class floatX>
+void rmsnorm_backward_imp(floatX* dinp, floatX* dweight, std::byte* scratch,
+                          const floatX* dresidual, const floatX* dout, const floatX* inp, const floatX* weight, const float* rstd,
+                          int B, int T, int C, const cudaDeviceProp& dp, cudaStream_t stream) {
+    using x128 = GenericVector<floatX, 16/sizeof(floatX)>;
+    using f128 = GenericVector<float, 16/sizeof(float)>;
+    const int block_size = 512;
+    const int blocks_per_sm = 2; // supported on every architecture and less cache thrashing than 3
+    const int grid_size = blocks_per_sm * dp.multiProcessorCount;
+    size_t rounded_C = div_ceil(C, (int)(32 * x128::size)) * (32 * x128::size);
+    size_t shared_mem_size = (2 * rounded_C + 2 * (block_size - 32) * f128::size) * sizeof(float);
+    CUDA_CHECK(cudaFuncSetAttribute(rmsnorm_backward_kernel10<floatX>, cudaFuncAttributeMaxDynamicSharedMemorySize, shared_mem_size));
+    if(dresidual != dinp) {
+        CUDA_CHECK(cudaMemcpyAsync(dinp, dresidual, B*T*C * sizeof(floatX), cudaMemcpyDeviceToDevice, stream));
+    }
+    CUDA_CHECK(cudaMemsetAsync(scratch, 0, 1 * sizeof(float), stream)); // only need to reset the flag to 0
+    rmsnorm_backward_kernel10<<<grid_size, block_size, shared_mem_size, stream>>>(dinp, dweight, scratch, dout, inp, weight, rstd, B, T, C);
+    CUDA_CHECK(cudaGetLastError());
+}
+
+void rmsnorm_backward(float* dinp, float* dweight, std::byte* scratch,
+                      const float* dresidual, const float* dout, const float* inp, const float* weight, const float* rstd,
+                      int B, int T, int C, const cudaDeviceProp& dp, cudaStream_t stream) {
+    rmsnorm_backward_imp(dinp, dweight, scratch, dresidual, dout, inp, weight, rstd, B, T, C, dp, stream);
+}
+
+void rmsnorm_backward(nv_bfloat16* dinp, nv_bfloat16* dweight, std::byte* scratch,
+                      const nv_bfloat16* dresidual, const nv_bfloat16* dout, const nv_bfloat16* inp, const nv_bfloat16* weight, const float* rstd,
+                      int B, int T, int C, const cudaDeviceProp& dp, cudaStream_t stream) {
+    rmsnorm_backward_imp(dinp, dweight, scratch, dresidual, dout, inp, weight, rstd, B, T, C, dp, stream);
+}

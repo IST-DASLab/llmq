@@ -1,0 +1,41 @@
+name: Build
+on:
+  create:
+  workflow_dispatch:
+  push:
+    branches:
+      - master
+      - release-*
+  pull_request:
+    branches:
+      - master
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    container:
+      image: nvidia/cuda:12.6.3-cudnn-devel-ubuntu24.04
+    env:
+      CMAKE_GENERATOR: Ninja
+      CXX: /usr/bin/g++-13
+      CMAKE_C_COMPILER_LAUNCHER: ccache
+      CMAKE_CXX_COMPILER_LAUNCHER: ccache
+      CMAKE_CUDA_COMPILER_LAUNCHER: ccache
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install deps
+        run: apt update && apt install -y cmake ninja-build git python3-dev gcc-13 g++-13 libopenmpi-dev
+
+      - name: Create build directory
+        run: mkdir -p build
+
+      - name: ccache
+        uses: hendrikmuhs/ccache-action@v1.2
+
+      - name: CMake Configure
+        run: cmake -B build -S . -DCMAKE_CUDA_ARCHITECTURES=80
+
+      - name: CMake Build
+        run: cmake --build build --parallel --target recompute-test export-checkpoint train

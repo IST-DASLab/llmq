@@ -1,0 +1,22 @@
+[project]
+name = "llmq"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "accelerate>=1.10.0",
+    "datasets>=4.0.0",
+    "numpy>=2.3.2",
+    "torch>=2.8.0",
+    "transformers>=4.55.0",
+]
+
+[project.optional-dependencies]
+plotting = [
+    "matplotlib>=3.10.5",
+    "plotly>=6.3.0",
+    "pyqt6>=6.9.1",
+    "wandb>=0.21.1",
+    "lm-eval>=0.4.9",
+]
