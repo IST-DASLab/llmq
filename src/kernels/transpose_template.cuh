@@ -1,6 +1,5 @@
 // Copyright (c) 2025, IST Austria, developed by Erik Schultheis
 //
-// SPDX-License-Identifier: MIT
 
 #ifndef LLMQ_SRC_KERNELS_TRANSPOSE_TEMPLATE_CUH
 #define LLMQ_SRC_KERNELS_TRANSPOSE_TEMPLATE_CUH

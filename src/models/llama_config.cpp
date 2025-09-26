@@ -1,6 +1,5 @@
 // Copyright (c) 2025, Aalto University, developed by Erik Schultheis
 //
-// SPDX-License-Identifier: MIT
 
 #include "llama_config.h"
 

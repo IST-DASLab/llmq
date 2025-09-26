@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: MIT
 
 #ifndef LLMQ_SQUIRREL_NOISE_CUH
 #define LLMQ_SQUIRREL_NOISE_CUH

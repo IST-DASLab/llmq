@@ -1,6 +1,5 @@
 // Copyright (c) 2025, IST Austria, developed by Erik Schultheis
 //
-// SPDX-License-Identifier: MIT
 
 #include "allocator.h"
 

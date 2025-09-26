@@ -1,6 +1,5 @@
 // Copyright (c) 2025, Aalto University, developed by Erik Schultheis
 //
-// SPDX-License-Identifier: MIT
 
 #ifndef LLMQ_SRC_MODELS_LLAMA_CONFIG_H
 #define LLMQ_SRC_MODELS_LLAMA_CONFIG_H

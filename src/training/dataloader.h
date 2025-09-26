@@ -1,6 +1,5 @@
 // Copyright (c) 2025, IST Austria, developed by Erik Schultheis
 //
-// SPDX-License-Identifier: MIT
 
 #ifndef LLMQ_DATALOADER_H
 #define LLMQ_DATALOADER_H

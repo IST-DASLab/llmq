@@ -1,6 +1,5 @@
 // Copyright (c) 2025, IST Austria, developed by Erik Schultheis
 //
-// SPDX-License-Identifier: MIT
 
 // This is a relatively simple baseline implementation of memory-efficient attention.
 // Its main purpose is to allow running in *32-bit* precision, which is not supported

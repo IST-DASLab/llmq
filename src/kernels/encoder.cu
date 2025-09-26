@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: MIT
 /*
 The GPT-2 Encoder, which combines two encodings: token and position
 In the forward pass, both encodings are added together

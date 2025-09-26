@@ -1,6 +1,5 @@
 // Copyright (c) 2025, IST Austria, developed by Erik Schultheis
 //
-// SPDX-License-Identifier: MIT
 // Based on llm.c https://github.com/karpathy/llm.c
 
 #include <cuda_bf16.h>

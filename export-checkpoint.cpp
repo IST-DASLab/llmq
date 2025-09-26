@@ -1,7 +1,6 @@
 // Copyright (c) 2025, IST Austria, developed by Erik Schultheis
 // All rights reserved.
 //
-// SPDX-License-Identifier: MIT
 
 
 #include "utilities/safetensors.h"
