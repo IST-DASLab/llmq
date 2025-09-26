@@ -1,0 +1,128 @@
+// Copyright (c) 2025, IST Austria, developed by Erik Schultheis
+//
+// SPDX-License-Identifier: MIT
+
+#ifndef LLMQ_LLAMA_RUN_STATE_H
+#define LLMQ_LLAMA_RUN_STATE_H
+
+#include "llama_model.h"
+#include "llama_weights.h"
+#include "utilities/tensor.h"
+
+class TensorAllocator;
+using sLLamaGradients = sLLamaWeightsSet<TensorShard>;
+typedef struct cudnnContext* cudnnHandle_t;
+typedef struct cublasLtContext* cublasLtHandle_t;
+class LLamaGradsManager;
+
+struct QuantizableTensor {
+    /// original, high-precision value
+    Tensor Value;
+    /// Quantized value
+    std::optional<Tensor> Quant = std::nullopt;
+};
+
+struct LLamaRunState {
+    using QTensor = QuantizableTensor;
+    struct LayerActivations {
+        Tensor LN1_Rstd;    // (B, T)
+        QTensor LN1;        // (B, T, C)
+        Tensor LN2_Rstd;    // (B, T)
+        QTensor LN2;        // (B, T, C)
+        Tensor QKV;         // (B, T, QKV_C)
+        Tensor LSE;         // (B, T)
+        Tensor Rope;        // (B, T, C) -- only for debug
+        QTensor Att;        // (B, T, C)
+        Tensor AttO;        // (B, T, C)
+        Tensor ResidualAtt; // (B, T, C)
+        Tensor MlpUp;       // (B, T, 2*Ch)
+        Tensor MlpDown;     // (B, T, C)
+        QTensor SwiGLu;     // (B, T, Ch)
+        Tensor ResidualFFN; // (B, T, C)
+    };
+
+    struct LayerGradients {
+        QTensor DResFFN;                   // (B, T, C)
+        Tensor DSwiGLU;                    // (B, T, Ch)
+        QTensor DMlpUp;                    // (B, T, 2*Ch)
+        Tensor DLN2;                       // (B, T, C)
+        QTensor DResAtt;                   // (B, T, C)
+        Tensor DAttY;                      // (B, T, C)
+        Tensor DRope;                      // (B, T, QKV_C)
+        QTensor DQKV;                      // (B, T, QKV_C)
+        Tensor DLN1;                       // (B, T, C)
+    };
+
+    Tensor Inputs;          // (B, T) Int32
+    Tensor Targets;         // (B, T) Int32
+    Tensor Inputs_CPU;      // (B, T) Int32
+    Tensor Targets_CPU;     // (B, T) Int32
+    Tensor Losses;          // (B, T) FP32
+
+    // Activations
+    Tensor Encoded;         // (B, T, C)
+    Tensor FreqCis;         // (mT, 2*HS)
+    Tensor Output;          // (B, T, V)
+    Tensor LNF;             // (B, T, C)
+    Tensor LNF_Rstd;        // (B, T)
+    std::vector<LayerActivations> Acts;
+
+    // Gradients
+    std::vector<LayerGradients> DActs;
+
+    Tensor DLNF;                // (B, T, C)
+    Tensor DEmb;                // (B, T, C)
+
+    // scratch buffers
+    Tensor RMSNormScratch;      // (#Blocks*C+128)
+    Tensor MatmulBiasScratch;   // TODO
+    Tensor Workspace;           // shared workspace for cudnn and cublas
+    Tensor EncoderBwdScratch;   // (B, T, 5 * C / (x128::size * 32))
+    Tensor EncoderBwdIndices;   // (B, T, 1 * C / (x128::size * 32)) [on CPU!]
+    Tensor EncoderBwdInfo;      // (B, T, 4 * C / (x128::size * 32)) [on CPU!]
+
+    Tensor WeightTranspose;
+    Tensor ActivationTranspose;
+    Tensor GradientTranspose;
+
+    std::optional<Tensor> AbsMaxes; // (L, ...)
+    Tensor MatmulScales;        // 2 floats
+
+    // Optimizer scratch
+    Tensor NormBuffer;
+    float* NormHost;
+    float* LossHost;
+
+    LLamaOptions Options;
+    std::shared_ptr<TensorAllocator> Allocator;
+
+    // cached GPU info
+    cudaDeviceProp DeviceProp;
+
+    cudaStream_t MainStream;
+    cudaStream_t SideStream;
+    cudaEvent_t SideStreamEvent;
+    cudaEvent_t ForwardDone;        //!< recorded at the end of the forward pass
+    cudaEvent_t BackwardDone;       //!< recorded at the end of the backward pass
+    cudaEvent_t TransferDone;       //!< recorded once CPU-side buffers have been copied to GPU
+    cudaEvent_t NormDone;           //!< recorded after norm calculation completes
+    cudaEvent_t OptEmbeddingsDone;      //!< recorded after the optimizer has done an update to the LMHead
+    std::vector<cudaEvent_t> LayerUpdateDone;   //!< Recorded after the optimizer has done an update to the specified layer.
+    cudaEvent_t OptimizerDone;      //!< recorded after the optimizer completes
+
+    cudaGraphExec_t GlobalNormGraph;
+    cudaGraphExec_t ForwardBlockGraph;
+    cudaGraphExec_t BackwardBlockGraph;
+
+    cudnnHandle_t CudnnHandle;
+    cublasLtHandle_t CublasLtHandle;
+};
+
+LLamaRunState allocate_run_state(LLamaConfig config, LLamaOptions options, int B, int T, std::shared_ptr<TensorAllocator> alloc);
+
+float get_loss(LLamaRunState& acts);
+float get_norm(LLamaRunState& acts);
+Tensor& get_input_buffer(LLamaRunState& acts);
+Tensor& get_target_buffer(LLamaRunState& acts);
+
+#endif //LLMQ_LLAMA_RUN_STATE_H
