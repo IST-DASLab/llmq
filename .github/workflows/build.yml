@@ -35,7 +35,7 @@ jobs:
         uses: hendrikmuhs/ccache-action@v1.2
 
       - name: CMake Configure
-        run: cmake -B build -S .
+        run: cmake -B build -S . -DCMAKE_CUDA_ARCHITECTURES=80
 
       - name: CMake Build
         run: cmake --build build --parallel --target recompute-test export-checkpoint train
