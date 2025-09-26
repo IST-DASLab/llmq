@@ -200,7 +200,7 @@ void SafeTensorWriter::register_tensor(const std::string& name, const TensorShar
 void SafeTensorWriter::prepare_metadata(NCCLCommunicator* comm) {
     nlohmann::json meta_data;
     meta_data["__metadata__"] = nlohmann::json::object({{"format", "pt"},
-                                                        {"writer", "halo.cpp"}});
+                                                        {"writer", "llmq"}});
 
     long offset = 0;
     for (auto& [name, tensor] : mRegisteredTensors) {
