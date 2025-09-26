@@ -38,4 +38,4 @@ jobs:
         run: cmake -B build -S .
 
       - name: CMake Build
-        run: cmake --build build --parallel --target recompute export-checkpoint train
+        run: cmake --build build --parallel --target recompute-test export-checkpoint train
