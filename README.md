@@ -279,7 +279,7 @@ TTB: Time to a billion tokens.
 Note that the numbers below are snapshots on a single machine. There can be significant variability
 depending on cooling, power supply, etc, especially in non-datacenter deployments.
 
-### RTX PRO 6000
+### RTX PRO 6000 (courtesy of [Datacrunch](https://datacrunch.io/))
 Using `--model-dtype=bf16 --opt-m-dtype=bf16 --opt-v-dtype=bf16 --use-cuda-graphs`, and a total batch size of 524288
 for <= 3B (single-GPU 7B uses half the total batch size).
 
