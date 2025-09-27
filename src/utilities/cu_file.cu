@@ -1,45 +1,128 @@
 // Copyright (c) 2025, IST Austria, developed by Erik Schultheis
+// All rights reserved.
 //
+// SPDX-License-Identifier: MIT
 
+#include <algorithm>
+#include <cerrno>
 #include <cstring>
 #include <format>
+#include <string_view>
 
+#include <cuda_runtime.h>
 #include <cufile.h>
 #include <fcntl.h>
+#include <sys/types.h>
 #include <unistd.h>
 
 #include "cu_file.h"
 #include "utilities/dtype.h"
 #include "utilities/utils.h"
 
-cuFileRef open_cufile(std::string file_name) {
-    auto status = cuFileDriverOpen();
-    if (status.err != CU_FILE_SUCCESS) {
-        throw std::runtime_error("cufile driver open error");
+static inline bool cufile_disabled_env() {
+    const char* e = std::getenv("CUFILE_DISABLE");
+    return e && *e && std::string(e) != "0";
+}
+
+static inline void posix_pread_to_device(std::string_view file_name,
+                                         std::byte* d_target,
+                                         std::ptrdiff_t begin,
+                                         std::ptrdiff_t end)
+{
+    if (end < begin) {
+        throw std::logic_error(std::format("Invalid range {} - {} in cufile_read_bytes for {}",
+                                           begin, end, file_name));
     }
 
-    int fd = open(file_name.c_str(), O_RDONLY | O_DIRECT);
+    const size_t nbytes = static_cast<size_t>(end - begin);
+
+    int fd = ::open(std::string(file_name).c_str(), O_RDONLY | O_CLOEXEC);
+    if (fd < 0) {
+        throw std::runtime_error(std::format("posix open error ({}) for {}: {}",
+                                             errno, file_name, strerror(errno)));
+    }
+
+    constexpr size_t CHUNK = 1 << 20;
+    void* hbuf = nullptr;
+    cudaError_t ce = cudaMallocHost(&hbuf, CHUNK);
+    if (ce != cudaSuccess) {
+        ::close(fd);
+        throw std::runtime_error(std::format("cudaMallocHost failed: {}",
+                                             cudaGetErrorString(ce)));
+    }
+
+    size_t done = 0;
+    while (done < nbytes) {
+        const size_t want = std::min(CHUNK, nbytes - done);
+        const off_t off = static_cast<off_t>(begin + done);
+        ssize_t r = ::pread(fd, hbuf, want, off);
+        if (r < 0) {
+            cudaFreeHost(hbuf);
+            ::close(fd);
+            throw std::runtime_error(std::format("posix pread error ({}) for {}, range {} - {}",
+                                                 errno, file_name, off, off + want));
+        }
+        if (r == 0) break;
+
+        ce = cudaMemcpy(reinterpret_cast<void*>(d_target + done),
+                        hbuf, static_cast<size_t>(r),
+                        cudaMemcpyHostToDevice);
+        if (ce != cudaSuccess) {
+            cudaFreeHost(hbuf);
+            ::close(fd);
+            throw std::runtime_error(std::format("cudaMemcpy failed: {}",
+                                                 cudaGetErrorString(ce)));
+        }
+        done += static_cast<size_t>(r);
+    }
+
+    cudaFreeHost(hbuf);
+    ::close(fd);
+
+    if (done != nbytes) {
+        throw std::runtime_error(std::format("posix read short: expected {} bytes, got {}",
+                                             nbytes, done));
+    }
+}
+
+static inline CUfileHandle_t try_register_cufile_handle(int fd) {
+    if (cufile_disabled_env()) return CUfileHandle_t{nullptr};
+
+    (void) cuFileDriverOpen();
+
+    CUfileDescr_t descr{};
+    descr.handle.fd = fd;
+    descr.type = CU_FILE_HANDLE_TYPE_OPAQUE_FD;
+
+    CUfileHandle_t h{};
+    CUfileError_t st = cuFileHandleRegister(&h, &descr);
+    if (st.err != CU_FILE_SUCCESS) {
+        return CUfileHandle_t{nullptr};
+    }
+    return h;
+}
+
+cuFileRef open_cufile(std::string file_name) {
+    int fd = open(file_name.c_str(), O_RDONLY | O_CLOEXEC);
     if (fd < 0) {
         throw std::runtime_error(std::format("cufile file open error ({}) for file {}: {}", errno, file_name, strerror(errno)));
     }
 
-    // create cufile handle
-    CUfileDescr_t descr;
-    CUfileHandle_t handle;
-    std::memset(&descr, 0, sizeof(CUfileDescr_t));
-    descr.handle.fd = fd;
-    descr.type = CU_FILE_HANDLE_TYPE_OPAQUE_FD;
-    status = cuFileHandleRegister(&handle, &descr);
-    if (status.err != CU_FILE_SUCCESS) {
-        throw std::runtime_error("cufile register error");
-    }
+    CUfileHandle_t handle = try_register_cufile_handle(fd);
+
     return {handle, fd, std::move(file_name)};
 }
 
 void cufile_read_bytes(CUfileHandle_t handle, std::byte* target, std::ptrdiff_t begin, std::ptrdiff_t end, std::string_view file_name) {
     if(end < begin) {
-        throw std::logic_error(std::format("Invalid range {} - {} in cufile_read_tensor for {}", begin, end, file_name));
+        throw std::logic_error(std::format("Invalid range {} - {} in cufile_read_bytes for {}", begin, end, file_name));
     }
+
+    if (cufile_disabled_env() || handle == nullptr) {
+        posix_pread_to_device(file_name, target, begin, end);
+        return;
+    }
+
     ssize_t ret = cuFileRead(handle, target, end - begin, begin, 0);
     if (ret < 0) {
         if (ret == -1) {
@@ -106,8 +189,14 @@ cuFileRef::cuFileRef(std::string file_name) : cuFileRef(open_cufile(std::move(fi
 
 cuFileRef::~cuFileRef() noexcept
 {
-    close(mFileDescriptor);
-    cuFileHandleDeregister(mHandle);
+    if (mFileDescriptor >= 0) {
+        close(mFileDescriptor);
+        mFileDescriptor = -1;
+    }
+    if (mHandle) {
+        cuFileHandleDeregister(mHandle);
+        mHandle = nullptr;
+    }
 }
 
 void cuFileRef::read_bytes(std::byte* target, std::ptrdiff_t begin, std::ptrdiff_t end)

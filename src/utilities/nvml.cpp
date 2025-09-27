@@ -1,32 +1,52 @@
 // Copyright (c) 2025, IST Austria, developed by Erik Schultheis
+// All rights reserved.
 //
+// SPDX-License-Identifier: MIT
 
 #include "nvml.h"
 
 #include <format>
 #include <type_traits>
+#include <cstdlib>
 
 #include "utils.h"
 
+static inline bool halo_disable_nvml() {
+    const char* e = std::getenv("HALO_DISABLE_NVML");
+    return e && *e && std::string(e) != "0";
+}
 
 inline void nvml_check(nvmlReturn_t status, const char *file, int line) {
-    if (status != NVML_SUCCESS) {
-        throw std::runtime_error(std::format("[NVML ERROR] at file {}:{}:\n{}\n", file, line, nvmlErrorString(status)));
-    }
-};
+    if (status == NVML_SUCCESS) return;
+    if (status == NVML_ERROR_NOT_SUPPORTED || halo_disable_nvml()) return;
+    throw std::runtime_error(std::format("[NVML ERROR] at file {}:{}:\n{}\n", file, line, nvmlErrorString(status)));
+}
 #define NVML_CHECK(err) (nvml_check(err, __FILE__, __LINE__))
 
 inline nvmlDevice_t nvml_get_device() {
     thread_local bool needs_init = true;
-    thread_local nvmlDevice_t device;
-    if(needs_init) {
+    thread_local nvmlDevice_t device{};
+    if (needs_init) {
         needs_init = false;
-        NVML_CHECK(nvmlInit());
+
+        if (halo_disable_nvml()) {
+            return nullptr;
+        }
+        nvmlReturn_t st = nvmlInit();
+        if (st == NVML_ERROR_NOT_SUPPORTED) {
+            return nullptr;
+        }
+        NVML_CHECK(st);
+
         char bus_id[256];
         int did;
         CUDA_CHECK(cudaGetDevice(&did));
-        CUDA_CHECK(cudaDeviceGetPCIBusId (bus_id, sizeof(bus_id), did));
-        NVML_CHECK(nvmlDeviceGetHandleByPciBusId(bus_id, &device));
+        CUDA_CHECK(cudaDeviceGetPCIBusId(bus_id, sizeof(bus_id), did));
+        nvmlReturn_t hst = nvmlDeviceGetHandleByPciBusId(bus_id, &device);
+        if (hst == NVML_ERROR_NOT_SUPPORTED) {
+            return nullptr;
+        }
+        NVML_CHECK(hst);
     }
     return device;
 }
@@ -46,6 +66,8 @@ inline const char* get_throttle_reason(unsigned long long bits) {
 }
 
 GPUUtilTracker::GPUUtilTracker() : mDevice(nvml_get_device()) {
+    if (!mDevice) return;
+
     nvmlFieldValue_t fields[] = {{NVML_FI_DEV_PCIE_COUNT_RX_BYTES}, {NVML_FI_DEV_PCIE_COUNT_TX_BYTES}, {NVML_FI_DEV_TOTAL_ENERGY_CONSUMPTION, 0}};
     NVML_CHECK(nvmlDeviceGetFieldValues(mDevice, 3, fields));
     NVML_CHECK(fields[0].nvmlReturn);
@@ -109,6 +131,8 @@ GPUUtilTracker::~GPUUtilTracker() {
 }
 
 const GPUUtilInfo& GPUUtilTracker::update() {
+    if (!mDevice) return mInfo;
+
     // query different infos directly
     NVML_CHECK(nvmlDeviceGetClockInfo(mDevice, NVML_CLOCK_SM, &mInfo.clock));
     NVML_CHECK(nvmlDeviceGetMaxClockInfo(mDevice, NVML_CLOCK_SM, &mInfo.max_clock));
@@ -183,14 +207,36 @@ const GPUUtilInfo& GPUUtilTracker::update() {
 }
 
 std::size_t get_mem_reserved() {
+    if (halo_disable_nvml()) return 0;
+    nvmlDevice_t dev = nvml_get_device();
+    if (!dev) return 0;
     nvmlMemory_v2_t mem_info;
     mem_info.version = nvmlMemory_v2;
-    NVML_CHECK(nvmlDeviceGetMemoryInfo_v2(nvml_get_device(), &mem_info));
+    NVML_CHECK(nvmlDeviceGetMemoryInfo_v2(dev, &mem_info));
     return mem_info.reserved;
 }
 
 std::string get_gpu_name() {
+    if (halo_disable_nvml()) {
+        cudaDeviceProp prop;
+        int deviceId;
+        if (cudaGetDevice(&deviceId) == cudaSuccess &&
+            cudaGetDeviceProperties(&prop, deviceId) == cudaSuccess) {
+            return prop.name;
+        }
+        return "Unknown GPU";
+    }
+    nvmlDevice_t dev = nvml_get_device();
+    if (!dev) {
+        cudaDeviceProp prop;
+        int deviceId;
+        if (cudaGetDevice(&deviceId) == cudaSuccess &&
+            cudaGetDeviceProperties(&prop, deviceId) == cudaSuccess) {
+            return prop.name;
+        }
+        return "Unknown GPU";
+    }
     char name[256];
-    NVML_CHECK(nvmlDeviceGetName(nvml_get_device(), name, 256));
+    NVML_CHECK(nvmlDeviceGetName(dev, name, 256));
     return name;
 }
