@@ -1,13 +1,16 @@
 import argparse
 import datetime
 import json
+from typing import Optional
+
 import wandb
 
-def convert_log(file_name: str, *, project: str, notes: str="", tags: list[str] = None):
+def convert_log(file_name: str, *, name: Optional[str], project: str, notes: str="", tags: list[str] = None):
     log_data = json.load(file_name)
 
     with wandb.init(
             project=project,
+            name=name,
             notes=notes,
             tags=tags,
     ) as run:
@@ -71,6 +74,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Plot training run")
     parser.add_argument("--log-file", type=argparse.FileType("r"), help="Log file", default="log.json")
     parser.add_argument("--project", help="WandB project name")
+    parser.add_argument("--name", help="Name for the run", default=None)
     args = parser.parse_args()
 
-    convert_log(args.log_file, project=args.project)
+    convert_log(args.log_file, project=args.project, name=args.name)

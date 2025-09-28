@@ -106,7 +106,7 @@ uv run python/plot-training-run.py log.json
 This shows the training and evaluation losses over time, for quick inspection.
 For a more detailed and interactive workflow, you can export the log to weights&biases:
 ```shell
-uv run python/export_wandb.py --log-file log.json --project <ProjectName>
+uv run python/export-wandb.py --log-file log.json --project <ProjectName>
 ```
 
 ### Evaluations
