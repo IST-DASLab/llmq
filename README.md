@@ -376,6 +376,43 @@ The run marked with * uses additional arguments `--shard-weights --memcpy-all-ga
 ^3: `--offload-opt-m --offload-opt-v --recompute-ffn --recompute-norm --offload-master --shard-weights --persistent-quants --offload-quants`  
 ^4: `--offload-opt-m --offload-opt-v --recompute-ffn --recompute-norm --offload-master --shard-weights`  
 
+### RTX 5090 Performance Benchmarks
+
+| Model         | nGPU | DType | Batch | TPS | SOL | TTB |
+|---------------|------|-------|-------|-----|-----|-----|
+| Qwen2.5-0.5B  | 1    | fp8   | 8     | 70k | 68% | 4:00h |
+| Qwen2.5-0.5B  | 1    | fp8   | 16    | 69k | 67% | 4:02h |
+| Qwen2.5-0.5B¹ | 1    | fp8   | 32    | 54k | 52% | 5:08h |
+| Qwen2.5-0.5B  | 1    | bf16  | 8     | 55k | 81% | 5:03h |
+| Qwen2.5-0.5B  | 1    | bf16  | 16    | 55k | 82% | 5:03h |
+| Qwen2.5-0.5B¹ | 1    | bf16  | 32    | 48k | 71% | 5:47h |
+| Qwen2.5-1.5B  | 1    | fp8   | 8     | 27k | 73% | 10:16h |
+| Qwen2.5-1.5B¹ | 1    | bf16  | 8     | 17k | 77% | 16:22h |
+| Qwen2.5-3B¹   | 1    | fp8   | 4     | 13k | 64% | 21:24h |
+| Qwen2.5-3B¹   | 1    | fp8   | 8     | 13k | 64% | 21:24h |
+| Qwen2.5-3B¹   | 1    | bf16  | 4     | 8.2k| 75% | 33:53h |
+| Qwen2.5-3B¹   | 1    | bf16  | 8     | 8.6k| 78% | 32:18h |
+| Qwen2.5-7B³   | 1    | fp8   | 4     | 3.2k| 35.5% | 87h |
+| Qwen2.5-7B³   | 1    | fp8   | 8     | 4.4k| 49.5% | 63h |
+| Qwen2.5-7B³   | 1    | bf16  | 4     | 2.5k| 51.8% | 111h |
+| Qwen2.5-7B³   | 1    | bf16  | 8     | 3.1k| 65.6% | 90h |
+| Qwen2.5-1.5B  | 4    | fp8   | 8     | 107k| 72% | 2:36h |
+| Qwen2.5-1.5B⁴ | 4    | bf16  | 4     | 71.2k| 81% | 3:41h |
+| Qwen2.5-3B¹   | 4    | fp8   | 4     | 48k | 61% | 5:47h |
+| Qwen2.5-3B²   | 4    | fp8   | 8     | 49k | 62% | 5:40h |
+| Qwen2.5-3B¹   | 4    | bf16  | 4     | 32k | 72% | 8:41h |
+| Qwen2.5-7B³   | 4    | fp8   | 8     | 18.9k| 53.3% | 14:42h |
+| Qwen2.5-7B³   | 4    | bf16  | 8     | 13.9k| 71.3% | 20:00h |
+| Qwen2.5-14B³  | 4    | fp8   | 4     | 8.1k| 22.9% | 34:20h |
+| Qwen2.5-14B³  | 4    | bf16  | 4     | 3.9k| 20.4% | 71:20h |
+
+¹: `--recompute-ffn --recompute-att`
+²: `--recompute-norm --recompute-swiglu --recompute-ffn --recompute-att`
+³: `--recompute-norm --recompute-swiglu --recompute-ffn --recompute-att --offload-opt-m --offload-opt-v --shard-weights --offload-master --shard-gradients`
+⁴: `--recompute-swiglu`
+
+Command used: `./build/train --model=./Qwen2.5-0.5B --train-file=tiny-shakespeare-qwen-train.bin --eval-file=tiny-shakespeare-qwen-eval.bin --model-dtype=bf16 --opt-m-dtype=bf16 --opt-v-dtype=bf16 --matmul-dtype=e4m3 --grad-accumulation=8 --steps=1000 --learning-rate=1e-5 --gpus=1 --batch-size=8`
+
 ## Testing
 ### Bit-perfect recomputation
 The CMake target `recompute-test` produces an executable that accepts a subset of the training arguments. It runs ten training
