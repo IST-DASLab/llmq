@@ -12,11 +12,17 @@
 #include "utilities/comm.h"
 #include "utilities/nvml.h"
 #include "utilities/utils.h"
+#include <iostream>
 
 TrainingRunLogger::TrainingRunLogger(const std::string& file_name, int rank, EVerbosity verbosity) :
     mFileName(std::move(file_name)), mRank(rank), mVerbosity(verbosity)
 {
     if(mRank == 0) {
+        auto log_path = std::filesystem::path(mFileName).parent_path();
+        std::cout << log_path << "\n";
+        if (!log_path.empty()) {
+            std::filesystem::create_directories(log_path);
+        }
         mLogFile.open(mFileName, std::fstream::out);
         mLogFile << "[\n";
         mLogFile << "\n]\n";
