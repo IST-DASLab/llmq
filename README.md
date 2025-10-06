@@ -378,8 +378,8 @@ The run marked with * uses additional arguments `--shard-weights --memcpy-all-ga
 
 ### RTX 5090 Performance Benchmarks
 
-| Model         | nGPU | DType | Batch | TPS | SOL   | TTB  |
-|---------------|------|-------|-------|-----|-------|------|
+| Model         | nGPU | DType | Batch | TPS | SOL  | TTB   |
+|---------------|------|-------|-------|-----|------|-------|
 | Qwen2.5-0.5B  | 1    | fp8   | 8     | 70k | 68%  | 4:00h |
 | Qwen2.5-0.5B  | 1    | fp8   | 16    | 69k | 67%  | 4:02h |
 | Qwen2.5-0.5B¹ | 1    | fp8   | 32    | 54k | 52%  | 5:08h |
