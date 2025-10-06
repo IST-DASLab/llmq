@@ -374,7 +374,7 @@ void LLamaGradientsBlockSharded_ScatterReduce::sr_accumulate_layer(int layer_idx
 
 // ---------------------------------------------------------------------------------------------------------------------
 
-class LLamaGradientsBlockSharded_AllToall : public LLamaGradientsBlockShardedBase {
+class LLamaGradientsBlockSharded_AllToAll : public LLamaGradientsBlockShardedBase {
 public:
     using LLamaGradientsBlockShardedBase::LLamaGradientsBlockShardedBase;
 private:
@@ -387,7 +387,7 @@ private:
                              NCCLCommunicator& comm) override;
 };
 
-void LLamaGradientsBlockSharded_AllToall::scatter_reduce(int layer_idx, sLLamaBlockWeights<Tensor>& dw, cudaStream_t stream, cudaEvent_t signal, NCCLCommunicator& comm) {
+void LLamaGradientsBlockSharded_AllToAll::scatter_reduce(int layer_idx, sLLamaBlockWeights<Tensor>& dw, cudaStream_t stream, cudaEvent_t signal, NCCLCommunicator& comm) {
     auto& sw = get_block_shard(layer_idx, stream);
     int rank = sw.LN1_w.ShardIndex;
 
@@ -426,7 +426,7 @@ void LLamaGradientsBlockSharded_AllToall::scatter_reduce(int layer_idx, sLLamaBl
     comm.execute_transaction(signal);
 }
 
-void LLamaGradientsBlockSharded_AllToall::sr_accumulate_tensor(TensorShard& dst, Tensor& src, cudaStream_t stream, bool first, float scale, int shard, unsigned seed) {
+void LLamaGradientsBlockSharded_AllToAll::sr_accumulate_tensor(TensorShard& dst, Tensor& src, cudaStream_t stream, bool first, float scale, int shard, unsigned seed) {
     Tensor local_slice = shard_view(src, shard, dst.NumShards);
     if(first) {
         CUDA_CHECK(cudaMemcpyAsync(dst.Data, local_slice.Data, local_slice.bytes(), cudaMemcpyDeviceToDevice, stream));
@@ -435,7 +435,7 @@ void LLamaGradientsBlockSharded_AllToall::sr_accumulate_tensor(TensorShard& dst,
     }
 }
 
-void LLamaGradientsBlockSharded_AllToall::sr_accumulate_layer(int layer_idx,
+void LLamaGradientsBlockSharded_AllToAll::sr_accumulate_layer(int layer_idx,
                                                  sLLamaBlockWeights<Tensor>& dw,
                                                  sLLamaBlockWeights<TensorShard> sw,
                                                  cudaStream_t stream,
@@ -470,7 +470,7 @@ void LLamaGradientsBlockSharded_AllToall::sr_accumulate_layer(int layer_idx,
 std::unique_ptr<LLamaGradsManager> LLamaGradsManager::create(std::uint64_t seed, int step, const LLamaConfig& config, const LLamaOptions& options, int rank, int world, const std::shared_ptr<TensorAllocator>& alloc) {
     if (options.ShardGradients) {
         if(options.UseAllToAllReduce) {
-            return std::make_unique<LLamaGradientsBlockSharded_AllToall>(seed, step, config, rank, world, alloc);
+            return std::make_unique<LLamaGradientsBlockSharded_AllToAll>(seed, step, config, rank, world, alloc);
         } else {
             return std::make_unique<LLamaGradientsBlockSharded_ScatterReduce>(seed, step, config, rank, world, alloc);
         }
