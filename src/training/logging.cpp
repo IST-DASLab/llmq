@@ -12,7 +12,7 @@
 
 #include "dataloader.h"
 #include "utilities/comm.h"
-#include "utilities/nvml.h"
+#include "utilities/gpu_info.h"
 #include "utilities/utils.h"
 #include <iostream>
 

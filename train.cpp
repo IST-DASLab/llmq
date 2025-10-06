@@ -4,7 +4,7 @@
 
 
 #include "utilities/safetensors.h"
-#include "utilities/nvml.h"
+#include "utilities/gpu_info.h"
 #include "utilities/sol.h"
 #include "utilities/comm.h"
 
@@ -227,7 +227,7 @@ void TrainingRunner::run_training(int argc, const char** argv, NCCLCommunicator&
             ::printf(fmt, args...);
     };
 
-    GPUUtilTracker gpu_util;
+    std::unique_ptr<IGPUUtilTracker> gpu_util = IGPUUtilTracker::create();
     int total_batch_size = B * T * comm.world_size() * GradAccSteps;
 
     std::string config_path = ModelRootPath + "/config.json";
@@ -401,7 +401,7 @@ void TrainingRunner::run_training(int argc, const char** argv, NCCLCommunicator&
         }
 
         if (LogGPUEvery > 0 && step % LogGPUEvery == 0) {
-            logger.log_gpu_state(step, 0, gpu_util.update());
+            logger.log_gpu_state(step, 0, gpu_util->update());
         }
 
         float lr = schedule.get_lr(step);

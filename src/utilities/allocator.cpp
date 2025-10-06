@@ -8,7 +8,7 @@
 
 #include <fmt/core.h>
 
-#include "utilities/nvml.h"
+#include "utilities/gpu_info.h"
 
 TensorAllocator::TensorAllocator(TensorAllocator&&) noexcept = default;
 TensorAllocator& TensorAllocator::operator=(TensorAllocator&&) noexcept = default;

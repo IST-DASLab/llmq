@@ -109,7 +109,7 @@ add_library(libllmq SHARED
         src/utilities/safetensors.cpp
         ${CUFILE_SOURCE}
         src/utilities/allocator.cpp
-        src/utilities/nvml.cpp
+        src/utilities/gpu_info_nvml.cpp
         src/utilities/utils.cpp
         src/utilities/comm.cpp
         src/utilities/tensor.cpp
