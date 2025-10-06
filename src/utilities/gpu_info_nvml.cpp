@@ -1,11 +1,12 @@
 // Copyright (c) 2025, IST Austria, developed by Erik Schultheis
 //
 
-#include "nvml.h"
+#include "gpu_info.h"
 
 #include <type_traits>
 
 #include <fmt/core.h>
+#include <nvml.h>
 
 #include "utils.h"
 
@@ -46,7 +47,36 @@ inline const char* get_throttle_reason(unsigned long long bits) {
     }
 }
 
-GPUUtilTracker::GPUUtilTracker() : mDevice(nvml_get_device()) {
+class GPUUtilTrackerNVML : public IGPUUtilTracker {
+public:
+    GPUUtilTrackerNVML();
+    ~GPUUtilTrackerNVML();
+    const GPUUtilInfo& update();
+private:
+    GPUUtilInfo mInfo;
+    nvmlDevice_t mDevice;
+
+    long long mLastTimestamp;       // µs
+    std::size_t mLastPCIeRX;
+    std::size_t mLastPCIeTX;
+    unsigned long long mLastEnergy;
+
+    std::atomic<std::size_t> mIntervalPCIeRX{0};
+    std::atomic<std::size_t> mIntervalPCIeTX{0};
+    std::atomic<std::size_t> mIntervalEnergy{0};
+
+    std::size_t mTotalPCIeRX;
+    std::size_t mTotalPCIeTX;
+    std::size_t mTotalEnergy;
+
+    std::jthread mThread;
+};
+
+std::unique_ptr<IGPUUtilTracker> IGPUUtilTracker::create() {
+    return std::make_unique<GPUUtilTrackerNVML>();
+}
+
+GPUUtilTrackerNVML::GPUUtilTrackerNVML() : mDevice(nvml_get_device()) {
     nvmlFieldValue_t fields[] = {{NVML_FI_DEV_PCIE_COUNT_RX_BYTES}, {NVML_FI_DEV_PCIE_COUNT_TX_BYTES}, {NVML_FI_DEV_TOTAL_ENERGY_CONSUMPTION, 0}};
     NVML_CHECK(nvmlDeviceGetFieldValues(mDevice, 3, fields));
     NVML_CHECK(fields[0].nvmlReturn);
@@ -105,11 +135,11 @@ GPUUtilTracker::GPUUtilTracker() : mDevice(nvml_get_device()) {
     });
 }
 
-GPUUtilTracker::~GPUUtilTracker() {
+GPUUtilTrackerNVML::~GPUUtilTrackerNVML() {
     mThread.request_stop();
 }
 
-const GPUUtilInfo& GPUUtilTracker::update() {
+const GPUUtilInfo& GPUUtilTrackerNVML::update() {
     // query different infos directly
     NVML_CHECK(nvmlDeviceGetClockInfo(mDevice, NVML_CLOCK_SM, &mInfo.clock));
     NVML_CHECK(nvmlDeviceGetMaxClockInfo(mDevice, NVML_CLOCK_SM, &mInfo.max_clock));

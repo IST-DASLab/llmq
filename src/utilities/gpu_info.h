@@ -9,8 +9,6 @@
 #include <string>
 #include <thread>
 
-#include <nvml.h>
-
 struct GPUUtilInfo {
     unsigned int clock;
     unsigned int max_clock;
@@ -35,29 +33,13 @@ struct GPUUtilInfo {
 std::size_t get_mem_reserved();
 std::string get_gpu_name();
 
-class GPUUtilTracker {
+class IGPUUtilTracker {
 public:
-    GPUUtilTracker();
-    ~GPUUtilTracker();
-    const GPUUtilInfo& update();
-private:
-    GPUUtilInfo mInfo;
-    nvmlDevice_t mDevice;
+    IGPUUtilTracker() = default;
+    virtual ~IGPUUtilTracker() = default;
+    virtual const GPUUtilInfo& update() = 0;
 
-    long long mLastTimestamp;       // µs
-    std::size_t mLastPCIeRX;
-    std::size_t mLastPCIeTX;
-    unsigned long long mLastEnergy;
-
-    std::atomic<std::size_t> mIntervalPCIeRX{0};
-    std::atomic<std::size_t> mIntervalPCIeTX{0};
-    std::atomic<std::size_t> mIntervalEnergy{0};
-
-    std::size_t mTotalPCIeRX;
-    std::size_t mTotalPCIeTX;
-    std::size_t mTotalEnergy;
-
-    std::jthread mThread;
+    static std::unique_ptr<IGPUUtilTracker> create();
 };
 
 #endif //LLMQ_SRC_UTILITIES_NVML_H

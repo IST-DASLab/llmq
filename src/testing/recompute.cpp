@@ -3,7 +3,7 @@
 
 
 #include "utilities/safetensors.h"
-#include "utilities/nvml.h"
+#include "utilities/gpu_info.h"
 #include "utilities/sol.h"
 #include "utilities/comm.h"
 
