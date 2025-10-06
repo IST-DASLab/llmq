@@ -193,6 +193,9 @@ void adamw_update(Tensor& params_memory, const Tensor& grads_memory, Tensor& m_m
                   float learning_rate, float beta1, float beta2, int t, float eps, float weight_decay,
                   const float* grad_scale, float* abs_max, unsigned int seed, cudaStream_t stream);
 
+void adamw_update(nv_bfloat16* params_memory, const nv_bfloat16* grads_memory, __nv_fp8_e4m3* m_memory, nv_bfloat16* v_memory, size_t num_parameters,
+                  float learning_rate, float beta1, float beta2, int t, float eps, float weight_decay,
+                  const float* grad_scale, float* abs_max, unsigned int seed, cudaStream_t stream);
 
 // quantization
 void abs_max(float* scale, const float* in, long N, const cudaDeviceProp& dp, cudaStream_t stream);
