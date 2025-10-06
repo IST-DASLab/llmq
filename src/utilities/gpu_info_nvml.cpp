@@ -11,17 +11,32 @@
 #include "utils.h"
 
 
-inline void nvml_check(nvmlReturn_t status, const char *file, int line) {
-    if (status != NVML_SUCCESS) {
+inline nvmlReturn_t nvml_check(nvmlReturn_t status, const char *file, int line, bool allow_unsupported) {
+    if(status == NVML_ERROR_NOT_SUPPORTED && allow_unsupported) {
+        static bool warned = false;
+        if(!warned) {
+            warned = true;
+            fprintf(stderr, "[NVML WARNING] NVML_ERROR_NOT_SUPPORTED\n");
+        }
+    } else if(status == NVML_ERROR_NO_PERMISSION && allow_unsupported) {
+        static bool warned = false;
+        if(!warned) {
+            warned = true;
+            fprintf(stderr, "[NVML WARNING] NVML_ERROR_NO_PERMISSION\n");
+        }
+    } else if (status != NVML_SUCCESS) {
         throw std::runtime_error(fmt::format("[NVML ERROR] at file {}:{}:\n{}\n", file, line, nvmlErrorString(status)));
     }
+    return status;
 };
-#define NVML_CHECK(err) (nvml_check(err, __FILE__, __LINE__))
+// the _U version of the macro does not throw an exception on unsupported features
+#define NVML_CHECK(err) (nvml_check(err, __FILE__, __LINE__, false))
+#define NVML_CHECK_U(err) (nvml_check(err, __FILE__, __LINE__, true))
 
 inline nvmlDevice_t nvml_get_device() {
     thread_local bool needs_init = true;
     thread_local nvmlDevice_t device;
-    if(needs_init) {
+    if (needs_init) {
         needs_init = false;
         NVML_CHECK(nvmlInit());
         char bus_id[256];
@@ -34,7 +49,7 @@ inline nvmlDevice_t nvml_get_device() {
 }
 
 inline const char* get_throttle_reason(unsigned long long bits) {
-    if(bits & (nvmlClocksThrottleReasonSwPowerCap | nvmlClocksThrottleReasonHwPowerBrakeSlowdown)) {
+    if (bits & (nvmlClocksThrottleReasonSwPowerCap | nvmlClocksThrottleReasonHwPowerBrakeSlowdown)) {
         return "power cap";
     } else if (bits & (nvmlClocksThrottleReasonSwThermalSlowdown | nvmlClocksThrottleReasonHwThermalSlowdown)) {
         return "thermal cap";
@@ -51,7 +66,7 @@ class GPUUtilTrackerNVML : public IGPUUtilTracker {
 public:
     GPUUtilTrackerNVML();
     ~GPUUtilTrackerNVML();
-    const GPUUtilInfo& update();
+    const GPUUtilInfo& update() override;
 private:
     GPUUtilInfo mInfo;
     nvmlDevice_t mDevice;
@@ -137,28 +152,33 @@ GPUUtilTrackerNVML::GPUUtilTrackerNVML() : mDevice(nvml_get_device()) {
 
 GPUUtilTrackerNVML::~GPUUtilTrackerNVML() {
     mThread.request_stop();
+    mThread.join();
+    NVML_CHECK(nvmlShutdown());
 }
 
 const GPUUtilInfo& GPUUtilTrackerNVML::update() {
-    // query different infos directly
-    NVML_CHECK(nvmlDeviceGetClockInfo(mDevice, NVML_CLOCK_SM, &mInfo.clock));
-    NVML_CHECK(nvmlDeviceGetMaxClockInfo(mDevice, NVML_CLOCK_SM, &mInfo.max_clock));
-    if (const nvmlReturn_t status = nvmlDeviceGetPowerManagementLimit(mDevice, &mInfo.power_limit); status == NVML_ERROR_NOT_SUPPORTED) {
-        mInfo.power_limit = 0;
-    } else if (status != NVML_SUCCESS) {
-        NVML_CHECK(status);
-    }
+    // set default values to indicate not-supported operations
+    mInfo.clock = 0;
+    mInfo.max_clock = 0;
+    mInfo.power_limit = 0;
+    mInfo.temperature = 0;
+    mInfo.temp_slowdown = 0;
+    mInfo.fan = 0;
+    mInfo.gpu_utilization = -1.f;
+    mInfo.mem_utilization = -1.f;
+    mInfo.throttle_reason = "not supported";
 
-    NVML_CHECK(nvmlDeviceGetTemperature(mDevice, NVML_TEMPERATURE_GPU, &mInfo.temperature));
-    NVML_CHECK(nvmlDeviceGetTemperatureThreshold(mDevice, NVML_TEMPERATURE_THRESHOLD_SLOWDOWN, &mInfo.temp_slowdown));
+    // query different infos directly
+    NVML_CHECK_U(nvmlDeviceGetClockInfo(mDevice, NVML_CLOCK_SM, &mInfo.clock));
+    NVML_CHECK_U(nvmlDeviceGetMaxClockInfo(mDevice, NVML_CLOCK_SM, &mInfo.max_clock));
+    NVML_CHECK_U(nvmlDeviceGetPowerManagementLimit(mDevice, &mInfo.power_limit));
+    NVML_CHECK_U(nvmlDeviceGetTemperature(mDevice, NVML_TEMPERATURE_GPU, &mInfo.temperature));
+    NVML_CHECK_U(nvmlDeviceGetTemperatureThreshold(mDevice, NVML_TEMPERATURE_THRESHOLD_SLOWDOWN, &mInfo.temp_slowdown));
     unsigned long long throttle;
-    NVML_CHECK(nvmlDeviceGetCurrentClocksThrottleReasons(mDevice, &throttle));
-    mInfo.throttle_reason = get_throttle_reason(throttle);
-    if (const nvmlReturn_t status = nvmlDeviceGetFanSpeed(mDevice, &mInfo.fan); status == NVML_ERROR_NOT_SUPPORTED) {
-        mInfo.fan = 0;
-    } else if (status != NVML_SUCCESS) {
-        NVML_CHECK(status);
+    if(NVML_CHECK_U(nvmlDeviceGetCurrentClocksThrottleReasons(mDevice, &throttle)) == NVML_SUCCESS) {
+        mInfo.throttle_reason = get_throttle_reason(throttle);
     }
+    NVML_CHECK_U(nvmlDeviceGetFanSpeed(mDevice, &mInfo.fan));
 
     // For "utilization", we look at recorded samples. In principle, we could query the driver for how many samples
     // to request, but then we'd need to dynamically allocate sufficient space. Let's just hard-code a limit of 128,
@@ -167,24 +187,24 @@ const GPUUtilInfo& GPUUtilTrackerNVML::update() {
     nvmlSample_t buffer[BUFFER_LIMIT];
     nvmlValueType_t v_type;
     unsigned int sample_count = BUFFER_LIMIT;
-    NVML_CHECK(nvmlDeviceGetSamples(mDevice, NVML_GPU_UTILIZATION_SAMPLES, 0, &v_type, &sample_count, buffer));
-    float gpu_utilization = 0.f;
-    for(unsigned i = 0; i < sample_count; ++i) {
-        gpu_utilization += (float)buffer[i].sampleValue.uiVal;
+    if(NVML_CHECK_U(nvmlDeviceGetSamples(mDevice, NVML_GPU_UTILIZATION_SAMPLES, 0, &v_type, &sample_count, buffer)) == NVML_SUCCESS) {
+        float gpu_utilization = 0.f;
+        for(unsigned i = 0; i < sample_count; ++i) {
+            gpu_utilization += (float)buffer[i].sampleValue.uiVal;
+        }
+        mInfo.gpu_utilization = gpu_utilization / (float)sample_count;
     }
-    gpu_utilization /= (float)sample_count;
 
     // sample count may have been modified by the query above; reset back to buffer size
     sample_count = BUFFER_LIMIT;
-    NVML_CHECK(nvmlDeviceGetSamples(mDevice, NVML_MEMORY_UTILIZATION_SAMPLES, 0, &v_type, &sample_count, buffer));
-    float mem_utilization = 0.f;
-    for(unsigned i = 0; i < sample_count; ++i) {
-        mem_utilization += (float)buffer[i].sampleValue.uiVal;
+    if(NVML_CHECK_U(nvmlDeviceGetSamples(mDevice, NVML_MEMORY_UTILIZATION_SAMPLES, 0, &v_type, &sample_count, buffer)) == NVML_SUCCESS) {
+        float mem_utilization = 0.f;
+        for(unsigned i = 0; i < sample_count; ++i) {
+            mem_utilization += (float)buffer[i].sampleValue.uiVal;
+        }
+        mInfo.mem_utilization = mem_utilization / (float)sample_count;
     }
-    mem_utilization /= (float)sample_count;
 
-    mInfo.gpu_utilization = gpu_utilization;
-    mInfo.mem_utilization = mem_utilization;
     nvmlMemory_v2_t mem_info;
     mem_info.version = nvmlMemory_v2;
     NVML_CHECK(nvmlDeviceGetMemoryInfo_v2(mDevice, &mem_info));
