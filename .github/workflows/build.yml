@@ -6,9 +6,11 @@ on:
     branches:
       - master
       - release-*
+      - dev
   pull_request:
     branches:
       - master
+      - dev
 
 jobs:
   build:
