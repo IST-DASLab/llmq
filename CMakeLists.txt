@@ -1,6 +1,13 @@
 cmake_minimum_required(VERSION 3.28)
+
+# compile for native GPU if no GPU has been specified
+if(NOT DEFINED CMAKE_CUDA_ARCHITECTURES)
+    set(CMAKE_CUDA_ARCHITECTURES native)
+endif()
+
 include(FetchContent)
 project(HALO_cpp CUDA CXX)
+
 set(CMAKE_CUDA_STANDARD 20)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
