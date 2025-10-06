@@ -153,6 +153,8 @@ void adamw_update(Tensor& params_memory, const Tensor& grads_memory, Tensor& m_m
         adamw_update(params_memory.get<nv_bfloat16>(), grads_memory.get<nv_bfloat16>(), m_memory.get<nv_bfloat16>(), v_memory.get<float>(), num_parameters, learning_rate, beta1, beta2, t, eps, weight_decay, grad_scale, abs_max, seed, stream);
     } else if(params_memory.DType == ETensorDType::BF16 && m_memory.DType == ETensorDType::BF16 && v_memory.DType == ETensorDType::BF16) {
         adamw_update(params_memory.get<nv_bfloat16>(), grads_memory.get<nv_bfloat16>(), m_memory.get<nv_bfloat16>(), v_memory.get<nv_bfloat16>(), num_parameters, learning_rate, beta1, beta2, t, eps, weight_decay, grad_scale, abs_max, seed, stream);
+    }  else if(params_memory.DType == ETensorDType::BF16 && m_memory.DType == ETensorDType::FP8_E4M3 && v_memory.DType == ETensorDType::BF16) {
+        adamw_update(params_memory.get<nv_bfloat16>(), grads_memory.get<nv_bfloat16>(), m_memory.get<__nv_fp8_e4m3>(), v_memory.get<nv_bfloat16>(), num_parameters, learning_rate, beta1, beta2, t, eps, weight_decay, grad_scale, abs_max, seed, stream);
     } else {
         throw std::logic_error("adamw_update: unsupported dtype");
     }

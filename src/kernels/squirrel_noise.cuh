@@ -3,6 +3,7 @@
 #define LLMQ_SQUIRREL_NOISE_CUH
 
 #include <cuda_bf16.h>
+#include <cuda_fp8.h>
 
 // ----------------------------------------------------------------------------
 // Random Number Generation used in Stochastic Rounding
@@ -52,6 +53,24 @@ __device__ __forceinline__ void stochastic_rounding(float in, nv_bfloat16 *out, 
     unsigned int rounded_bits = float_bits & 0x0000FFFF;
     float_bits = (rounded_bits > threshold) ? (float_bits | 0xFFFF) : (float_bits  & ~0xFFFF);
     *out = __float2bfloat16_rn(__uint_as_float(float_bits));
+}
+
+__device__ __forceinline__ void stochastic_rounding(float in, __nv_fp8_e4m3 *out, unsigned int seed, bool noise=true) {
+    // out of range?
+    if (fabs(in) > 448.f) {
+        out->__x = __nv_cvt_float_to_fp8(in, __NV_SATFINITE, __NV_E4M3);
+    } else if (fabs(in) < 0.015625) {
+        // TODO align SR to mantissa
+        out->__x = __nv_cvt_float_to_fp8(in, __NV_SATFINITE, __NV_E4M3);
+    } else {
+        // makes sure each thread gets a different random number
+        unsigned int random = noise ? get_noise_2d(threadIdx.x, blockIdx.x * blockDim.x + blockIdx.y, seed) : seed;
+        unsigned int threshold = random & 0xFFFFF;
+        unsigned int float_bits = __float_as_uint(in);
+        unsigned int rounded_bits = float_bits & 0x000FFFFF;
+        float_bits = (rounded_bits > threshold) ? (float_bits | 0xFFFFF) : (float_bits  & ~0xFFFFF);
+        out->__x = __nv_cvt_float_to_fp8(__uint_as_float(float_bits), __NV_SATFINITE, __NV_E4M3);
+    }
 }
 
 __device__ __forceinline__ void stochastic_rounding(float in, float *out, unsigned int seed, bool noise=true) {

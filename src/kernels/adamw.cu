@@ -24,7 +24,7 @@ template <typename floatX, typename floatM, typename floatV>
 __device__ auto adamw_update(floatX* params_memory, const floatX* grads_memory, floatM* m_memory, floatV* v_memory, size_t num_parameters,
                              float learning_rate, float beta1, float beta2, float beta1_correction, float beta2_correction, float eps, float weight_decay,
                              float grad_scale, unsigned int seed, long idx) {
-    constexpr int VecElems = std::max({16 / sizeof(floatX), 16 / sizeof(floatM), 16 / sizeof(floatV)});
+    constexpr int VecElems = std::min({16 / sizeof(floatX), 16 / sizeof(floatM), 16 / sizeof(floatV)});
     using vec_x_t = GenericVector<floatX, VecElems>;
     using vec_m_t = GenericVector<floatM, VecElems>;
     using vec_v_t = GenericVector<floatV, VecElems>;
@@ -74,8 +74,7 @@ template <typename floatX, typename floatM, typename floatV>
 __global__ void adamw_kernel(floatX* params_memory, const floatX* grads_memory, floatM* m_memory, floatV* v_memory, size_t num_parameters,
                              float learning_rate, float beta1, float beta2, float beta1_correction, float beta2_correction, float eps, float weight_decay,
                              const float* grad_scale, float* abs_max, unsigned int seed) {
-
-    constexpr int VecElems = std::max({16 / sizeof(floatX), 16 / sizeof(floatM), 16 / sizeof(floatV)});
+    constexpr int VecElems = std::min({16 / sizeof(floatX), 16 / sizeof(floatM), 16 / sizeof(floatV)});
     using vec_x_t = GenericVector<floatX, VecElems>;
     __shared__ float local_max;
     if(threadIdx.x == 0) {
@@ -106,7 +105,7 @@ template <typename floatX, typename floatM, typename floatV>
 void adamw_update_imp(floatX* params_memory, const floatX* grads_memory, floatM* m_memory, floatV* v_memory, size_t num_parameters,
                       float learning_rate, float beta1, float beta2, int t, float eps, float weight_decay,
                       const float* grad_scale, float* abs_max, unsigned int seed, cudaStream_t stream) {
-    constexpr int VecElems = std::max({16 / sizeof(floatX), 16 / sizeof(floatM), 16 / sizeof(floatV)});
+    constexpr int VecElems = std::min({16 / sizeof(floatX), 16 / sizeof(floatM), 16 / sizeof(floatV)});
     // AdamW update
     int block_size = 512;
     int num_blocks = div_ceil(num_parameters, (size_t)(block_size * VecElems));
@@ -137,6 +136,12 @@ void adamw_update(nv_bfloat16* params_memory, const nv_bfloat16* grads_memory, n
 }
 
 void adamw_update(nv_bfloat16* params_memory, const nv_bfloat16* grads_memory, nv_bfloat16* m_memory, nv_bfloat16* v_memory, size_t num_parameters,
+                  float learning_rate, float beta1, float beta2, int t, float eps, float weight_decay,
+                  const float* grad_scale, float* abs_max, unsigned int seed, cudaStream_t stream) {
+    adamw_update_imp(params_memory, grads_memory, m_memory, v_memory, num_parameters, learning_rate, beta1, beta2, t, eps, weight_decay, grad_scale, abs_max, seed, stream);
+}
+
+void adamw_update(nv_bfloat16* params_memory, const nv_bfloat16* grads_memory, __nv_fp8_e4m3* m_memory, nv_bfloat16* v_memory, size_t num_parameters,
                   float learning_rate, float beta1, float beta2, int t, float eps, float weight_decay,
                   const float* grad_scale, float* abs_max, unsigned int seed, cudaStream_t stream) {
     adamw_update_imp(params_memory, grads_memory, m_memory, v_memory, num_parameters, learning_rate, beta1, beta2, t, eps, weight_decay, grad_scale, abs_max, seed, stream);
