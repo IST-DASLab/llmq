@@ -41,7 +41,6 @@ void fill_normal(nv_bfloat16* dst, std::size_t count, float mean, float std, uns
 
 template<typename floatX>
 __global__ void fill_kernel(floatX* dst, floatX value, std::size_t count) {
-    curandStatePhilox4_32_10_t state;
     long id = threadIdx.x + blockIdx.x * blockDim.x;
     if (id >= count) return;
     // TODO vectorize
