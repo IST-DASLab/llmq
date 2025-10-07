@@ -19,6 +19,7 @@ These are:
 * [json](https://github.com/nlohmann/json)
 * [cudnn-frontend](https://github.com/NVIDIA/cudnn-frontend)
 * [CLI11](https://github.com/CLIUtils/CLI11)
+* [fmt](https://github.com/fmtlib/fmt)
 
 To build the training executable, run
 ```shell

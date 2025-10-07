@@ -32,6 +32,8 @@ FetchContent_Declare(
         GIT_TAG v2.3.2
 )
 
+# we could use fmt only if std::format is not available, but (e.g., g++-12), but
+# since it is compatible with std::format, its easier to just use it consistently.
 FetchContent_Declare(
         fmt
         GIT_REPOSITORY https://github.com/fmtlib/fmt
