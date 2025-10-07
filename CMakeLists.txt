@@ -12,6 +12,10 @@ set(CMAKE_CUDA_STANDARD 20)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+# As cuFile might not be supported everywhere (WSL; AMD), make it an optional depencendy
+# with a fallback implementation
+option(USE_CUFILE "Enable cuFile support for optimized file I/O" ON)
+
 FetchContent_Declare(
         json
         URL https://github.com/nlohmann/json/releases/download/v3.12.0/json.tar.xz
@@ -40,14 +44,31 @@ FetchContent_Declare(
         GIT_TAG        12.0.0
 )
 
-find_package(CUDAToolkit COMPONENTS cuFile cuBLAS REQUIRED)
+find_package(CUDAToolkit COMPONENTS cuBLAS REQUIRED)
 
 FetchContent_MakeAvailable(json)
 FetchContent_MakeAvailable(cudnn-fe)
 FetchContent_MakeAvailable(cli11)
 FetchContent_MakeAvailable(fmt)
 
-# allow configuring search paths from env
+# optional cufile
+if(USE_CUFILE)
+    find_package(CUDAToolkit COMPONENTS cuFile QUIET)
+    if(TARGET CUDA::cuFile)
+        set(CUFILE_SOURCE src/utilities/cu_file.cpp)
+        set(CUFILE_LIBS CUDA::cuFile)
+    else()
+        set(USE_CUFILE 0)
+        message(WARNING "cuFile requested but not found, disabling cuFile support")
+    endif()
+endif ()
+
+if(NOT USE_CUFILE)
+    set(CUFILE_SOURCE src/utilities/cu_file_fallback.cpp)
+    set(CUFILE_LIBS "")
+endif ()
+
+    # allow configuring search paths from env
 set(NCCL_INCLUDE_DIR $ENV{NCCL_INCLUDE_DIR} CACHE PATH "Folder containing NCCL headers")
 set(NCCL_LIB_DIR $ENV{NCCL_LIB_DIR} CACHE PATH "Folder containing NCCL library")
 find_path(NCCL_INCLUDE_DIRS NAMES nccl.h HINTS ${NCCL_INCLUDE_DIR} REQUIRED)
@@ -86,7 +107,7 @@ message(STATUS "cuBLASLt Library: ${CUDA_cublasLt_LIBRARY}")
 
 add_library(libllmq SHARED
         src/utilities/safetensors.cpp
-        src/utilities/cu_file.cpp
+        ${CUFILE_SOURCE}
         src/utilities/allocator.cpp
         src/utilities/nvml.cpp
         src/utilities/utils.cpp
@@ -124,7 +145,7 @@ add_library(libllmq SHARED
         src/kernels/convert.cu
 )
 
-target_link_libraries(libllmq PRIVATE CUDA::cuFile cudnn_frontend ${CUDNN_LIBRARY} nvidia::nccl fmt::fmt-header-only)
+target_link_libraries(libllmq PRIVATE ${CUFILE_LIBS} cudnn_frontend ${CUDNN_LIBRARY} nvidia::nccl fmt::fmt-header-only)
 target_link_libraries(libllmq PUBLIC CUDA::cudart CUDA::cublasLt CUDA::nvml nlohmann_json::nlohmann_json)
 target_link_libraries(libllmq PUBLIC ${MULTI_GPU_DEPS})
 target_compile_definitions(libllmq PUBLIC ${MULTI_GPU_DEFS})
