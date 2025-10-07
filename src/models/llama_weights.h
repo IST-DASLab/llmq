@@ -124,11 +124,11 @@ protected:
     void setup_master_buffers(const LLamaConfig& config, TensorAllocator& alloc);
 
     struct sGatherData {
-        int LayerIdx = -1;
-        cudaEvent_t DoneEvent = nullptr;
-        bool Fetch = false;
-        bool Done = true;
-        int Version = -1;
+        int LayerIdx = -1;                  // which layer currently stored in this buffer
+        cudaEvent_t DoneEvent = nullptr;    // cuda event to synchronize actions
+        bool Fetch = false;                 // indicates whether a gather op has been scheduled
+        bool Done = true;                   // indicates whether the param is in use
+        int Version = -1;                   // last step at which we gathered this param
     };
 
     struct sQuantBlock {
