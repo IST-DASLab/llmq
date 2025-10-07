@@ -17,9 +17,21 @@ jobs:
     runs-on: ubuntu-24.04
     container:
       image: nvidia/cuda:12.6.3-cudnn-devel-ubuntu24.04
+    strategy:
+      matrix:
+        compiler:
+          - name: gcc
+            cc: /usr/bin/gcc-13
+            cxx: /usr/bin/g++-13
+            packages: gcc-13 g++-13
+          - name: clang
+            cc: /usr/bin/clang-18
+            cxx: /usr/bin/clang++-18
+            packages: clang-18 clang-tools-18
     env:
       CMAKE_GENERATOR: Ninja
-      CXX: /usr/bin/g++-13
+      CC: ${{ matrix.compiler.cc }}
+      CXX: ${{ matrix.compiler.cxx }}
       CMAKE_C_COMPILER_LAUNCHER: ccache
       CMAKE_CXX_COMPILER_LAUNCHER: ccache
       CMAKE_CUDA_COMPILER_LAUNCHER: ccache
@@ -28,16 +40,19 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Install deps
-        run: apt update && apt install -y cmake ninja-build git python3-dev gcc-13 g++-13 libopenmpi-dev
+        run: apt update && apt install -y build-essential cmake ninja-build git python3-dev ${{ matrix.compiler.packages }} libopenmpi-dev
 
       - name: Create build directory
         run: mkdir -p build
 
       - name: ccache
         uses: hendrikmuhs/ccache-action@v1.2
+        with:
+          key: ${{ matrix.compiler.name }}-build
 
       - name: CMake Configure
-        run: cmake -B build -S . -DCMAKE_CUDA_ARCHITECTURES=80
+        run: |
+          cmake -B build -S . -DCMAKE_CUDA_ARCHITECTURES=80
 
       - name: CMake Build
         run: cmake --build build --parallel --target recompute-test export-checkpoint train
@@ -54,5 +69,5 @@ jobs:
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: binaries
+          name: binaries-${{ matrix.compiler.name }}
           path: build-artifacts.tar.gz
