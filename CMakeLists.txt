@@ -111,6 +111,8 @@ add_library(libllmq SHARED
         src/kernels/transpose.cu
         src/kernels/vector_add.cu
         src/kernels/random.cu
+        src/kernels/fill.cu
+        src/kernels/convert.cu
 )
 
 target_link_libraries(libllmq PRIVATE CUDA::cuFile cudnn_frontend ${CUDNN_LIBRARY} nvidia::nccl)

@@ -9,6 +9,8 @@
 #include <unistd.h>
 
 #include "cu_file.h"
+
+#include "kernels/kernels.h"
 #include "utilities/dtype.h"
 #include "utilities/utils.h"
 
@@ -38,7 +40,7 @@ cuFileRef open_cufile(std::string file_name) {
 
 void cufile_read_bytes(CUfileHandle_t handle, std::byte* target, std::ptrdiff_t begin, std::ptrdiff_t end, std::string_view file_name) {
     if(end < begin) {
-        throw std::logic_error(std::format("Invalid range {} - {} in cufile_read_tensor for {}", begin, end, file_name));
+        throw std::logic_error(std::format("Invalid range {} - {} in cufile_read_bytes for {}", begin, end, file_name));
     }
     ssize_t ret = cuFileRead(handle, target, end - begin, begin, 0);
     if (ret < 0) {
@@ -56,29 +58,13 @@ void cufile_read_bytes(CUfileHandle_t handle, std::byte* target, std::ptrdiff_t 
     }
 }
 
-
-template<typename Src, typename Dst>
-__global__ void convert_tensor_kernel(Dst* target, const Src* source, std::size_t size) {
-    long tid = blockIdx.x * blockDim.x + threadIdx.x;
-    if(tid >= size) {
-        return;
-    }
-    target[tid] = static_cast<Dst>(source[tid]);
-}
-
-template<typename Src, typename Dst>
-void convert_tensor_launcher(Dst* target, const Src* source, std::size_t size) {
-    unsigned long n_blocks = div_ceil(size, 128ul);
-    convert_tensor_kernel<Src, Dst><<<n_blocks, 128>>>(target, source, size);
-}
-
 void convert_tensor_dispatch(std::byte* target, const std::byte* source, std::size_t size, ETensorDType t_type, ETensorDType s_type) {
     if(t_type == ETensorDType::FP32 && s_type == ETensorDType::BF16) {
-        convert_tensor_launcher(reinterpret_cast<float*>(target), reinterpret_cast<const nv_bfloat16*>(source), size);
+        convert_dtype(reinterpret_cast<float*>(target), reinterpret_cast<const nv_bfloat16*>(source), size);
     } else if(t_type == ETensorDType::BF16 && s_type == ETensorDType::FP32) {
-        convert_tensor_launcher(reinterpret_cast<nv_bfloat16*>(target), reinterpret_cast<const float*>(source), size);
+        convert_dtype(reinterpret_cast<nv_bfloat16*>(target), reinterpret_cast<const float*>(source), size);
     } else if(t_type == ETensorDType::BF16 && s_type == ETensorDType::FP16) {
-        convert_tensor_launcher(reinterpret_cast<nv_bfloat16*>(target), reinterpret_cast<const half*>(source), size);
+        convert_dtype(reinterpret_cast<nv_bfloat16*>(target), reinterpret_cast<const half*>(source), size);
     } else {
         throw std::runtime_error("Unsupported conversion");
     }
