@@ -41,3 +41,18 @@ jobs:
 
       - name: CMake Build
         run: cmake --build build --parallel --target recompute-test export-checkpoint train
+
+      - name: CMake Install to staging
+        run: |
+          mkdir -p install
+          cmake --install build --prefix install
+
+      - name: Create build artifact
+        run: |
+          tar -czf build-artifacts.tar.gz -C install .
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: binaries
+          path: build-artifacts.tar.gz

@@ -38,8 +38,6 @@ FetchContent_MakeAvailable(json)
 FetchContent_MakeAvailable(cudnn-fe)
 FetchContent_MakeAvailable(cli11)
 
-#find_package(nlohmann_json 3.12.0 REQUIRED)
-
 # allow configuring search paths from env
 set(NCCL_INCLUDE_DIR $ENV{NCCL_INCLUDE_DIR} CACHE PATH "Folder containing NCCL headers")
 set(NCCL_LIB_DIR $ENV{NCCL_LIB_DIR} CACHE PATH "Folder containing NCCL library")
@@ -131,3 +129,8 @@ target_link_libraries(recompute-test PRIVATE libllmq CLI11::CLI11)
 
 add_executable(export-checkpoint export-checkpoint.cpp)
 target_link_libraries(export-checkpoint PRIVATE libllmq CLI11::CLI11)
+
+install(TARGETS libllmq train recompute-test export-checkpoint
+        LIBRARY DESTINATION lib
+        RUNTIME DESTINATION bin
+)
