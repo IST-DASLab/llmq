@@ -32,11 +32,18 @@ FetchContent_Declare(
         GIT_TAG v2.3.2
 )
 
+FetchContent_Declare(
+        fmt
+        GIT_REPOSITORY https://github.com/fmtlib/fmt
+        GIT_TAG        12.0.0
+)
+
 find_package(CUDAToolkit COMPONENTS cuFile cuBLAS REQUIRED)
 
 FetchContent_MakeAvailable(json)
 FetchContent_MakeAvailable(cudnn-fe)
 FetchContent_MakeAvailable(cli11)
+FetchContent_MakeAvailable(fmt)
 
 # allow configuring search paths from env
 set(NCCL_INCLUDE_DIR $ENV{NCCL_INCLUDE_DIR} CACHE PATH "Folder containing NCCL headers")
@@ -77,7 +84,7 @@ message(STATUS "cuBLASLt Library: ${CUDA_cublasLt_LIBRARY}")
 
 add_library(libllmq SHARED
         src/utilities/safetensors.cpp
-        src/utilities/cu_file.cu
+        src/utilities/cu_file.cpp
         src/utilities/allocator.cpp
         src/utilities/nvml.cpp
         src/utilities/utils.cpp
@@ -115,7 +122,7 @@ add_library(libllmq SHARED
         src/kernels/convert.cu
 )
 
-target_link_libraries(libllmq PRIVATE CUDA::cuFile cudnn_frontend ${CUDNN_LIBRARY} nvidia::nccl)
+target_link_libraries(libllmq PRIVATE CUDA::cuFile cudnn_frontend ${CUDNN_LIBRARY} nvidia::nccl fmt::fmt-header-only)
 target_link_libraries(libllmq PUBLIC CUDA::cudart CUDA::cublasLt CUDA::nvml nlohmann_json::nlohmann_json)
 target_link_libraries(libllmq PUBLIC ${MULTI_GPU_DEPS})
 target_compile_definitions(libllmq PUBLIC ${MULTI_GPU_DEFS})

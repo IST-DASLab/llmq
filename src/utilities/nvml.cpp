@@ -3,15 +3,16 @@
 
 #include "nvml.h"
 
-#include <format>
 #include <type_traits>
+
+#include <fmt/core.h>
 
 #include "utils.h"
 
 
 inline void nvml_check(nvmlReturn_t status, const char *file, int line) {
     if (status != NVML_SUCCESS) {
-        throw std::runtime_error(std::format("[NVML ERROR] at file {}:{}:\n{}\n", file, line, nvmlErrorString(status)));
+        throw std::runtime_error(fmt::format("[NVML ERROR] at file {}:{}:\n{}\n", file, line, nvmlErrorString(status)));
     }
 };
 #define NVML_CHECK(err) (nvml_check(err, __FILE__, __LINE__))

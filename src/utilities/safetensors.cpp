@@ -6,7 +6,6 @@
 #include <bit>
 #include <cstdint>
 #include <filesystem>
-#include <format>
 #include <fstream>
 #include <iostream>
 #include <string>
@@ -16,6 +15,7 @@
 #include <sys/mman.h>
 #include <unistd.h>
 
+#include <fmt/core.h>
 #include <nlohmann/json.hpp>
 
 #include "allocator.h"
@@ -56,12 +56,12 @@ void SafeTensorEntry::read_raw(Tensor& target, std::ptrdiff_t offset,
                                std::ptrdiff_t elements, bool allow_cast) const {
     long nelem = (mDataEnd - mDataBegin) / get_dtype_size(mDType);
     if (offset < 0 || offset + elements > nelem)
-        throw std::runtime_error(std::format("Invalid read range: offset={}, elements={}, size={}",
+        throw std::runtime_error(fmt::format("Invalid read range: offset={}, elements={}, size={}",
                                              offset, elements, nelem));
 
     // Check if target has enough space (in bytes)
     if (target.bytes() != elements * get_dtype_size(mDType))
-        throw std::runtime_error(std::format("Target tensor size mismatch for `{}`: has {} bytes, needs {} elements of {} bytes",
+        throw std::runtime_error(fmt::format("Target tensor size mismatch for `{}`: has {} bytes, needs {} elements of {} bytes",
                                                  mName, target.bytes(), elements, get_dtype_size(mDType)));
 
     std::ptrdiff_t start = mDataBegin + offset * get_dtype_size(mDType);
@@ -69,7 +69,7 @@ void SafeTensorEntry::read_raw(Tensor& target, std::ptrdiff_t offset,
 
     // Validate dtype
     if (mDType != target.DType && !allow_cast)
-        throw std::runtime_error(std::format("DType mismatch: tensor has {}, file has {}",
+        throw std::runtime_error(fmt::format("DType mismatch: tensor has {}, file has {}",
                                              dtype_to_str(target.DType), dtype_to_str(mDType)));
 
     if (mDType == target.DType) {
@@ -90,12 +90,12 @@ void SafeTensorEntry::read_raw(Tensor& target, std::ptrdiff_t offset,
 
 void SafeTensorEntry::read_tensor(Tensor& target, bool allow_cast) const {
     if (target.Rank != static_cast<int>(mShape.size()))
-        throw std::runtime_error(std::format("Rank mismatch for tensor `{}`: expected {}, got {}",
+        throw std::runtime_error(fmt::format("Rank mismatch for tensor `{}`: expected {}, got {}",
                                              mName, mShape.size(), target.Rank));
 
     for (int i = 0; i < target.Rank; ++i)
         if (mShape[i] != target.Sizes[i])
-            throw std::runtime_error(std::format("Shape mismatch for tensor `{}` at dim {}: expected {}, got {}",
+            throw std::runtime_error(fmt::format("Shape mismatch for tensor `{}` at dim {}: expected {}, got {}",
                                                  mName, i, mShape[i], target.Sizes[i]));
     read_raw(target, 0, target.nelem(), allow_cast);
 }
@@ -290,11 +290,11 @@ void SafeTensorWriter::write_raw(const std::string& name, std::ptrdiff_t offset,
     ETensorDType dtype = tensor.DType;
     long nelem = found->second.Size / get_dtype_size(dtype);
     if (offset < 0 || offset + elements > nelem)
-        throw std::logic_error(std::format("Invalid write range for tensor `{}`: offset={}, elements={}, size={}",
+        throw std::logic_error(fmt::format("Invalid write range for tensor `{}`: offset={}, elements={}, size={}",
                                            name, offset, elements, nelem));
 
     if (found->second.DType != dtype)
-        throw std::logic_error(std::format("DType mismatch for tensor `{}`: registered as {}, writing as {}",
+        throw std::logic_error(fmt::format("DType mismatch for tensor `{}`: registered as {}, writing as {}",
                                            name, dtype_to_str(found->second.DType), dtype_to_str(dtype)));
 
     std::ptrdiff_t write_start = found->second.Begin + mHeaderSize + offset * get_dtype_size(dtype);

@@ -3,15 +3,15 @@
 
 #include "llama_config.h"
 
-#include <format>
 #include <fstream>
 
 #include <nlohmann/json.hpp>
+#include <fmt/core.h>
 
 LLamaConfig load_llama_config(const char* file_name, ETensorDType dtype) {
     std::ifstream file(file_name);
     if(!file.is_open()) {
-        throw std::runtime_error(std::format("could not open config file {}", file_name));
+        throw std::runtime_error(fmt::format("could not open config file {}", file_name));
     }
 
     auto config_json = nlohmann::json::parse(file);
@@ -26,7 +26,7 @@ LLamaConfig load_llama_config(const char* file_name, ETensorDType dtype) {
     } else if(archs.front() == "Qwen2ForCausalLM") {
         arch_id = LLamaConfig::QWEN2;
     } else {
-        throw std::runtime_error(std::format("unknown architecture {}", archs.front()));
+        throw std::runtime_error(fmt::format("unknown architecture {}", archs.front()));
     }
     LLamaConfig result;
     result.Architecture = arch_id;
@@ -69,7 +69,7 @@ LLamaConfig load_llama_config(const char* file_name, ETensorDType dtype) {
 void save_llama_config(const LLamaConfig& config, const char* file_name) {
     std::ofstream file(file_name);
     if(!file.is_open()) {
-        throw std::runtime_error(std::format("could not open file for writing {}", file_name));
+        throw std::runtime_error(fmt::format("could not open file for writing {}", file_name));
     }
 
     std::vector<std::string> archs;

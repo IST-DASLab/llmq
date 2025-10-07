@@ -3,11 +3,11 @@
 // Based on llm.c https://github.com/karpathy/llm.c
 
 #include <cstdio>
-#include <format>
 #include <optional>
 
 #include <cublasLt.h>
 #include <cublas_v2.h>
+#include <fmt/core.h>
 
 #include "kernels.h"
 #include "utilities/tensor.h"
@@ -26,7 +26,7 @@ thread_local float* device_one;
 inline void cublasCheck(cublasStatus_t status, const char *file, int line)
 {
     if (status != CUBLAS_STATUS_SUCCESS) {
-        throw std::runtime_error(std::format("cuBLAS ERROR ({}) at {}:{}", (int)status, file, line));
+        throw std::runtime_error(fmt::format("cuBLAS ERROR ({}) at {}:{}", (int)status, file, line));
     }
 }
 #define CUBLAS_CHECK(status) { cublasCheck((status), __FILE__, __LINE__); }
@@ -144,7 +144,7 @@ void matmul_cublaslt(floatO* d, const floatX* a, const floatX* b, const floatB* 
     cublasLtMatmulAlgoGetHeuristic(handle, operationDesc, ALayout, BLayout, CLayout, DLayout,
                                    preference, 1, &heuristic, &returnedResults);
     if (returnedResults == 0) {
-        throw std::runtime_error(std::format("No cuBLASLt algorithm: m: {}, n: {}, k: {}, bias: {}", n, m, k, has_bias));
+        throw std::runtime_error(fmt::format("No cuBLASLt algorithm: m: {}, n: {}, k: {}, bias: {}", n, m, k, has_bias));
     }
 
     // set whether to accumulate (i.e. D += C) or not - note this isn't considered in algorithm selection (?!)

@@ -3,10 +3,11 @@
 
 #include "comm.h"
 
-#include <format>
 #include <stdexcept>
+#include <variant>
 
 #include <nccl.h>
+#include <fmt/core.h>
 
 #include "kernels/kernels.h"
 #include "tensor.h"
@@ -14,7 +15,7 @@
 
 void nccl_check(ncclResult_t status, const char* file, int line) {
     if (status != ncclSuccess) {
-        throw std::runtime_error(std::format("NCCL error at {}:{}: {}", file, line, ncclGetErrorString(status)));
+        throw std::runtime_error(fmt::format("NCCL error at {}:{}: {}", file, line, ncclGetErrorString(status)));
     }
 }
 #define ncclCheck(err) (nccl_check(err, __FILE__, __LINE__))
@@ -225,9 +226,9 @@ void mpi_check(int status, const char *file, int line) {
         char mpi_error[4096];
         int mpi_error_len = 0;
         if(MPI_Error_string(status, &mpi_error[0], &mpi_error_len) == MPI_SUCCESS) {
-            throw std::runtime_error(std::format("Failed to create MPI error string for error at {}:{} ({})", file, line, status));
+            throw std::runtime_error(fmt::format("Failed to create MPI error string for error at {}:{} ({})", file, line, status));
         }
-        throw std::runtime_error(std::format("MPI error at {}:{}: {}", file, line, mpi_error));
+        throw std::runtime_error(fmt::format("MPI error at {}:{}: {}", file, line, mpi_error));
     }
 }
 #define mpiCheck(err) (mpi_check(err, __FILE__, __LINE__))

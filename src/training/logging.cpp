@@ -6,7 +6,9 @@
 #include <chrono>
 #include <cmath>
 #include <filesystem>
-#include <format>
+
+#include <fmt/core.h>
+#include <fmt/chrono.h>
 
 #include "dataloader.h"
 #include "utilities/comm.h"
@@ -40,24 +42,24 @@ void TrainingRunLogger::set_expected_time_per_token(long nanoseconds) {
 
 std::string fmt_token_count(long num_tokens) {
     if(num_tokens < 1'000'000 ) {
-        return std::format("{:4d}k", num_tokens / 1'000);
+        return fmt::format("{:4d}k", num_tokens / 1'000);
     } else if(num_tokens < 20'000'000 ) {
-        return std::format("{:4.1f}M", float(num_tokens / 1'000) / 1000.f);
+        return fmt::format("{:4.1f}M", float(num_tokens / 1'000) / 1000.f);
     } else if(num_tokens < 1'000'000'000 ) {
-        return std::format("{:4d}M", num_tokens / 1'000'000);
+        return fmt::format("{:4d}M", num_tokens / 1'000'000);
     } else if(num_tokens < 20'000'000'000 ) {
-        return std::format("{:4.1f}B", float(num_tokens / 1'000'000) / 1000.f);
+        return fmt::format("{:4.1f}B", float(num_tokens / 1'000'000) / 1000.f);
     } else if(num_tokens < 1'000'000'000'000 ) {
-        return std::format("{:4d}B", num_tokens / 1'000'000'000);
+        return fmt::format("{:4d}B", num_tokens / 1'000'000'000);
     } else if(num_tokens < 20'000'000'000'000 ) {
-        return std::format("{:4.1f}T", float(num_tokens / 1'000'000'000) / 1000.f);
+        return fmt::format("{:4.1f}T", float(num_tokens / 1'000'000'000) / 1000.f);
     } else {
-        return std::format("{:4d}T", num_tokens / 1'000'000'000'000);
+        return fmt::format("{:4d}T", num_tokens / 1'000'000'000'000);
     }
 }
 
 std::string format_data_loader(const DataLoader& loader, const char* split) {
-    return std::format(R"(  {{"log": "dataset", "split": "{}", "time": "{}", "step": 0, "files": {}, "tokens": {}, "file_index": {}, "chunk_index": {}, "seed": {}}})",
+    return fmt::format(R"(  {{"log": "dataset", "split": "{}", "time": "{}", "step": 0, "files": {}, "tokens": {}, "file_index": {}, "chunk_index": {}, "seed": {}}})",
         split, std::chrono::system_clock::now(), loader.num_files(), loader.num_tokens(), loader.file_index(), loader.chunk_index(), loader.seed());
 }
 
@@ -92,10 +94,10 @@ void TrainingRunLogger::log_options(const std::vector<std::pair<std::string_view
     for(auto& [name, value]: options) {
         auto log = [&](auto&& v){
             if(std::is_same_v<std::remove_cvref_t<decltype(v)>, std::string>) {
-                log_line(std::format(R"(  {{"log": "option", "time": "{}", "step": 0, "name": "{}", "value": "{}"}})",
+                log_line(fmt::format(R"(  {{"log": "option", "time": "{}", "step": 0, "name": "{}", "value": "{}"}})",
                                      std::chrono::system_clock::now(), name, v));
             } else {
-                log_line(std::format(R"(  {{"log": "option", "time": "{}", "step": 0, "name": "{}", "value": {}}})",
+                log_line(fmt::format(R"(  {{"log": "option", "time": "{}", "step": 0, "name": "{}", "value": {}}})",
                                      std::chrono::system_clock::now(), name, v));
             }
         };
@@ -106,7 +108,7 @@ void TrainingRunLogger::log_options(const std::vector<std::pair<std::string_view
         printf("[Options]\n");
         for(auto& [name, value]: options) {
             printf("  %-*s: ", option_length, name.data());
-            std::visit([](auto&& v){ printf("%s\n", std::format("{}", v).c_str()); }, value);
+            std::visit([](auto&& v){ printf("%s\n", fmt::format("{}", v).c_str()); }, value);
         }
         printf("\n");
     }
@@ -119,17 +121,17 @@ std::string format_tps(long eval_tokens, long duration_ms) {
 
     long tps = 1000ll * eval_tokens / duration_ms;
     if(tps < 100'000) {
-        return std::format("{:5}", tps);
+        return fmt::format("{:5}", tps);
     } else {
-        return std::format("{:4}k", tps / 1000);
+        return fmt::format("{:4}k", tps / 1000);
     }
 }
 
 std::string format_time(int duration_ms) {
     if (duration_ms >= 100'000) {
-        return std::format("{:5d}  s", duration_ms / 1000);
+        return fmt::format("{:5d}  s", duration_ms / 1000);
     } else {
-        return std::format("{:5d} ms", duration_ms);
+        return fmt::format("{:5d} ms", duration_ms);
     }
 }
 
@@ -150,13 +152,13 @@ void TrainingRunLogger::log_step(int step, float epoch, int step_tokens, int dur
         if (mExpectedTimePerToken > 0) {
             long peak = mExpectedTimePerToken * step_tokens / 1'000'000;
             double ratio = static_cast<double>(peak) / static_cast<double>(duration_ms);
-            sol_msg = std::format(" | sol {:.1f}%", ratio * 100.0);
+            sol_msg = fmt::format(" | sol {:.1f}%", ratio * 100.0);
         }
 
         printf("[T] step %5d [%5.1f%%] | time: %s | norm %10f | loss %10f | tps %s%s\n", step, progress, time_str.c_str(), norm, loss, tps_msg.c_str(), sol_msg.c_str());
         fflush(stdout);
     }
-    log_line(std::format(R"(  {{"log": "step", "time": "{}", "step": {}, "epoch": {}, "step_tokens": {}, "duration_ms": {}, "norm": {}, "loss": {}, "lr": {}}})",
+    log_line(fmt::format(R"(  {{"log": "step", "time": "{}", "step": {}, "epoch": {}, "step_tokens": {}, "duration_ms": {}, "norm": {}, "loss": {}, "lr": {}}})",
         std::chrono::system_clock::now(), step, epoch, step_tokens, duration_ms, norm, loss, lr ));
 }
 
@@ -174,14 +176,14 @@ void TrainingRunLogger::log_eval(int step, float epoch, int eval_tokens, int dur
     }
     mTotalTrainingLoss = 0;
     mTotalTrainingSteps = 0;
-    log_line(std::format(R"(  {{"log": "eval", "time": "{}", "step": {}, "epoch": {}, "eval_tokens": {}, "duration_ms": {}, "loss": {}}})",
+    log_line(fmt::format(R"(  {{"log": "eval", "time": "{}", "step": {}, "epoch": {}, "eval_tokens": {}, "duration_ms": {}, "loss": {}}})",
         std::chrono::system_clock::now(), step, epoch, eval_tokens, duration_ms, loss ));
 }
 
 void TrainingRunLogger::log_gpu_state(int step, int gpu_id, const GPUUtilInfo& gpu_util)
 {
     if(mRank != 0) return;
-    log_line(std::format(R"(  {{"log": "gpu", "time": "{}", "step": {}, "id": {}, "clock": {}, "max_clock": {}, "fan": {}, "power": {}, "power_limit": {}, "temperature": {}, "temp_slowdown": {}, "gpu_util": {}, "mem_util": {}, "throttle": "{}", "dram_free": {}, "pcie_rx": {}, "pcie_tx": {}}})",
+    log_line(fmt::format(R"(  {{"log": "gpu", "time": "{}", "step": {}, "id": {}, "clock": {}, "max_clock": {}, "fan": {}, "power": {}, "power_limit": {}, "temperature": {}, "temp_slowdown": {}, "gpu_util": {}, "mem_util": {}, "throttle": "{}", "dram_free": {}, "pcie_rx": {}, "pcie_tx": {}}})",
        std::chrono::system_clock::now(), step, gpu_id, gpu_util.clock, gpu_util.max_clock, gpu_util.fan,
        gpu_util.power, gpu_util.power_limit, gpu_util.temperature, gpu_util.temp_slowdown, gpu_util.gpu_utilization,
        gpu_util.mem_utilization, gpu_util.throttle_reason, gpu_util.mem_free, gpu_util.pcie_rx, gpu_util.pcie_tx ));
@@ -215,10 +217,10 @@ void TrainingRunLogger::log_gpu_model(NCCLCommunicator& comm)
         for (auto& d: all_gpus) {
             std::string uuid;
             for (char& byte: d.prop.uuid.bytes) {
-                uuid += std::format("{:02x}", byte);
+                uuid += fmt::format("{:02x}", byte);
             }
             std::string line =
-                std::format(
+                fmt::format(
                     R"(  {{"log": "gpu-model", "time": "{}", "rank": {}, "step": 0, "id": {}, "name": "{}", "l2_size": {}, "sm_count": {}, "major": {}, "minor": {}, "memory": {}, "free": {}, "reserved": {}, "uuid": "{}", "ecc": {}, "shared_mem": {}, "cuda_driver": {}, "cuda_runtime": {}}})",
                     d.time, d.rank, d.device_id, d.prop.name, d.prop.l2CacheSize, d.prop.multiProcessorCount, d.prop.major,
                     d.prop.minor, d.prop.totalGlobalMem, d.mem_free, d.mem_reserved, uuid,
@@ -240,11 +242,11 @@ void TrainingRunLogger::log_gpu_model(NCCLCommunicator& comm)
 void TrainingRunLogger::log_cmd(int argc, const char** argv)
 {
     if(mRank == 0) return;
-    std::string cmd = std::format(R"(  {{"log": "cmd", "time": "{}", "step": 0, "cmd": [)", std::chrono::system_clock::now());
+    std::string cmd = fmt::format(R"(  {{"log": "cmd", "time": "{}", "step": 0, "cmd": [)", std::chrono::system_clock::now());
     for (int i = 0; i < argc; i++)
     {
         if (i != 0) cmd += ", ";
-        cmd += std::format("\"{}\"", argv[i]);
+        cmd += fmt::format("\"{}\"", argv[i]);
     }
     cmd += "]}";
     log_line(cmd);
@@ -252,7 +254,7 @@ void TrainingRunLogger::log_cmd(int argc, const char** argv)
 
 void TrainingRunLogger::log_checkpoint(int step, std::string path, int duration_ms) {
     if(mRank != 0) return;
-    log_line(std::format(R"(  {{"log": "checkpoint", "time": "{}", "step": {}, "path": "{}", "duration_ms": {}}})",
+    log_line(fmt::format(R"(  {{"log": "checkpoint", "time": "{}", "step": {}, "path": "{}", "duration_ms": {}}})",
         std::chrono::system_clock::now(), step, path, duration_ms ));
 }
 
@@ -273,10 +275,10 @@ void TrainingRunLogger::log_allocator(const std::vector<std::pair<std::string, s
     for (auto& [name, amount]: stats) {
         if (!first) stat_str += ", ";
         first = false;
-        stat_str += std::format("{{\"name\": \"{}\", \"amount\": {}}}", name, amount);
+        stat_str += fmt::format("{{\"name\": \"{}\", \"amount\": {}}}", name, amount);
     }
     stat_str += "]";
-    std::string line = std::format(R"(  {{"log": "allocator", "time": "{}", "step": 0, "stats": {}}})", std::chrono::system_clock::now(), stat_str);
+    std::string line = fmt::format(R"(  {{"log": "allocator", "time": "{}", "step": 0, "stats": {}}})", std::chrono::system_clock::now(), stat_str);
     log_line(line);
 
     if (mVerbosity >= 0) {

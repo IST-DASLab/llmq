@@ -2,11 +2,11 @@
 //
 
 #include <cstring>
-#include <format>
 
 #include <cufile.h>
 #include <fcntl.h>
 #include <unistd.h>
+#include <fmt/core.h>
 
 #include "cu_file.h"
 
@@ -22,7 +22,7 @@ cuFileRef open_cufile(std::string file_name) {
 
     int fd = open(file_name.c_str(), O_RDONLY | O_DIRECT);
     if (fd < 0) {
-        throw std::runtime_error(std::format("cufile file open error ({}) for file {}: {}", errno, file_name, strerror(errno)));
+        throw std::runtime_error(fmt::format("cufile file open error ({}) for file {}: {}", errno, file_name, strerror(errno)));
     }
 
     // create cufile handle
@@ -40,21 +40,21 @@ cuFileRef open_cufile(std::string file_name) {
 
 void cufile_read_bytes(CUfileHandle_t handle, std::byte* target, std::ptrdiff_t begin, std::ptrdiff_t end, std::string_view file_name) {
     if(end < begin) {
-        throw std::logic_error(std::format("Invalid range {} - {} in cufile_read_bytes for {}", begin, end, file_name));
+        throw std::logic_error(fmt::format("Invalid range {} - {} in cufile_read_bytes for {}", begin, end, file_name));
     }
     ssize_t ret = cuFileRead(handle, target, end - begin, begin, 0);
     if (ret < 0) {
         if (ret == -1) {
             throw std::runtime_error(
-                    std::format("cufile read error ({}) for file {}, range {} - {}: {}", errno, file_name,
+                    fmt::format("cufile read error ({}) for file {}, range {} - {}: {}", errno, file_name,
                                 begin, end, strerror(errno)));
         } else {
             throw std::runtime_error(
-                    std::format("cufile read error ({}) for file {}, range {} - {}", -ret, file_name, begin,
+                    fmt::format("cufile read error ({}) for file {}, range {} - {}", -ret, file_name, begin,
                                 end));
         }
     } else if (ret != end - begin) {
-        throw std::runtime_error(std::format("cufile read error for file {}: expected {} bytes, got {}", file_name, end-begin, ret));
+        throw std::runtime_error(fmt::format("cufile read error for file {}: expected {} bytes, got {}", file_name, end-begin, ret));
     }
 }
 

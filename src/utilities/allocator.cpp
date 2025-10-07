@@ -3,9 +3,10 @@
 
 #include "allocator.h"
 
-#include <format>
 #include <iostream>
 #include <unordered_map>
+
+#include <fmt/core.h>
 
 #include "utilities/nvml.h"
 
@@ -119,7 +120,7 @@ Tensor TensorAllocator::allocate_impl(ETensorDType dtype, const char* name, EAll
             shape_str.pop_back();
             shape_str.pop_back();
             shape_str.push_back(']');
-            std::string message = std::format("Cuda OOM when allocating tensor {} of shape {} with dtype {} in context {}",
+            std::string message = fmt::format("Cuda OOM when allocating tensor {} of shape {} with dtype {} in context {}",
                                               name, shape_str, dtype_to_str(dtype), m_Stats->Context);
             throw std::runtime_error(message);
         }

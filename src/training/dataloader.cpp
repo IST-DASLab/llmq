@@ -9,9 +9,10 @@
 #include <cassert>
 #include <cstring>
 #include <filesystem>
-#include <format>
 #include <random>
 #include <ranges>
+
+#include <fmt/core.h>
 
 #include "utilities/tensor.h"
 #include "utilities/philox.h"
@@ -34,7 +35,7 @@ DataLoader::DataLoader(const std::vector<std::string>& file_list, int chunk_size
     mVocabSize = mFileInfos[0].VocabSize;
     for (auto& info: mFileInfos) {
         if (info.VocabSize != mVocabSize) {
-            throw std::runtime_error(std::format("Inconsistent vocabulary sizes. Expected {}, got {} in {}.", mVocabSize, info.VocabSize, info.FileName));
+            throw std::runtime_error(fmt::format("Inconsistent vocabulary sizes. Expected {}, got {} in {}.", mVocabSize, info.VocabSize, info.FileName));
         }
     }
 
@@ -66,7 +67,7 @@ std::vector<std::string> DataLoader::match_files(const std::string& pattern) {
         std::ranges::sort(files);
     } else {
         globfree(&glob_result);
-        throw std::runtime_error(std::format("Failed to match files with pattern '{}': {}", pattern, glob_result.gl_pathv[0]));
+        throw std::runtime_error(fmt::format("Failed to match files with pattern '{}': {}", pattern, glob_result.gl_pathv[0]));
     }
 
     globfree(&glob_result);
@@ -88,19 +89,19 @@ DataLoader::TokenFileInfo DataLoader::parse_token_file_header(const std::string&
     token_file.read((char*)header, sizeof(header));
     constexpr char MAGIC[] = {'B', 'I', 'N', '.', 'T', 'O', 'K', '\n'};
     if(std::memcmp(header, MAGIC, sizeof(MAGIC)) != 0) {
-        throw std::runtime_error(std::format("Invalid token file: '{}'", std::string_view((char*)header, sizeof(MAGIC))));
+        throw std::runtime_error(fmt::format("Invalid token file: '{}'", std::string_view((char*)header, sizeof(MAGIC))));
     }
 
     int version = header[2];
     if(version == 2) {
         info.VocabSize = header[5];
     } else if(version != 1) {
-        throw std::runtime_error(std::format("Unsupported token file version: {}", version));
+        throw std::runtime_error(fmt::format("Unsupported token file version: {}", version));
     }
 
     int bytes_per_token = header[3];
     if(bytes_per_token != 4) {
-        throw std::runtime_error(std::format("Unsupported bytes per token: {}", bytes_per_token));
+        throw std::runtime_error(fmt::format("Unsupported bytes per token: {}", bytes_per_token));
     }
 
     info.Version = version;

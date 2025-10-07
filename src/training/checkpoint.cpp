@@ -4,9 +4,9 @@
 #include "checkpoint.h"
 
 #include <filesystem>
-#include <format>
 
 #include <nlohmann/json.hpp>
+#include <fmt/core.h>
 
 #include "dataloader.h"
 #include "model.h"
@@ -14,7 +14,7 @@
 #include "utilities/safetensors.h"
 
 std::string get_checkpoint_path(std::string checkpoint_directory, int step) {
-    checkpoint_directory += std::format("/step_{:08}", step);
+    checkpoint_directory += fmt::format("/step_{:08}", step);
     return checkpoint_directory;
 }
 
@@ -28,11 +28,11 @@ std::string save_checkpoint(std::string target, int step, IModel& model, const D
 
     // weights
     // TODO don't duplicate weights if they are unsharded
-    write_safetensors(target + std::format("/weights.shard_{:03}_of_{:03}.safetensors", comm.rank(), comm.world_size()), model.weights());
+    write_safetensors(target + fmt::format("/weights.shard_{:03}_of_{:03}.safetensors", comm.rank(), comm.world_size()), model.weights());
 
     // sharded optimizer state
-    write_safetensors(target + std::format("/adam.m.shard_{:03}_of_{:03}.safetensors", comm.rank(), comm.world_size()), model.opt_momentum());
-    write_safetensors(target + std::format("/adam.v.shard_{:03}_of_{:03}.safetensors", comm.rank(), comm.world_size()), model.opt_variance());
+    write_safetensors(target + fmt::format("/adam.m.shard_{:03}_of_{:03}.safetensors", comm.rank(), comm.world_size()), model.opt_momentum());
+    write_safetensors(target + fmt::format("/adam.v.shard_{:03}_of_{:03}.safetensors", comm.rank(), comm.world_size()), model.opt_variance());
 
     comm.barrier();  // only write checkpoint.json once we know all the shard files are saved
 
@@ -69,13 +69,13 @@ void load_checkpoint(std::string source, int step, IModel& model, DataLoader* lo
 
     std::ifstream file(source + "/checkpoint.json");
     if(!file.is_open()) {
-        throw std::runtime_error(std::format("could not open config file {}", source + "/checkpoint.json"));
+        throw std::runtime_error(fmt::format("could not open config file {}", source + "/checkpoint.json"));
     }
 
     nlohmann::json meta_data = nlohmann::json::parse(file);
     if(int ws = meta_data["distributed"]["world"].get<int>(); ws != comm.world_size()) {
         throw std::runtime_error(
-            std::format("Loading checkpoints with different world size is not supported: Current world size: {}, checkpoint world size: {}",
+            fmt::format("Loading checkpoints with different world size is not supported: Current world size: {}, checkpoint world size: {}",
                         comm.world_size(), ws));
     }
 
@@ -87,11 +87,11 @@ void load_checkpoint(std::string source, int step, IModel& model, DataLoader* lo
     }
 
     // weights
-    load_safetensors(source + std::format("/weights.shard_{:03}_of_{:03}.safetensors", comm.rank(), comm.world_size()), model.weights(), false);
+    load_safetensors(source + fmt::format("/weights.shard_{:03}_of_{:03}.safetensors", comm.rank(), comm.world_size()), model.weights(), false);
 
     // load optimizer shards
-    load_safetensors(source + std::format("/adam.m.shard_{:03}_of_{:03}.safetensors", comm.rank(), comm.world_size()), model.opt_momentum(), false);
-    load_safetensors(source + std::format("/adam.v.shard_{:03}_of_{:03}.safetensors", comm.rank(), comm.world_size()), model.opt_variance(), false);
+    load_safetensors(source + fmt::format("/adam.m.shard_{:03}_of_{:03}.safetensors", comm.rank(), comm.world_size()), model.opt_momentum(), false);
+    load_safetensors(source + fmt::format("/adam.v.shard_{:03}_of_{:03}.safetensors", comm.rank(), comm.world_size()), model.opt_variance(), false);
 
     model.on_restore_checkpoint(comm);
 }
@@ -104,7 +104,7 @@ int get_checkpoint_world_size(std::string checkpoint_directory, int step) {
 
     std::ifstream file(path + "/checkpoint.json");
     if(!file.is_open()) {
-        throw std::runtime_error(std::format("could not open config file {}", path + "/checkpoint.json"));
+        throw std::runtime_error(fmt::format("could not open config file {}", path + "/checkpoint.json"));
     }
     nlohmann::json meta_data = nlohmann::json::parse(file);
     return meta_data["distributed"]["world"].get<int>();
