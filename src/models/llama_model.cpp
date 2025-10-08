@@ -137,7 +137,7 @@ void LLamaModel::forward(Tensor inputs, NCCLCommunicator& comm, int micro_step) 
         }
 
         auto weights = Parameters->get_block(l, main_stream);
-        trace_or_execute_cuda_graph([&](){_forward_block(l, weights, *rs);},
+        trace_or_execute_cuda_graph([&](){_forward_block(l, weights);},
             main_stream, rs->ForwardBlockGraph, rs->Options.UseCudaGraphs);
         Parameters->release_block(l, main_stream);
     }
@@ -161,7 +161,7 @@ void LLamaModel::forward(Tensor inputs, NCCLCommunicator& comm, int micro_step) 
     CUDA_CHECK(cudaEventRecord(rs->ForwardDone, main_stream));
 }
 
-void LLamaModel::_forward_block(int layer, sLLamaBlockWeights<Tensor>& weights, LLamaRunState& run_state)
+void LLamaModel::_forward_block(int layer, sLLamaBlockWeights<Tensor>& weights)
 {
     auto& rs = RunState;
     int l = layer;
@@ -367,7 +367,7 @@ void LLamaModel::backward(Tensor inputs, Tensor targets, NCCLCommunicator& comm,
         }
         auto& weights = Parameters->get_block(l, main_stream);
         // last layer changes topology, so for now just don't use graph
-        trace_or_execute_cuda_graph([&](){_backward_block(l, accumulate, weights, dw, *rs);}, main_stream, rs->BackwardBlockGraph, rs->Options.UseCudaGraphs && l != 0);
+        trace_or_execute_cuda_graph([&](){_backward_block(l, accumulate, weights, dw);}, main_stream, rs->BackwardBlockGraph, rs->Options.UseCudaGraphs && l != 0);
         Parameters->release_block(l, main_stream);
         Grads->notify_block(l, main_stream, comm);
     }
@@ -385,7 +385,7 @@ void LLamaModel::backward(Tensor inputs, Tensor targets, NCCLCommunicator& comm,
     CUDA_CHECK(cudaEventSynchronize(rs->TransferDone));
 }
 
-void LLamaModel::_backward_block(int layer, bool accumulate, sLLamaBlockWeights<Tensor>& weights, sLLamaGradBlock& d_weights, LLamaRunState& run_state) {
+void LLamaModel::_backward_block(int layer, bool accumulate, sLLamaBlockWeights<Tensor>& weights, sLLamaGradBlock& d_weights) {
     auto& rs = RunState;
     cudaStream_t main_stream = rs->MainStream;
     // convenience shortcuts, size_t instead of int so that pointer arithmetics don't overflow
@@ -421,7 +421,7 @@ void LLamaModel::_backward_block(int layer, bool accumulate, sLLamaBlockWeights<
 
     // backward the 2nd matmul of MLP
     backward_qmm(d_acts.DSwiGLU, d_weights.MLP_Down_w, std::nullopt, d_acts.DResFFN, acts.SwiGLu, weights.MLP_Down_w, std::nullopt,
-                       accumulate, run_state, B, T, D, C, reuse_swiglu, true, main_stream);
+                       accumulate, *rs, B, T, D, C, reuse_swiglu, true, main_stream);
 
     swiglu_backward(d_acts.DMlpUp.Value, d_acts.DSwiGLU, acts.MlpUp, quant_abs_max_ptr(d_acts.DMlpUp), B, T, D, main_stream);
 
@@ -430,7 +430,7 @@ void LLamaModel::_backward_block(int layer, bool accumulate, sLLamaBlockWeights<
     }
 
     backward_qmm(d_acts.DLN2, d_weights.MLP_Up_w, std::nullopt, d_acts.DMlpUp, acts.LN2, weights.MLP_Up_w, std::nullopt,
-                       accumulate, run_state, B, T, C, 2 * D, !rs->Options.RecomputeRMSNorm, true, main_stream);
+                       accumulate, *rs, B, T, C, 2 * D, !rs->Options.RecomputeRMSNorm, true, main_stream);
 
     // rmsnorm backward does += to the dresidual, so it correctly accumulates grad from the MLP block above
     rmsnorm_backward(d_acts.DResAtt.Value, d_weights.LN2_w, rs->RMSNormScratch, d_acts.DResFFN.Value, d_acts.DLN2,
@@ -460,13 +460,13 @@ void LLamaModel::_backward_block(int layer, bool accumulate, sLLamaBlockWeights<
     }
 
     backward_qmm(d_acts.DAttY, d_weights.Attn_Out_w, std::nullopt, d_acts.DResAtt, acts.Att, weights.Attn_Out_w, std::nullopt,
-                       accumulate, run_state, B, T, C, C, false, true, main_stream);
+                       accumulate, *rs, B, T, C, C, false, true, main_stream);
 
     attention_backward_cudnn(d_acts.DRope, acts.LSE, acts.Att.Value, d_acts.DAttY, acts.Rope, rs->Workspace, rs->CudnnHandle, B, T, Hq, Hkv, Hs, main_stream);
     rope_backward(d_acts.DQKV.Value, d_acts.DRope, rs->FreqCis, B, T, Hq, Hkv, Hs, main_stream);
 
     backward_qmm(d_acts.DLN1, d_weights.Attn_QKV_w, d_weights.Attn_QKV_b, d_acts.DQKV, acts.LN1, weights.Attn_QKV_w, rs->MatmulBiasScratch,
-                       accumulate, run_state, B, T, C, Config.qkv_channels(), !recompute_ln1, false, main_stream);
+                       accumulate, *rs, B, T, C, Config.qkv_channels(), !recompute_ln1, false, main_stream);
 
     if(layer > 0) {
         auto& prev_dacts = rs->DActs.at(layer - 1);
