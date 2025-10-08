@@ -24,10 +24,17 @@ jobs:
             cc: /usr/bin/gcc-13
             cxx: /usr/bin/g++-13
             packages: gcc-13 g++-13
+            cmake_version: system
           - name: clang
             cc: /usr/bin/clang-18
             cxx: /usr/bin/clang++-18
             packages: clang-18 clang-tools-18
+            cmake_version: system
+          - name: legacy
+            cc: /usr/bin/gcc-12
+            cxx: /usr/bin/g++-12
+            packages: gcc-12 g++-12
+            cmake_version: "3.25.3"
     env:
       CMAKE_GENERATOR: Ninja
       CC: ${{ matrix.compiler.cc }}
@@ -40,7 +47,21 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Install deps
-        run: apt update && apt install -y build-essential cmake ninja-build git python3-dev ${{ matrix.compiler.packages }} libopenmpi-dev
+        run: apt update && apt install -y wget build-essential ninja-build git python3-dev ${{ matrix.compiler.packages }} libopenmpi-dev
+
+      - name: Install CMake (system)
+        if: matrix.compiler.cmake_version == 'system'
+        run: apt install -y cmake
+
+      - name: Install CMake (specific version)
+        if: matrix.compiler.cmake_version != 'system'
+        run: |
+          CMAKE_VERSION=${{ matrix.compiler.cmake_version }}
+          wget -q https://github.com/Kitware/CMake/releases/download/v${CMAKE_VERSION}/cmake-${CMAKE_VERSION}-linux-x86_64.tar.gz
+          tar -xzf cmake-${CMAKE_VERSION}-linux-x86_64.tar.gz
+          cp -r cmake-${CMAKE_VERSION}-linux-x86_64/bin/* /usr/local/bin/
+          cp -r cmake-${CMAKE_VERSION}-linux-x86_64/share/cmake* /usr/local/share/
+          cmake --version
 
       - name: Create build directory
         run: mkdir -p build
