@@ -398,12 +398,13 @@ void LLamaModel::_recompute_block(int layer, sLLamaBlockWeights<Tensor>& weights
     long Hs = Config.head_size();
 
     auto& acts = rs->Acts[layer];
+    auto& opt = rs->Options;
 
     // Figure out which parts we need to recompute
-    bool recompute_ln1 = rs->Options.RecomputeRMSNorm || rs->Options.RecomputeAtt;
-    bool recompute_ln2 = rs->Options.RecomputeRMSNorm || rs->Options.RecomputeFFN;
-    bool recompute_qkv = rs->Options.RecomputeQKV || rs->Options.RecomputeAtt;
-    bool recompute_swiglu = rs->Options.RecomputeSwiGLu || rs->Options.RecomputeFFN;
+    bool recompute_ln1 = opt.RecomputeRMSNorm || opt.RecomputeAtt || opt.RecomputeBlock;
+    bool recompute_ln2 = opt.RecomputeRMSNorm || opt.RecomputeFFN || opt.RecomputeBlock;
+    bool recompute_qkv = opt.RecomputeQKV || opt.RecomputeAtt || opt.RecomputeBlock;
+    bool recompute_swiglu = opt.RecomputeSwiGLu || opt.RecomputeFFN || opt.RecomputeBlock;
 
     // Attention block
     if(recompute_ln1) {
@@ -423,17 +424,31 @@ void LLamaModel::_recompute_block(int layer, sLLamaBlockWeights<Tensor>& weights
         rope_forward(acts.Rope, acts.QKV, rs->FreqCis, B, T, Hq, Hkv, Hs, main_stream);
     }
 
-    if (rs->Options.RecomputeAtt) {
+    if (opt.RecomputeAtt) {
         attention_forward_cudnn(acts.Att.Value, acts.LSE, acts.Rope, rs->Workspace, rs->CudnnHandle, B, T, Hq, Hkv, Hs, main_stream);
-        // AttO not needed in backward pass :)
+        // AttO not needed in backward pass; but if we want to recompute the entire transformer block, we need its output
+        // to recompute the FFN part
+        if (opt.RecomputeBlock) {
+            forward_qmm(acts.AttO, acts.Att, weights.Attn_Out_w, std::nullopt,
+                         rs->CublasLtHandle, rs->Workspace,
+                         B, T, C, C,
+                         rs->DeviceProp, false, false, main_stream);
+        }
     }
 
     // Feed-forward block
     if(recompute_ln2) {
-        rmsnorm_forward(acts.LN2.Value, acts.LN2_Rstd, acts.ResidualAtt, weights.LN2_w, nullptr, Config.RmsNormEps, B, T, C, main_stream);
+        if (opt.RecomputeBlock) {
+            Tensor residual = layer == 0 ? rs->Encoded : rs->Acts[layer - 1].ResidualFFN;
+            fused_residual_rmsnorm_forward(acts.ResidualAtt, acts.LN2.Value, acts.LN2_Rstd, residual, acts.AttO, weights.LN2_w,
+                                       acts.LN2.Quant.has_value() ? acts.LN2.Quant->Scales : nullptr,
+                                       Config.RmsNormEps, B * T, C, main_stream);
+        } else {
+            rmsnorm_forward(acts.LN2.Value, acts.LN2_Rstd, acts.ResidualAtt, weights.LN2_w, nullptr, Config.RmsNormEps, B, T, C, main_stream);
+        }
     }
 
-    if(rs->Options.RecomputeFFN) {
+    if(opt.RecomputeFFN) {
         forward_qmm(acts.MlpUp, acts.LN2, weights.MLP_Up_w, std::nullopt,
                          rs->CublasLtHandle, rs->Workspace,
                          B, T, C, 2 * D,

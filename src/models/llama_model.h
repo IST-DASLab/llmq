@@ -23,6 +23,7 @@ struct LLamaOptions {
     bool RecomputeFFN = false;
     bool RecomputeQKV = false;
     bool RecomputeAtt = false;
+    bool RecomputeBlock = false;
     bool UseCudaGraphs = false;
 
     bool OffloadMaster = false;
