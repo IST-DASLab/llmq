@@ -99,6 +99,7 @@ protected:
     void _reduce_loss(LLamaRunState& acts, NCCLCommunicator& comm, int B, int T);
 
     void _forward_block(int layer, sLLamaBlockWeights<Tensor>& weights);
+    void _recompute_block(int layer, sLLamaBlockWeights<Tensor>& weights);
     void _backward_block(int layer, bool accumulate, sLLamaBlockWeights<Tensor>& weights, sLLamaGradBlock& grads);
 private:
     LLamaConfig Config;
