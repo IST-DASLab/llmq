@@ -351,7 +351,7 @@ void LLamaModel::backward(Tensor inputs, Tensor targets, NCCLCommunicator& comm,
     Parameters->gather_lnf(comm);
     // backward the final layernorm
     rmsnorm_backward(d_acts[L-1].DResFFN.Value, d_lnf_w, rs->RMSNormScratch, d_acts[L - 1].DResFFN.Value, rs->DLNF,
-                     rs->Acts[L - 1].ResidualFFN, Parameters->get_lnf(main_stream), rs->LNF_Rstd, nullptr, B, T, C, rs->DeviceProp, main_stream);
+                     rs->Acts[L - 1].ResidualFFN, Parameters->get_lnf(main_stream), rs->LNF_Rstd, quant_abs_max_ptr(d_acts[L-1].DResFFN), B, T, C, rs->DeviceProp, main_stream);
     Parameters->release_lnf(main_stream);
     Grads->notify_lnf_w(main_stream, comm);
 
@@ -421,7 +421,7 @@ void LLamaModel::_backward_block(int layer, bool accumulate, sLLamaBlockWeights<
 
     // backward the 2nd matmul of MLP
     backward_qmm(d_acts.DSwiGLU, d_weights.MLP_Down_w, std::nullopt, d_acts.DResFFN, acts.SwiGLu, weights.MLP_Down_w, std::nullopt,
-                       accumulate, run_state, B, T, D, C, reuse_swiglu, false, main_stream);
+                       accumulate, run_state, B, T, D, C, reuse_swiglu, true, main_stream);
 
     swiglu_backward(d_acts.DMlpUp.Value, d_acts.DSwiGLU, acts.MlpUp, quant_abs_max_ptr(d_acts.DMlpUp), B, T, D, main_stream);
 
@@ -471,7 +471,7 @@ void LLamaModel::_backward_block(int layer, bool accumulate, sLLamaBlockWeights<
     if(layer > 0) {
         auto& prev_dacts = rs->DActs.at(layer - 1);
         rmsnorm_backward(prev_dacts.DResFFN.Value, d_weights.LN1_w, rs->RMSNormScratch, prev_dacts.DResAtt.Value, d_acts.DLN1,
-                         rs->Acts[layer - 1].ResidualFFN, weights.LN1_w, acts.LN1_Rstd, nullptr, B, T, C, rs->DeviceProp, main_stream);
+                         rs->Acts[layer - 1].ResidualFFN, weights.LN1_w, acts.LN1_Rstd, quant_abs_max_ptr(prev_dacts.DResFFN), B, T, C, rs->DeviceProp, main_stream);
     } else {
         rmsnorm_backward(rs->DEmb, d_weights.LN1_w, rs->RMSNormScratch, d_acts.DResAtt.Value, d_acts.DLN1,
                          rs->Encoded, weights.LN1_w, acts.LN1_Rstd, nullptr, B, T, C, rs->DeviceProp, main_stream);
