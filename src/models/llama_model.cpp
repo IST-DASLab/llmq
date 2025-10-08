@@ -71,6 +71,11 @@ void trace_or_execute_cuda_graph(Function&& function, cudaStream_t stream, cudaG
     }
 }
 
+/// If `tensor` has quants, return their scales; otherwise, return nullptr
+float* quant_abs_max_ptr(QuantizableTensor& tensor) {
+    return tensor.Quant.has_value() ? tensor.Quant->Scales : nullptr;
+}
+
 void LLamaModel::forward(Tensor inputs, NCCLCommunicator& comm, int micro_step) {
     NVTX_RANGE_FN();
 
@@ -122,13 +127,12 @@ void LLamaModel::forward(Tensor inputs, NCCLCommunicator& comm, int micro_step) 
         // because this is a change in topology, this isn't part of the cuda graph
         if (l == 0) {
             rmsnorm_forward(rs->Acts[0].LN1.Value, rs->Acts[0].LN1_Rstd, rs->Encoded, wgt.LN1_w,
-                            rs->Acts[0].LN1.Quant.has_value() ? rs->Acts[0].LN1.Quant->Scales : nullptr,
-                            Config.RmsNormEps, B, T, C, main_stream);
+                            quant_abs_max_ptr(rs->Acts[0].LN1), Config.RmsNormEps, B, T, C, main_stream);
         } else if(l != Config.NumLayers) {
             auto& acts = rs->Acts[l-1];
             fused_residual_rmsnorm_forward(acts.ResidualFFN, rs->Acts[l].LN1.Value, rs->Acts[l].LN1_Rstd,
                                            acts.ResidualAtt, acts.MlpDown, wgt.LN1_w,
-                                           rs->Acts[l].LN1.Quant.has_value() ? rs->Acts[l].LN1.Quant->Scales : nullptr,
+                                           quant_abs_max_ptr(rs->Acts[l].LN1),
                                            Config.RmsNormEps, B * T, C, main_stream);
         }
 
@@ -190,14 +194,13 @@ void LLamaModel::_forward_block(int layer, sLLamaBlockWeights<Tensor>& weights, 
                      rs->DeviceProp, false, false, main_stream);
 
     fused_residual_rmsnorm_forward(acts.ResidualAtt, acts.LN2.Value, acts.LN2_Rstd, residual, acts.AttO, weights.LN2_w,
-                                   acts.LN2.Quant.has_value() ? acts.LN2.Quant->Scales : nullptr,
-                                   Config.RmsNormEps, B * T, C, main_stream);
+                                   quant_abs_max_ptr(acts.LN2), Config.RmsNormEps, B * T, C, main_stream);
 
     forward_qmm(acts.MlpUp, acts.LN2, weights.MLP_Up_w, std::nullopt,
                      rs->CublasLtHandle, rs->Workspace,
                      B, T, C, 2 * D,
                      rs->DeviceProp, false, true, main_stream);
-    swiglu_forward(acts.SwiGLu.Value, acts.MlpUp, acts.SwiGLu.Quant.has_value() ? acts.SwiGLu.Quant->Scales: nullptr, B, T, D, main_stream);
+    swiglu_forward(acts.SwiGLu.Value, acts.MlpUp, quant_abs_max_ptr(acts.SwiGLu), B, T, D, main_stream);
 
     forward_qmm(acts.MlpDown, acts.SwiGLu, weights.MLP_Down_w, std::nullopt,
                      rs->CublasLtHandle, rs->Workspace,
@@ -420,7 +423,7 @@ void LLamaModel::_backward_block(int layer, bool accumulate, sLLamaBlockWeights<
     backward_qmm(d_acts.DSwiGLU, d_weights.MLP_Down_w, std::nullopt, d_acts.DResFFN, acts.SwiGLu, weights.MLP_Down_w, std::nullopt,
                        accumulate, run_state, B, T, D, C, reuse_swiglu, false, main_stream);
 
-    swiglu_backward(d_acts.DMlpUp.Value, d_acts.DSwiGLU, acts.MlpUp, d_acts.DMlpUp.Quant.has_value() ? d_acts.DMlpUp.Quant->Scales: nullptr, B, T, D, main_stream);
+    swiglu_backward(d_acts.DMlpUp.Value, d_acts.DSwiGLU, acts.MlpUp, quant_abs_max_ptr(d_acts.DMlpUp), B, T, D, main_stream);
 
     if(rs->Options.RecomputeRMSNorm && !rs->Options.RecomputeFFN) {
         rmsnorm_forward(acts.LN2.Value, acts.LN2_Rstd, acts.ResidualAtt, weights.LN2_w, nullptr, Config.RmsNormEps, B, T, C, main_stream);
@@ -431,7 +434,7 @@ void LLamaModel::_backward_block(int layer, bool accumulate, sLLamaBlockWeights<
 
     // rmsnorm backward does += to the dresidual, so it correctly accumulates grad from the MLP block above
     rmsnorm_backward(d_acts.DResAtt.Value, d_weights.LN2_w, rs->RMSNormScratch, d_acts.DResFFN.Value, d_acts.DLN2,
-                     acts.ResidualAtt, weights.LN2_w, acts.LN2_Rstd, d_acts.DResAtt.Quant.has_value() ? d_acts.DResAtt.Quant->Scales : nullptr, B, T, C, rs->DeviceProp, main_stream);
+                     acts.ResidualAtt, weights.LN2_w, acts.LN2_Rstd, quant_abs_max_ptr(d_acts.DResAtt), B, T, C, rs->DeviceProp, main_stream);
 
     bool recompute_ln1 = rs->Options.RecomputeRMSNorm || rs->Options.RecomputeAtt;
     if(recompute_ln1) {
