@@ -62,6 +62,7 @@ private:
     Tensor tQKVBuffer;
     Tensor tAttBuffer;
     Tensor tLN1Buffer;
+    Tensor tResAttBuffer;
 };
 
 Tensor RunStateBuilder::generate_frequencies() {
@@ -88,7 +89,7 @@ LLamaRunState::LayerActivations RunStateBuilder::allocate_basic_fwd_tensors(Tens
     Tensor ln2_v = allocate_or_reuse(reuse_ln_buffer || Options.RecomputeFFN, lnf, Config.DType, "ln2", B, T, C);
 
     Tensor qkv = allocate_or_reuse(Options.RecomputeQKV, tQKVBuffer, Config.DType, "qkv", B, T, Config.qkv_channels());
-    Tensor res_att = allocate(Config.DType, "res_att", B, T, C);
+    Tensor res_att = allocate_or_reuse(Options.RecomputeBlock, tResAttBuffer, Config.DType, "res_att", B, T, C);
     Tensor res_ffn = allocate(Config.DType, "res_ffn", B, T, C);
     Tensor lse = allocate(ETensorDType::FP32, "lse", B, T, Config.NumQueryHeads);
     Tensor att_v = allocate_or_reuse(Options.RecomputeAtt, tAttBuffer, Config.DType, "att_v", B, T, C);

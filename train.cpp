@@ -135,6 +135,7 @@ void TrainingRunner::load_training_config(int argc, const char** argv) {
     app.add_flag("--recompute-ffn", Options.RecomputeFFN, "Recompute the feed-forward block during the backward pass to save activation memory");
     app.add_flag("--recompute-qkv", Options.RecomputeQKV, "Recompute the qkv projections during the backward pass");
     app.add_flag("--recompute-att", Options.RecomputeAtt, "Recompute the attention block during the backward pass");
+    app.add_flag("--recompute-block", Options.RecomputeBlock, "Recompute the entire transformer block");
     app.add_flag("--use-cuda-graphs,!--no-use-cuda-graphs", Options.UseCudaGraphs, "Enable/disable use of cuda graphs");
     auto zero = app.add_option("--zero-level", ZeroLevel, "Zero redundancy level: 1 - sharded optimizer; 2 - sharded gradients; 3 - sharded weights");
     app.add_flag("--offload-master", Options.OffloadMaster, "Store master weights in pinned host memory.");
@@ -179,6 +180,12 @@ void TrainingRunner::load_training_config(int argc, const char** argv) {
         break;
     default:
         std::cerr << "Warning: Invalid ZeRO-level " << ZeroLevel << std::endl;
+    }
+
+    if (Options.RecomputeBlock) {
+        Options.RecomputeAtt = true;
+        Options.RecomputeFFN = true;
+        Options.RecomputeRMSNorm = true;
     }
 
     if (Options.RecomputeAtt) {
@@ -244,6 +251,7 @@ void TrainingRunner::run_training(int argc, const char** argv, NCCLCommunicator&
         {"recompute-ffn",      Options.RecomputeFFN},
         {"recompute-qkv",      Options.RecomputeQKV},
         {"recompute-att",      Options.RecomputeAtt},
+        {"recompute-block",    Options.RecomputeBlock},
         {"offload-master",     Options.OffloadMaster},
         {"offload-quants",     Options.OffloadQuants},
         {"offload-opt-m",      Options.OffloadOptM},
