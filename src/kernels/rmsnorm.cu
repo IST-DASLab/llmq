@@ -266,15 +266,16 @@ template<class floatX>
 __global__ void __launch_bounds__(512, 2)
 rmsnorm_backward_kernel10(floatX* dinp, floatX* dweight, std::byte* scratch,
                           const floatX* dout, const floatX* inp, const floatX* weight,
-                          const float* rstd, int B, int T, int C) {
+                          const float* rstd, float* abs_max_ptr, int B, int T, int C) {
     // size of scratch: sizeof(float) * C + 128
     using x128 = GenericVector<floatX, 16/sizeof(floatX)>;
     using f128 = GenericVector<float, 16/sizeof(float)>;
-    // TODO: this kernel uses too much shared memory due to historical reasons of it coming from layernorm_backward.cu
-    // this memory use can be reduced by half later
+
     int BLOCK_SIZE = blockDim.x;
     int warpsInBlock = BLOCK_SIZE / WARP_SIZE; //number of warps in block
     extern __shared__ float shared[];
+    __shared__ float block_max;
+    float thread_max = 0.f;
 
     int warpId = threadIdx.x / WARP_SIZE; // warp index within a block
     int baseIdx = blockIdx.x * warpsInBlock + warpId;
@@ -294,6 +295,9 @@ rmsnorm_backward_kernel10(floatX* dinp, floatX* dweight, std::byte* scratch,
     // init shared memory to zero
     for(int i = threadIdx.x * f128::size; i < rounded_C; i += BLOCK_SIZE * f128::size) {
         f128::zeros().store(dweight_shared + i);
+    }
+    if (abs_max_ptr && threadIdx.x == 0) {
+        block_max = 1e-10f;
     }
     __syncthreads();
 
@@ -383,10 +387,23 @@ rmsnorm_backward_kernel10(floatX* dinp, floatX* dweight, std::byte* scratch,
                 // cache in L2 as this is read by the next kernel, but bypass L1 to minimise thrashing
                 // TODO cache hint
                 dinp128.store(dinp_bt + global_index);
+
+                for(int i = 0; i < x128::size; ++i) {
+                    thread_max = std::max(thread_max, fabsf(dinp128[i]));
+                }
             }
         }
     }
     __syncthreads();
+    // if we requested an absmax, do the block-wise and global reduction
+    if (abs_max_ptr) {
+        atomicMax_block(reinterpret_cast<unsigned int*>(&block_max), __float_as_uint(thread_max));
+        __syncthreads();
+        if(threadIdx.x == 0) {
+            atomicMax(reinterpret_cast<unsigned int*>(abs_max_ptr), __float_as_uint(block_max));
+        }
+    }
+
     // Each block writes its partial sum to global memory
     // The last block to finish becomes responsible for summing up all the partial sums
     // This is done by atomically incrementing a flag (cleared to 0 before launching the kernel)
@@ -451,6 +468,7 @@ int get_rmsnorm_backward_scratch_size(int C, const cudaDeviceProp& dp) {
 template<class floatX>
 void rmsnorm_backward_imp(floatX* dinp, floatX* dweight, std::byte* scratch,
                           const floatX* dresidual, const floatX* dout, const floatX* inp, const floatX* weight, const float* rstd,
+                          float* abs_max_ptr,
                           int B, int T, int C, const cudaDeviceProp& dp, cudaStream_t stream) {
     using x128 = GenericVector<floatX, 16/sizeof(floatX)>;
     using f128 = GenericVector<float, 16/sizeof(float)>;
@@ -463,19 +481,22 @@ void rmsnorm_backward_imp(floatX* dinp, floatX* dweight, std::byte* scratch,
     if(dresidual != dinp) {
         CUDA_CHECK(cudaMemcpyAsync(dinp, dresidual, B*T*C * sizeof(floatX), cudaMemcpyDeviceToDevice, stream));
     }
+    if (abs_max_ptr) {
+        CUDA_CHECK(cudaMemsetAsync(abs_max_ptr, 0, sizeof(float), stream));
+    }
     CUDA_CHECK(cudaMemsetAsync(scratch, 0, 1 * sizeof(float), stream)); // only need to reset the flag to 0
-    rmsnorm_backward_kernel10<<<grid_size, block_size, shared_mem_size, stream>>>(dinp, dweight, scratch, dout, inp, weight, rstd, B, T, C);
+    rmsnorm_backward_kernel10<<<grid_size, block_size, shared_mem_size, stream>>>(dinp, dweight, scratch, dout, inp, weight, rstd, abs_max_ptr, B, T, C);
     CUDA_CHECK(cudaGetLastError());
 }
 
 void rmsnorm_backward(float* dinp, float* dweight, std::byte* scratch,
-                      const float* dresidual, const float* dout, const float* inp, const float* weight, const float* rstd,
+                      const float* dresidual, const float* dout, const float* inp, const float* weight, const float* rstd, float* abs_max_ptr,
                       int B, int T, int C, const cudaDeviceProp& dp, cudaStream_t stream) {
-    rmsnorm_backward_imp(dinp, dweight, scratch, dresidual, dout, inp, weight, rstd, B, T, C, dp, stream);
+    rmsnorm_backward_imp(dinp, dweight, scratch, dresidual, dout, inp, weight, rstd, abs_max_ptr, B, T, C, dp, stream);
 }
 
 void rmsnorm_backward(nv_bfloat16* dinp, nv_bfloat16* dweight, std::byte* scratch,
-                      const nv_bfloat16* dresidual, const nv_bfloat16* dout, const nv_bfloat16* inp, const nv_bfloat16* weight, const float* rstd,
+                      const nv_bfloat16* dresidual, const nv_bfloat16* dout, const nv_bfloat16* inp, const nv_bfloat16* weight, const float* rstd, float* abs_max_ptr,
                       int B, int T, int C, const cudaDeviceProp& dp, cudaStream_t stream) {
-    rmsnorm_backward_imp(dinp, dweight, scratch, dresidual, dout, inp, weight, rstd, B, T, C, dp, stream);
+    rmsnorm_backward_imp(dinp, dweight, scratch, dresidual, dout, inp, weight, rstd, abs_max_ptr, B, T, C, dp, stream);
 }
