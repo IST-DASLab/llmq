@@ -6,13 +6,13 @@
 #include <algorithm>
 #include <cerrno>
 #include <cstring>
-#include <format>
 #include <string_view>
 
 #include <cuda_runtime.h>
 #include <fcntl.h>
 #include <sys/types.h>
 #include <unistd.h>
+#include <fmt/core.h>
 
 #include "cu_file.h"
 #include "kernels/kernels.h"
@@ -23,7 +23,7 @@
 cuFileRef open_cufile(std::string file_name) {
     int fd = open(file_name.c_str(), O_RDONLY | O_CLOEXEC);
     if (fd < 0) {
-        throw std::runtime_error(std::format("posix open error ({}) for file {}: {}", errno, file_name, strerror(errno)));
+        throw std::runtime_error(fmt::format("posix open error ({}) for file {}: {}", errno, file_name, strerror(errno)));
     }
 
     return {nullptr, fd, std::move(file_name)};
@@ -31,7 +31,7 @@ cuFileRef open_cufile(std::string file_name) {
 
 void cufile_read_bytes(int fd, std::byte* d_target, std::ptrdiff_t begin, std::ptrdiff_t end, std::string_view file_name) {
     if(end < begin) {
-        throw std::logic_error(std::format("Invalid range {} - {} in cufile_read_bytes for {}", begin, end, file_name));
+        throw std::logic_error(fmt::format("Invalid range {} - {} in cufile_read_bytes for {}", begin, end, file_name));
     }
 
     const size_t nbytes = static_cast<size_t>(end - begin);
@@ -47,7 +47,7 @@ void cufile_read_bytes(int fd, std::byte* d_target, std::ptrdiff_t begin, std::p
         ssize_t r = ::pread(fd, hbuf, want, off);
         if (r < 0) {
             cudaFreeHost(hbuf);
-            throw std::runtime_error(std::format("posix pread error ({}) for {}, range {} - {}",
+            throw std::runtime_error(fmt::format("posix pread error ({}) for {}, range {} - {}",
                                                  errno, file_name, off, off + want));
         }
         if (r == 0) break;
@@ -57,7 +57,7 @@ void cufile_read_bytes(int fd, std::byte* d_target, std::ptrdiff_t begin, std::p
                         cudaMemcpyHostToDevice);
         if (ce != cudaSuccess) {
             cudaFreeHost(hbuf);
-            throw std::runtime_error(std::format("cudaMemcpy failed: {}",
+            throw std::runtime_error(fmt::format("cudaMemcpy failed: {}",
                                                  cudaGetErrorString(ce)));
         }
         done += static_cast<size_t>(r);
@@ -66,7 +66,7 @@ void cufile_read_bytes(int fd, std::byte* d_target, std::ptrdiff_t begin, std::p
     cudaFreeHost(hbuf);
 
     if (done != nbytes) {
-        throw std::runtime_error(std::format("posix read short: expected {} bytes, got {}",
+        throw std::runtime_error(fmt::format("posix read short: expected {} bytes, got {}",
                                              nbytes, done));
     }
 }
