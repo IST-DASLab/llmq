@@ -348,7 +348,7 @@ void LLamaModel::backward(Tensor inputs, Tensor targets, NCCLCommunicator& comm,
     Parameters->gather_lnf(comm);
     // backward the final layernorm
     rmsnorm_backward(d_acts[L-1].DResFFN.Value, d_lnf_w, rs->RMSNormScratch, d_acts[L - 1].DResFFN.Value, rs->DLNF,
-                     rs->Acts[L - 1].ResidualFFN, Parameters->get_lnf(main_stream), rs->LNF_Rstd, B, T, C, rs->DeviceProp, main_stream);
+                     rs->Acts[L - 1].ResidualFFN, Parameters->get_lnf(main_stream), rs->LNF_Rstd, nullptr, B, T, C, rs->DeviceProp, main_stream);
     Parameters->release_lnf(main_stream);
     Grads->notify_lnf_w(main_stream, comm);
 
@@ -431,7 +431,7 @@ void LLamaModel::_backward_block(int layer, bool accumulate, sLLamaBlockWeights<
 
     // rmsnorm backward does += to the dresidual, so it correctly accumulates grad from the MLP block above
     rmsnorm_backward(d_acts.DResAtt.Value, d_weights.LN2_w, rs->RMSNormScratch, d_acts.DResFFN.Value, d_acts.DLN2,
-                     acts.ResidualAtt, weights.LN2_w, acts.LN2_Rstd, B, T, C, rs->DeviceProp, main_stream);
+                     acts.ResidualAtt, weights.LN2_w, acts.LN2_Rstd, d_acts.DResAtt.Quant.has_value() ? d_acts.DResAtt.Quant->Scales : nullptr, B, T, C, rs->DeviceProp, main_stream);
 
     bool recompute_ln1 = rs->Options.RecomputeRMSNorm || rs->Options.RecomputeAtt;
     if(recompute_ln1) {
@@ -457,7 +457,7 @@ void LLamaModel::_backward_block(int layer, bool accumulate, sLLamaBlockWeights<
     }
 
     backward_qmm(d_acts.DAttY, d_weights.Attn_Out_w, std::nullopt, d_acts.DResAtt, acts.Att, weights.Attn_Out_w, std::nullopt,
-                       accumulate, run_state, B, T, C, C, false, false, main_stream);
+                       accumulate, run_state, B, T, C, C, false, true, main_stream);
 
     attention_backward_cudnn(d_acts.DRope, acts.LSE, acts.Att.Value, d_acts.DAttY, acts.Rope, rs->Workspace, rs->CudnnHandle, B, T, Hq, Hkv, Hs, main_stream);
     rope_backward(d_acts.DQKV.Value, d_acts.DRope, rs->FreqCis, B, T, Hq, Hkv, Hs, main_stream);
@@ -468,10 +468,10 @@ void LLamaModel::_backward_block(int layer, bool accumulate, sLLamaBlockWeights<
     if(layer > 0) {
         auto& prev_dacts = rs->DActs.at(layer - 1);
         rmsnorm_backward(prev_dacts.DResFFN.Value, d_weights.LN1_w, rs->RMSNormScratch, prev_dacts.DResAtt.Value, d_acts.DLN1,
-                         rs->Acts[layer - 1].ResidualFFN, weights.LN1_w, acts.LN1_Rstd, B, T, C, rs->DeviceProp, main_stream);
+                         rs->Acts[layer - 1].ResidualFFN, weights.LN1_w, acts.LN1_Rstd, nullptr, B, T, C, rs->DeviceProp, main_stream);
     } else {
         rmsnorm_backward(rs->DEmb, d_weights.LN1_w, rs->RMSNormScratch, d_acts.DResAtt.Value, d_acts.DLN1,
-                         rs->Encoded, weights.LN1_w, acts.LN1_Rstd, B, T, C, rs->DeviceProp, main_stream);
+                         rs->Encoded, weights.LN1_w, acts.LN1_Rstd, nullptr, B, T, C, rs->DeviceProp, main_stream);
     }
 }
 
