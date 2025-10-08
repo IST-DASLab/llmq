@@ -1,4 +1,4 @@
-// Copyright (c) 2025, Aalto University, developed by Erik Schultheis
+// Copyright (c) 2025, IST Austria, developed by Erik Schultheis
 //
 
 #ifndef LLMQ_SRC_MODELS_LLAMA_CONFIG_H
