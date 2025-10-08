@@ -385,6 +385,70 @@ void LLamaModel::backward(Tensor inputs, Tensor targets, NCCLCommunicator& comm,
     CUDA_CHECK(cudaEventSynchronize(rs->TransferDone));
 }
 
+void LLamaModel::_recompute_block(int layer, sLLamaBlockWeights<Tensor>& weights) {
+    auto& rs = RunState;
+    cudaStream_t main_stream = rs->MainStream;
+    // convenience shortcuts, size_t instead of int so that pointer arithmetics don't overflow
+    long B = rs->Inputs.Sizes[0];
+    long T = rs->Inputs.Sizes[1];
+    const size_t C = Config.HiddenSize;
+    long D = Config.IntermediateSize;
+    long Hq = Config.NumQueryHeads;
+    long Hkv = Config.NumKeyValHeads;
+    long Hs = Config.head_size();
+
+    auto& acts = rs->Acts[layer];
+
+    // Figure out which parts we need to recompute
+    bool recompute_ln1 = rs->Options.RecomputeRMSNorm || rs->Options.RecomputeAtt;
+    bool recompute_ln2 = rs->Options.RecomputeRMSNorm || rs->Options.RecomputeFFN;
+    bool recompute_qkv = rs->Options.RecomputeQKV || rs->Options.RecomputeAtt;
+    bool recompute_swiglu = rs->Options.RecomputeSwiGLu || rs->Options.RecomputeFFN;
+
+    // Attention block
+    if(recompute_ln1) {
+        Tensor& residual = layer == 0 ? rs->Encoded : rs->Acts[layer - 1].ResidualFFN;
+        rmsnorm_forward(acts.LN1.Value, acts.LN1_Rstd, residual, weights.LN1_w, nullptr, Config.RmsNormEps, B, T, C, main_stream);
+    }
+
+    if (recompute_qkv) {
+        // two scenarios: 1) we do not recompute the RMSnorm; then, we _will_ overwrite the full-precision copy of acts.LN1,
+        //                   but _can_ reuse the quantized version
+        //                2) we recompute RMSNorm; then, acts.LN1 will be correct, but its quantized version will not, so
+        //                   we have to re-quantize (TODO but we could reuse the absmax)
+        forward_qmm(acts.QKV, acts.LN1, weights.Attn_QKV_w, weights.Attn_QKV_b,
+                     rs->CublasLtHandle, rs->Workspace,
+                     B, T, C, Config.qkv_channels(),
+                     rs->DeviceProp, !recompute_ln1, false, main_stream);
+        rope_forward(acts.Rope, acts.QKV, rs->FreqCis, B, T, Hq, Hkv, Hs, main_stream);
+    }
+
+    if (rs->Options.RecomputeAtt) {
+        attention_forward_cudnn(acts.Att.Value, acts.LSE, acts.Rope, rs->Workspace, rs->CudnnHandle, B, T, Hq, Hkv, Hs, main_stream);
+        // AttO not needed in backward pass :)
+    }
+
+    // Feed-forward block
+    if(recompute_ln2) {
+        rmsnorm_forward(acts.LN2.Value, acts.LN2_Rstd, acts.ResidualAtt, weights.LN2_w, nullptr, Config.RmsNormEps, B, T, C, main_stream);
+    }
+
+    if(rs->Options.RecomputeFFN) {
+        forward_qmm(acts.MlpUp, acts.LN2, weights.MLP_Up_w, std::nullopt,
+                         rs->CublasLtHandle, rs->Workspace,
+                         B, T, C, 2 * D,
+                         rs->DeviceProp, false, false, main_stream);
+    }
+
+    if(recompute_swiglu) {
+        if (acts.SwiGLu.Quant.has_value() && acts.SwiGLu.Quant->DType == ETensorDType::FP8_E4M3) {
+            swiglu_forward_quant(acts.SwiGLu.Quant.value(), acts.MlpUp, acts.SwiGLu.Quant->Scales, B, T, D, main_stream);
+        } else {
+            swiglu_forward(acts.SwiGLu.Value, acts.MlpUp, nullptr, B, T, D, main_stream);
+        }
+    }
+}
+
 void LLamaModel::_backward_block(int layer, bool accumulate, sLLamaBlockWeights<Tensor>& weights, sLLamaGradBlock& d_weights) {
     auto& rs = RunState;
     cudaStream_t main_stream = rs->MainStream;
@@ -400,21 +464,14 @@ void LLamaModel::_backward_block(int layer, bool accumulate, sLLamaBlockWeights<
     auto& acts = rs->Acts[layer];
     auto& d_acts = rs->DActs.at(layer);
 
+    _recompute_block(layer, weights);
+
     bool reuse_swiglu = true;
-    if(rs->Options.RecomputeFFN) {
-        rmsnorm_forward(acts.LN2.Value, acts.LN2_Rstd, acts.ResidualAtt, weights.LN2_w, nullptr, Config.RmsNormEps, B, T, C, main_stream);
-        forward_qmm(acts.MlpUp, acts.LN2, weights.MLP_Up_w, std::nullopt,
-                         rs->CublasLtHandle, rs->Workspace,
-                         B, T, C, 2 * D,
-                         rs->DeviceProp, false, false, main_stream);
-    }
 
     if(rs->Options.RecomputeSwiGLu || rs->Options.RecomputeFFN) {
         if (acts.SwiGLu.Quant.has_value() && acts.SwiGLu.Quant->DType == ETensorDType::FP8_E4M3) {
-            swiglu_forward_quant(acts.SwiGLu.Quant.value(), acts.MlpUp, acts.SwiGLu.Quant->Scales, B, T, D, main_stream);
             reuse_swiglu = true;
         } else {
-            swiglu_forward(acts.SwiGLu.Value, acts.MlpUp, nullptr, B, T, D, main_stream);
             reuse_swiglu = false;
         }
     }
@@ -425,10 +482,6 @@ void LLamaModel::_backward_block(int layer, bool accumulate, sLLamaBlockWeights<
 
     swiglu_backward(d_acts.DMlpUp.Value, d_acts.DSwiGLU, acts.MlpUp, quant_abs_max_ptr(d_acts.DMlpUp), B, T, D, main_stream);
 
-    if(rs->Options.RecomputeRMSNorm && !rs->Options.RecomputeFFN) {
-        rmsnorm_forward(acts.LN2.Value, acts.LN2_Rstd, acts.ResidualAtt, weights.LN2_w, nullptr, Config.RmsNormEps, B, T, C, main_stream);
-    }
-
     backward_qmm(d_acts.DLN2, d_weights.MLP_Up_w, std::nullopt, d_acts.DMlpUp, acts.LN2, weights.MLP_Up_w, std::nullopt,
                        accumulate, *rs, B, T, C, 2 * D, !rs->Options.RecomputeRMSNorm, true, main_stream);
 
@@ -437,28 +490,6 @@ void LLamaModel::_backward_block(int layer, bool accumulate, sLLamaBlockWeights<
                      acts.ResidualAtt, weights.LN2_w, acts.LN2_Rstd, quant_abs_max_ptr(d_acts.DResAtt), B, T, C, rs->DeviceProp, main_stream);
 
     bool recompute_ln1 = rs->Options.RecomputeRMSNorm || rs->Options.RecomputeAtt;
-    if(recompute_ln1) {
-        Tensor& residual = layer == 0 ? rs->Encoded : rs->Acts[layer - 1].ResidualFFN;
-        rmsnorm_forward(acts.LN1.Value, acts.LN1_Rstd, residual, weights.LN1_w, nullptr, Config.RmsNormEps, B, T, C, main_stream);
-    }
-
-    if (rs->Options.RecomputeQKV || rs->Options.RecomputeAtt) {
-        // two scenarios: 1) we do not recompute the RMSnorm; then, we _will_ overwrite the full-precision copy of acts.LN1,
-        //                   but _can_ reuse the quantized version
-        //                2) we recompute RMSNorm; then, acts.LN1 will be correct, but its quantized version will not, so
-        //                   we have to re-quantize (TODO but we could reuse the absmax)
-        forward_qmm(acts.QKV, acts.LN1, weights.Attn_QKV_w, weights.Attn_QKV_b,
-                     rs->CublasLtHandle, rs->Workspace,
-                     B, T, C, Config.qkv_channels(),
-                     rs->DeviceProp, !recompute_ln1, false, main_stream);
-        rope_forward(acts.Rope, acts.QKV, rs->FreqCis, B, T, Hq, Hkv, Hs, main_stream);
-
-        if (rs->Options.RecomputeAtt) {
-            attention_forward_cudnn(acts.Att.Value, acts.LSE, acts.Rope, rs->Workspace, rs->CudnnHandle, B, T, Hq, Hkv, Hs, main_stream);
-            // AttO not needed in backward pass :)
-        }
-    }
-
     backward_qmm(d_acts.DAttY, d_weights.Attn_Out_w, std::nullopt, d_acts.DResAtt, acts.Att, weights.Attn_Out_w, std::nullopt,
                        accumulate, *rs, B, T, C, C, false, true, main_stream);
 
