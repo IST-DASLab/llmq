@@ -45,7 +45,7 @@ Let's fine-tune the smallest Qwen model on this data:
   --eval-file=data/tiny-shakespeare-qwen/eval.bin \
   --model-dtype=bf16 --opt-m-dtype=bf16 --opt-v-dtype=bf16 \
   --matmul-dtype=e4m3 \
-  --recompute-ffn --recompute-att \
+  --recompute-block \
   --grad-accumulation=8 --steps=30 \
   --learning-rate=1e-5 --gpus=1 --batch-size=8
 ```
@@ -53,7 +53,7 @@ The program will print some logging information, such as the following:
 ```text
 [Options]
   recompute-swiglu  : true
-  recompute-norm    : false
+  recompute-norm    : true
   [...]
 
 [System 0]
@@ -83,7 +83,7 @@ Loading model from `/huggingface/hub/models--Qwen--Qwen2.5-0.5B/snapshots/060db6
 ```
 
 If `[Allocator State]` shows a lot of `Free` memory (as it does here), you can try increasing the batch size (and adjust `--grad-accumulation` accordingly), or reduce the amount of activation checkpointing.
-For example, on a 16GiB 4060Ti, `--recompute-ffn --recompute-att` can be replaced by `--recompute-swiglu`, which increases the activation memory from `4.5 GiB` to `9 GiB`, and
+For example, on a 16GiB 4060Ti, `--recompute-block` can be replaced by `--recompute-swiglu`, which increases the activation memory from `4.5 GiB` to `9 GiB`, and
 the speed from ~11k tps to ~13k tps.
 
 Then, the actual training will begin:
@@ -338,16 +338,19 @@ The run marked with * uses additional arguments `--shard-weights --memcpy-all-ga
 | Qwen2.5-3B²   | 4    | bf16  | 4     | 24k  | 69% | 12h   |
 | Qwen2.5-7B⁶   | 4    | fp8   | 8     | 13k  | 47% | 21h   |
 | Qwen2.5-7B⁷   | 4    | bf16  | 8     | 7.0k | 46% | 40h   |
-| Qwen2.5-14B⁶  | 4    | fp8   | 4     | 3.2k | 22% | 87h   |
-| Qwen2.5-14B⁷  | 4    | bf16  | 4     | 2.5k | 33% | 111h  |
+| Qwen2.5-14B⁸  | 4    | fp8   | 8     | 6.0k | 42% | 47h   |
+| Qwen2.5-14B⁹  | 4    | bf16  | 8     | 4.5k | 58% | 62h   |
+
 
 ^1: `--offload-opt-m --offload-opt-v --recompute-swiglu --recompute-norm --offload-master`  
 ^2: `--offload-opt-m --offload-opt-v --recompute-swiglu --recompute-norm`  
 ^3: `--offload-opt-m --offload-opt-v --recompute-ffn --recompute-norm --recompute-att --offload-master --shard-weights --persistent-quants --offload-quants`  
 ^4: `--offload-opt-m --offload-opt-v --recompute-ffn --recompute-norm --recompute-att --offload-master --shard-weights --memcpy-all-gather`  
-^5: `--recompute-norm --recompute-swiglu`  
+^5: `--recompute-norm --recompute-swiglu` 
 ^6: `--offload-opt-m --offload-opt-v --recompute-ffn --recompute-norm --recompute-att --offload-master --shard-weights --memcpy-all-gather --shard-gradients --memcpy-send-recv --all-to-all-reduce --persistent-quants --offload-quants`  
-^7: `--offload-opt-m --offload-opt-v --recompute-ffn --recompute-norm --recompute-att --offload-master --shard-weights --memcpy-all-gather --shard-gradients --memcpy-send-recv --all-to-all-reduce`  
+^7: `--offload-opt-m --offload-opt-v --recompute-ffn --recompute-norm --recompute-att --offload-master --shard-weights --memcpy-all-gather --shard-gradients --memcpy-send-recv --all-to-all-reduce` 
+^8: `--offload-opt-m --offload-opt-v --recompute-block --offload-master --shard-weights --memcpy-all-gather --shard-gradients --memcpy-send-recv --all-to-all-reduce --persistent-quants --offload-quants`  
+^9: `--offload-opt-m --offload-opt-v --recompute-block --offload-master --shard-weights --memcpy-all-gather --shard-gradients --memcpy-send-recv --all-to-all-reduce`  
 
 ### L40S
 
@@ -379,38 +382,38 @@ The run marked with * uses additional arguments `--shard-weights --memcpy-all-ga
 
 ### RTX 5090 Performance Benchmarks
 
-| Model         | nGPU | DType | Batch | TPS | SOL  | TTB   |
-|---------------|------|-------|-------|-----|------|-------|
-| Qwen2.5-0.5B  | 1    | fp8   | 8     | 70k | 68%  | 4:00h |
-| Qwen2.5-0.5B  | 1    | fp8   | 16    | 69k | 67%  | 4:02h |
-| Qwen2.5-0.5B¹ | 1    | fp8   | 32    | 54k | 52%  | 5:08h |
-| Qwen2.5-0.5B  | 1    | bf16  | 8     | 55k | 81%  | 5:03h |
-| Qwen2.5-0.5B  | 1    | bf16  | 16    | 55k | 82%  | 5:03h |
-| Qwen2.5-0.5B¹ | 1    | bf16  | 32    | 48k | 71%  | 5:47h |
-| Qwen2.5-1.5B  | 1    | fp8   | 8     | 27k | 73%  | 10:16h|
-| Qwen2.5-1.5B¹ | 1    | bf16  | 8     | 17k | 77%  | 16:22h|
-| Qwen2.5-3B¹   | 1    | fp8   | 4     | 13k | 64%  | 21:24h|
-| Qwen2.5-3B¹   | 1    | fp8   | 8     | 13k | 64%  | 21:24h|
-| Qwen2.5-3B¹   | 1    | bf16  | 4     | 8.2k| 75%  | 33:53h|
-| Qwen2.5-3B¹   | 1    | bf16  | 8     | 8.6k| 78%  | 32:18h|
-| Qwen2.5-7B³   | 1    | fp8   | 4     | 3.2k| 36%  | 87h   |
-| Qwen2.5-7B³   | 1    | fp8   | 8     | 4.4k| 50%  | 63h   |
-| Qwen2.5-7B³   | 1    | bf16  | 4     | 2.5k| 52%  | 111h  |
-| Qwen2.5-7B³   | 1    | bf16  | 8     | 3.1k| 66%  | 90h   |
-| Qwen2.5-1.5B  | 4    | fp8   | 8     | 107k| 72%  | 2:36h |
-| Qwen2.5-1.5B⁴ | 4    | bf16  | 4     | 71.2k| 81% | 3:41h |
-| Qwen2.5-3B¹   | 4    | fp8   | 4     | 48k | 61%  | 5:47h |
-| Qwen2.5-3B²   | 4    | fp8   | 8     | 49k | 62%  | 5:40h |
-| Qwen2.5-3B¹   | 4    | bf16  | 4     | 32k | 72%  | 8:41h |
-| Qwen2.5-7B³   | 4    | fp8   | 8     | 18.9k| 53% | 14:42h|
-| Qwen2.5-7B³   | 4    | bf16  | 8     | 13.9k| 71% | 20:00h|
-| Qwen2.5-14B³  | 4    | fp8   | 4     | 8.1k| 23%  | 34:20h|
-| Qwen2.5-14B³  | 4    | bf16  | 4     | 3.9k| 20%  | 71:20h|
+| Model         | nGPU | DType | Batch | TPS   | SOL | TTB    |
+|---------------|------|-------|-------|-------|-----|--------|
+| Qwen2.5-0.5B  | 1    | fp8   | 8     | 70k   | 68% | 4:00h  |
+| Qwen2.5-0.5B  | 1    | fp8   | 16    | 69k   | 67% | 4:02h  |
+| Qwen2.5-0.5B¹ | 1    | fp8   | 32    | 54k   | 52% | 5:08h  |
+| Qwen2.5-0.5B  | 1    | bf16  | 8     | 55k   | 81% | 5:03h  |
+| Qwen2.5-0.5B  | 1    | bf16  | 16    | 55k   | 82% | 5:03h  |
+| Qwen2.5-0.5B¹ | 1    | bf16  | 32    | 48k   | 71% | 5:47h  |
+| Qwen2.5-1.5B  | 1    | fp8   | 8     | 27k   | 73% | 10:16h |
+| Qwen2.5-1.5B¹ | 1    | bf16  | 8     | 17k   | 77% | 16:22h |
+| Qwen2.5-3B¹   | 1    | fp8   | 4     | 13k   | 64% | 21:24h |
+| Qwen2.5-3B¹   | 1    | fp8   | 8     | 13k   | 64% | 21:24h |
+| Qwen2.5-3B¹   | 1    | bf16  | 4     | 8.2k  | 75% | 33:53h |
+| Qwen2.5-3B¹   | 1    | bf16  | 8     | 8.6k  | 78% | 32:18h |
+| Qwen2.5-7B³   | 1    | fp8   | 4     | 3.2k  | 36% | 87h    |
+| Qwen2.5-7B³   | 1    | fp8   | 8     | 4.4k  | 50% | 63h    |
+| Qwen2.5-7B³   | 1    | bf16  | 4     | 2.5k  | 52% | 111h   |
+| Qwen2.5-7B³   | 1    | bf16  | 8     | 3.1k  | 66% | 90h    |
+| Qwen2.5-1.5B  | 4    | fp8   | 8     | 107k  | 72% | 2:36h  |
+| Qwen2.5-1.5B⁴ | 4    | bf16  | 4     | 71.2k | 81% | 3:41h  |
+| Qwen2.5-3B¹   | 4    | fp8   | 4     | 48k   | 61% | 5:47h  |
+| Qwen2.5-3B²   | 4    | fp8   | 8     | 49k   | 62% | 5:40h  |
+| Qwen2.5-3B¹   | 4    | bf16  | 4     | 32k   | 72% | 8:41h  |
+| Qwen2.5-7B³   | 4    | fp8   | 8     | 18.9k | 53% | 14:42h |
+| Qwen2.5-7B³   | 4    | bf16  | 8     | 13.9k | 71% | 20:00h |
+| Qwen2.5-14B³  | 4    | fp8   | 4     | 8.1k  | 23% | 34:20h |
+| Qwen2.5-14B³  | 4    | bf16  | 4     | 3.9k  | 20% | 71:20h |
 
-¹: `--recompute-ffn --recompute-att`
-²: `--recompute-norm --recompute-swiglu --recompute-ffn --recompute-att`
-³: `--recompute-norm --recompute-swiglu --recompute-ffn --recompute-att --offload-opt-m --offload-opt-v --shard-weights --offload-master --shard-gradients`
-⁴: `--recompute-swiglu`
+¹: `--recompute-ffn --recompute-att` 
+²: `--recompute-norm --recompute-swiglu --recompute-ffn --recompute-att` 
+³: `--recompute-norm --recompute-swiglu --recompute-ffn --recompute-att --offload-opt-m --offload-opt-v --shard-weights --offload-master --shard-gradients` 
+⁴: `--recompute-swiglu` 
 
 Command used: `./build/train --model=./Qwen2.5-0.5B --train-file=tiny-shakespeare-qwen-train.bin --eval-file=tiny-shakespeare-qwen-eval.bin --model-dtype=bf16 --opt-m-dtype=bf16 --opt-v-dtype=bf16 --matmul-dtype=e4m3 --grad-accumulation=8 --steps=1000 --learning-rate=1e-5 --gpus=1 --batch-size=8`
 
