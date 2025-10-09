@@ -416,11 +416,11 @@ void LLamaModel::_recompute_block(int layer, sLLamaBlockWeights<Tensor>& weights
         // two scenarios: 1) we do not recompute the RMSnorm; then, we _will_ overwrite the full-precision copy of acts.LN1,
         //                   but _can_ reuse the quantized version
         //                2) we recompute RMSNorm; then, acts.LN1 will be correct, but its quantized version will not, so
-        //                   we have to re-quantize (TODO but we could reuse the absmax)
+        //                   we have to re-quantize
         forward_qmm(acts.QKV, acts.LN1, weights.Attn_QKV_w, weights.Attn_QKV_b,
                      rs->CublasLtHandle, rs->Workspace,
                      B, T, C, Config.qkv_channels(),
-                     rs->DeviceProp, !recompute_ln1, false, main_stream);
+                     rs->DeviceProp, !recompute_ln1, true, main_stream);
         rope_forward(acts.Rope, acts.QKV, rs->FreqCis, B, T, Hq, Hkv, Hs, main_stream);
     }
 
@@ -432,7 +432,7 @@ void LLamaModel::_recompute_block(int layer, sLLamaBlockWeights<Tensor>& weights
             forward_qmm(acts.AttO, acts.Att, weights.Attn_Out_w, std::nullopt,
                          rs->CublasLtHandle, rs->Workspace,
                          B, T, C, C,
-                         rs->DeviceProp, false, false, main_stream);
+                         rs->DeviceProp, false, true, main_stream);
         }
     }
 
@@ -441,10 +441,10 @@ void LLamaModel::_recompute_block(int layer, sLLamaBlockWeights<Tensor>& weights
         if (opt.RecomputeBlock) {
             Tensor residual = layer == 0 ? rs->Encoded : rs->Acts[layer - 1].ResidualFFN;
             fused_residual_rmsnorm_forward(acts.ResidualAtt, acts.LN2.Value, acts.LN2_Rstd, residual, acts.AttO, weights.LN2_w,
-                                       acts.LN2.Quant.has_value() ? acts.LN2.Quant->Scales : nullptr,
-                                       Config.RmsNormEps, B * T, C, main_stream);
+                                 nullptr, Config.RmsNormEps, B * T, C, main_stream);
         } else {
-            rmsnorm_forward(acts.LN2.Value, acts.LN2_Rstd, acts.ResidualAtt, weights.LN2_w, nullptr, Config.RmsNormEps, B, T, C, main_stream);
+            rmsnorm_forward(acts.LN2.Value, acts.LN2_Rstd, acts.ResidualAtt, weights.LN2_w,
+                  nullptr, Config.RmsNormEps, B, T, C, main_stream);
         }
     }
 
@@ -452,7 +452,7 @@ void LLamaModel::_recompute_block(int layer, sLLamaBlockWeights<Tensor>& weights
         forward_qmm(acts.MlpUp, acts.LN2, weights.MLP_Up_w, std::nullopt,
                          rs->CublasLtHandle, rs->Workspace,
                          B, T, C, 2 * D,
-                         rs->DeviceProp, false, false, main_stream);
+                         rs->DeviceProp, false, true, main_stream);
     }
 
     if(recompute_swiglu) {
