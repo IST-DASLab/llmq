@@ -12,8 +12,6 @@
 #include "llama_weights.h"
 #include "utilities/comm.h"
 
-constexpr const int QWEN2_NUM_LINEAR_OPS = 4;
-
 LLamaModel::LLamaModel(LLamaConfig config, const LLamaOptions& options, int rank, int world, const std::shared_ptr<TensorAllocator>& alloc) :
         Config(config), Options(options), Allocator(alloc ? alloc : std::make_shared<TensorAllocator>())
 {
@@ -241,11 +239,11 @@ float LLamaModel::validate(Tensor inputs, Tensor targets, NCCLCommunicator& comm
 }
 
 void backward_qmm(Tensor& dinp, Tensor& dweight, std::optional<Tensor> dbias,
-                        QuantizableTensor& dout, QuantizableTensor& inp, Tensor& weight, std::optional<Tensor> bias_buffer,
-                        bool accumulate_gradient,
-                        LLamaRunState& rs,
-                        int B, int T, int C, int OC,
-                        bool reuse_inp, bool dout_has_absmax, cudaStream_t stream) {
+                  QuantizableTensor& dout, QuantizableTensor& inp, Tensor& weight, std::optional<Tensor> bias_buffer,
+                  bool accumulate_gradient,
+                  LLamaRunState& rs,
+                  int B, int T, int C, int OC,
+                  bool reuse_inp, bool dout_has_absmax, cudaStream_t stream) {
     if (weight.DType == inp.Value.DType) {
         matmul_backward(dinp, dweight, dbias, dout.Value, inp.Value, weight, bias_buffer, nullptr, nullptr, accumulate_gradient,
                         rs.CublasLtHandle, rs.Workspace, B, T, C, OC, rs.DeviceProp, stream);
@@ -456,7 +454,7 @@ void LLamaModel::_recompute_block(int layer, sLLamaBlockWeights<Tensor>& weights
     }
 
     if(recompute_swiglu) {
-        if (acts.SwiGLu.Quant.has_value() && acts.SwiGLu.Quant->DType == ETensorDType::FP8_E4M3) {
+        if (acts.SwiGLu.Quant.has_value()) {
             swiglu_forward_quant(acts.SwiGLu.Quant.value(), acts.MlpUp, acts.SwiGLu.Quant->Scales, B, T, D, main_stream);
         } else {
             swiglu_forward(acts.SwiGLu.Value, acts.MlpUp, nullptr, B, T, D, main_stream);
@@ -481,24 +479,15 @@ void LLamaModel::_backward_block(int layer, bool accumulate, sLLamaBlockWeights<
 
     _recompute_block(layer, weights);
 
-    bool reuse_swiglu = true;
-
-    if(rs->Options.RecomputeSwiGLu || rs->Options.RecomputeFFN) {
-        if (acts.SwiGLu.Quant.has_value() && acts.SwiGLu.Quant->DType == ETensorDType::FP8_E4M3) {
-            reuse_swiglu = true;
-        } else {
-            reuse_swiglu = false;
-        }
-    }
-
     // backward the 2nd matmul of MLP
+    // note that _recompute_block guarantees that if SwiGLu is already quantized (if necessary)
     backward_qmm(d_acts.DSwiGLU, d_weights.MLP_Down_w, std::nullopt, d_acts.DResFFN, acts.SwiGLu, weights.MLP_Down_w, std::nullopt,
-                       accumulate, *rs, B, T, D, C, reuse_swiglu, true, main_stream);
+                 accumulate, *rs, B, T, D, C, true, true, main_stream);
 
     swiglu_backward(d_acts.DMlpUp.Value, d_acts.DSwiGLU, acts.MlpUp, quant_abs_max_ptr(d_acts.DMlpUp), B, T, D, main_stream);
 
     backward_qmm(d_acts.DLN2, d_weights.MLP_Up_w, std::nullopt, d_acts.DMlpUp, acts.LN2, weights.MLP_Up_w, std::nullopt,
-                       accumulate, *rs, B, T, C, 2 * D, !rs->Options.RecomputeRMSNorm, true, main_stream);
+                 accumulate, *rs, B, T, C, 2 * D, !rs->Options.RecomputeRMSNorm, true, main_stream);
 
     // rmsnorm backward does += to the dresidual, so it correctly accumulates grad from the MLP block above
     rmsnorm_backward(d_acts.DResAtt.Value, d_weights.LN2_w, rs->RMSNormScratch, d_acts.DResFFN.Value, d_acts.DLN2,
@@ -506,7 +495,7 @@ void LLamaModel::_backward_block(int layer, bool accumulate, sLLamaBlockWeights<
 
     bool recompute_ln1 = rs->Options.RecomputeRMSNorm || rs->Options.RecomputeAtt;
     backward_qmm(d_acts.DAttY, d_weights.Attn_Out_w, std::nullopt, d_acts.DResAtt, acts.Att, weights.Attn_Out_w, std::nullopt,
-                       accumulate, *rs, B, T, C, C, false, true, main_stream);
+                 accumulate, *rs, B, T, C, C, false, true, main_stream);
 
     attention_backward_cudnn(d_acts.DRope, acts.LSE, acts.Att.Value, d_acts.DAttY, acts.Rope, rs->Workspace, rs->CudnnHandle, B, T, Hq, Hkv, Hs, main_stream);
     rope_backward(d_acts.DQKV.Value, d_acts.DRope, rs->FreqCis, B, T, Hq, Hkv, Hs, main_stream);
