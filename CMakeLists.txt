@@ -15,6 +15,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 # As cuFile might not be supported everywhere (WSL; AMD), make it an optional depencendy
 # with a fallback implementation
 option(USE_CUFILE "Enable cuFile support for optimized file I/O" ON)
+option(USE_NVML "Enable nvml support for detailed GPU stats reporting" ON)
 
 FetchContent_Declare(
         json
@@ -68,6 +69,15 @@ if(NOT USE_CUFILE)
     set(CUFILE_LIBS "")
 endif ()
 
+if(USE_NVML)
+    find_package(CUDAToolkit COMPONENTS nvml)
+    set(NVML_SOURCE src/utilities/gpu_info_nvml.cpp)
+    set(NVML_LIBS CUDA::nvml)
+else()
+    set(NVML_SOURCE src/utilities/gpu_info_fallback.cpp)
+    set(NVML_LIBS "")
+endif ()
+
     # allow configuring search paths from env
 set(NCCL_INCLUDE_DIR $ENV{NCCL_INCLUDE_DIR} CACHE PATH "Folder containing NCCL headers")
 set(NCCL_LIB_DIR $ENV{NCCL_LIB_DIR} CACHE PATH "Folder containing NCCL library")
@@ -108,8 +118,8 @@ message(STATUS "cuBLASLt Library: ${CUDA_cublasLt_LIBRARY}")
 add_library(libllmq SHARED
         src/utilities/safetensors.cpp
         ${CUFILE_SOURCE}
+        ${NVML_SOURCE}
         src/utilities/allocator.cpp
-        src/utilities/gpu_info_nvml.cpp
         src/utilities/utils.cpp
         src/utilities/comm.cpp
         src/utilities/tensor.cpp
@@ -146,7 +156,7 @@ add_library(libllmq SHARED
 )
 
 target_link_libraries(libllmq PRIVATE ${CUFILE_LIBS} cudnn_frontend ${CUDNN_LIBRARY} nvidia::nccl fmt::fmt-header-only)
-target_link_libraries(libllmq PUBLIC CUDA::cudart CUDA::cublasLt CUDA::nvml nlohmann_json::nlohmann_json)
+target_link_libraries(libllmq PUBLIC CUDA::cudart CUDA::cublasLt ${NVML_LIBS} nlohmann_json::nlohmann_json)
 target_link_libraries(libllmq PUBLIC ${MULTI_GPU_DEPS})
 target_compile_definitions(libllmq PUBLIC ${MULTI_GPU_DEFS})
 target_include_directories(libllmq PRIVATE ${CUDNN_INCLUDE_DIR})
