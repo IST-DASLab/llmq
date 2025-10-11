@@ -65,7 +65,6 @@ void matmul_cublaslt(floatO* d, const floatX* a, const floatX* b, const floatB* 
                      const float* scale=nullptr, bool transA=true, bool transB=false,
                      bool accumulate=false, bool backward=false)
 {
-    NVTX_RANGE_FN();
     bool has_bias = (bias != nullptr);
 
     // check alignment (some modes work unaligned, but it is always best to be aligned for performance)
@@ -403,7 +402,6 @@ void matmul_backward_imp(floatX* dinp, floatX* dweight, floatX* dbias,
                          bool accumulate_gradient,
                          cublasLtHandle_t handle, std::byte* workspace, std::size_t workspace_size,
                          int B, int T, int C, int OC, const cudaDeviceProp& dp, cudaStream_t stream) {
-    NVTX_RANGE_FN();
     using x128 = GenericVector<floatX, 16/sizeof(floatX)>;
     using f128 = GenericVector<float, 16/sizeof(float)>;
 
@@ -449,7 +447,6 @@ void matmul_backward_fp8_imp(floatX* dinp, floatX* dweight, floatX* dbias,
                              bool accumulate_gradient,
                              cublasLtHandle_t handle, std::byte* workspace, std::size_t workspace_size,
                              int B, int T, int C, int OC, const cudaDeviceProp& dp, cudaStream_t stream) {
-    NVTX_RANGE_FN();
     using x128 = GenericVector<floatX, 16/sizeof(floatX)>;
     using f128 = GenericVector<float, 16/sizeof(float)>;
 

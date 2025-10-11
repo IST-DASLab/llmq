@@ -85,6 +85,8 @@ void LLamaModel::forward(Tensor inputs, NCCLCommunicator& comm, int micro_step) 
     long V = Config.VocabSize;
     long C = Config.HiddenSize;
 
+    // If this is the first micro-step, the parameters have just changed, and we can not
+    // re-use any cached values
     if(micro_step == 0) {
         Parameters->invalidate();
     }
@@ -93,18 +95,17 @@ void LLamaModel::forward(Tensor inputs, NCCLCommunicator& comm, int micro_step) 
     assert(rs->Inputs.Sizes[0] >= B);
     assert(rs->Inputs.Sizes[1] >= T);
     assert(inputs.Device == -1);
+    CUDA_CHECK(cudaMemcpyAsync(rs->Inputs.Data, inputs.Data, inputs.bytes(), cudaMemcpyHostToDevice, main_stream));
+    CUDA_CHECK(cudaEventRecord(rs->TransferDone, main_stream));
+
     {
         NvtxRange emb_range("embedding");
-        CUDA_CHECK(cudaMemcpyAsync(rs->Inputs.Data, inputs.Data, inputs.bytes(), cudaMemcpyHostToDevice, main_stream));
-        CUDA_CHECK(cudaEventRecord(rs->TransferDone, main_stream));
-
         Parameters->gather_embeddings(comm);
-        // forward pass
         encoder_forward(
             rs->Encoded,
             rs->Inputs,
             Parameters->get_embeddings(main_stream),
-            std::nullopt, B, T, C, V, main_stream); // encoding goes into residual[0]
+            std::nullopt, B, T, C, V, main_stream);
         Parameters->release_embeddings(main_stream);
     }
 
@@ -134,8 +135,7 @@ void LLamaModel::forward(Tensor inputs, NCCLCommunicator& comm, int micro_step) 
                                            Config.RmsNormEps, B * T, C, main_stream);
         }
 
-        auto weights = Parameters->get_block(l, main_stream);
-        trace_or_execute_cuda_graph([&](){_forward_block(l, weights);},
+        trace_or_execute_cuda_graph([&](){_forward_block(l, wgt);},
             main_stream, rs->ForwardBlockGraph, rs->Options.UseCudaGraphs);
         Parameters->release_block(l, main_stream);
     }
@@ -178,32 +178,32 @@ void LLamaModel::_forward_block(int layer, sLLamaBlockWeights<Tensor>& weights)
 
     // 1) projection to QKV vectors (note k,v may be fewer heads than q)
     forward_qmm(acts.QKV, acts.LN1, weights.Attn_QKV_w, weights.Attn_QKV_b,
-                     rs->CublasLtHandle, rs->Workspace,
-                     B, T, C, Config.qkv_channels(),
-                     rs->DeviceProp, false, true, main_stream);
+                rs->CublasLtHandle, rs->Workspace,
+                B, T, C, Config.qkv_channels(),
+                rs->DeviceProp, false, true, main_stream);
     // 2) apply RoPE to q,k (potentially in place)
     rope_forward(acts.Rope, acts.QKV, rs->FreqCis, B, T, Hq, Hkv, Hs, main_stream);
     // 3) attention: att <- softmax(qk^T)v
     attention_forward_cudnn(acts.Att.Value, acts.LSE, acts.Rope, rs->Workspace, rs->CudnnHandle, B, T, Hq, Hkv, Hs, main_stream);
 
     forward_qmm(acts.AttO, acts.Att, weights.Attn_Out_w, std::nullopt,
-                     rs->CublasLtHandle, rs->Workspace,
-                     B, T, C, C,
-                     rs->DeviceProp, false, false, main_stream);
+                rs->CublasLtHandle, rs->Workspace,
+                B, T, C, C,
+                rs->DeviceProp, false, false, main_stream);
 
     fused_residual_rmsnorm_forward(acts.ResidualAtt, acts.LN2.Value, acts.LN2_Rstd, residual, acts.AttO, weights.LN2_w,
                                    quant_abs_max_ptr(acts.LN2), Config.RmsNormEps, B * T, C, main_stream);
 
     forward_qmm(acts.MlpUp, acts.LN2, weights.MLP_Up_w, std::nullopt,
-                     rs->CublasLtHandle, rs->Workspace,
-                     B, T, C, 2 * D,
-                     rs->DeviceProp, false, true, main_stream);
+                rs->CublasLtHandle, rs->Workspace,
+                B, T, C, 2 * D,
+                rs->DeviceProp, false, true, main_stream);
     swiglu_forward(acts.SwiGLu.Value, acts.MlpUp, quant_abs_max_ptr(acts.SwiGLu), B, T, D, main_stream);
 
     forward_qmm(acts.MlpDown, acts.SwiGLu, weights.MLP_Down_w, std::nullopt,
-                     rs->CublasLtHandle, rs->Workspace,
-                     B, T, D, C,
-                     rs->DeviceProp, false, true, main_stream);
+                rs->CublasLtHandle, rs->Workspace,
+                B, T, D, C,
+                rs->DeviceProp, false, true, main_stream);
 }
 
 float LLamaModel::validate(Tensor inputs, Tensor targets, NCCLCommunicator& comm, int micro_step) {
@@ -365,14 +365,17 @@ void LLamaModel::backward(Tensor inputs, Tensor targets, NCCLCommunicator& comm,
         }
         auto& weights = Parameters->get_block(l, main_stream);
         // last layer changes topology, so for now just don't use graph
-        trace_or_execute_cuda_graph([&](){_backward_block(l, accumulate, weights, dw);}, main_stream, rs->BackwardBlockGraph, rs->Options.UseCudaGraphs && l != 0);
+        trace_or_execute_cuda_graph([&](){
+            _recompute_block(l, weights);
+            _backward_block(l, accumulate, weights, dw);
+            }, main_stream, rs->BackwardBlockGraph, rs->Options.UseCudaGraphs && l != 0);
         Parameters->release_block(l, main_stream);
         Grads->notify_block(l, main_stream, comm);
     }
 
     auto& d_emb = Grads->get_embeddings_full(main_stream, comm, accumulate);
     encoder_backward(d_emb, rs->EncoderBwdScratch, rs->EncoderBwdIndices, rs->EncoderBwdInfo,
-                     rs->DEmb, rs->Inputs, inputs, B, T, C, 42, main_stream);       // TODO seeding!
+                     rs->DEmb, rs->Inputs, inputs, B, T, C, OptimizerRNG(), main_stream);
     Grads->notify_embeddings(main_stream, comm);
 
     // make sure all gradients are communicated before we go to the update step.
@@ -384,6 +387,7 @@ void LLamaModel::backward(Tensor inputs, Tensor targets, NCCLCommunicator& comm,
 }
 
 void LLamaModel::_recompute_block(int layer, sLLamaBlockWeights<Tensor>& weights) {
+    NvtxRange classifier_and_loss_range("recompute");
     auto& rs = RunState;
     cudaStream_t main_stream = rs->MainStream;
     // convenience shortcuts, size_t instead of int so that pointer arithmetics don't overflow
@@ -476,8 +480,6 @@ void LLamaModel::_backward_block(int layer, bool accumulate, sLLamaBlockWeights<
 
     auto& acts = rs->Acts[layer];
     auto& d_acts = rs->DActs.at(layer);
-
-    _recompute_block(layer, weights);
 
     // backward the 2nd matmul of MLP
     // note that _recompute_block guarantees that if SwiGLu is already quantized (if necessary)
