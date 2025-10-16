@@ -12,6 +12,8 @@
 #include "llama_weights.h"
 #include "utilities/comm.h"
 
+extern float* get_device_one();
+
 LLamaModel::LLamaModel(LLamaConfig config, const LLamaOptions& options, int rank, int world, const std::shared_ptr<TensorAllocator>& alloc) :
         Config(config), Options(options), Allocator(alloc ? alloc : std::make_shared<TensorAllocator>())
 {
@@ -244,8 +246,12 @@ void backward_qmm(Tensor& dinp, Tensor& dweight, std::optional<Tensor> dbias,
                   int B, int T, int C, int OC,
                   bool reuse_inp, bool dout_has_absmax, cudaStream_t stream) {
     if (weight.DType == inp.Value.DType) {
-        matmul_backward(dinp, dweight, dbias, dout.Value, inp.Value, weight, bias_buffer, nullptr, nullptr, accumulate_gradient,
-                        rs.CublasLtHandle, rs.Workspace, B, T, C, OC, rs.DeviceProp, stream);
+        matmul(dinp, weight, dout.Value, std::nullopt, nullptr, rs.CublasLtHandle, rs.Workspace, C, B*T, OC, EMMTranspose::NN, false, stream);
+        matmul(dweight, inp.Value, dout.Value, std::nullopt, nullptr, rs.CublasLtHandle, rs.Workspace, C, OC, B*T, EMMTranspose::NT, accumulate_gradient, stream);
+
+        if (dbias.has_value()) {
+            backward_bias(dbias.value(), dout.Value, nullptr, bias_buffer.value(), B, T, OC, rs.DeviceProp, stream);
+        }
     } else {
         float* act_scale = inp.Quant->Scales;
         float* wgt_scale = weight.Scales;
@@ -273,8 +279,11 @@ void backward_qmm(Tensor& dinp, Tensor& dweight, std::optional<Tensor> dbias,
         matmul_out_scale(dinp_scale, dout_scale, wgt_scale, 1.f / scale / scale, stream);
         matmul_out_scale(dwgt_scale, dout_scale, act_scale, 1.f / scale / scale, stream);
 
-        matmul_backward_fp8(dinp, dweight, dbias, dout.Quant.value(), rs.GradientTranspose, rs.ActivationTranspose, rs.WeightTranspose,
-                            bias_buffer, dinp_scale, dwgt_scale, dout_scale, accumulate_gradient, rs.CublasLtHandle, rs.Workspace, B, T, C, OC, rs.DeviceProp, stream);
+        matmul(dinp, rs.WeightTranspose, dout.Quant.value(), std::nullopt, dinp_scale, rs.CublasLtHandle, rs.Workspace, C, B*T, OC, EMMTranspose::TN, false, stream);
+        matmul(dweight, rs.ActivationTranspose, rs.GradientTranspose, std::nullopt, dwgt_scale, rs.CublasLtHandle, rs.Workspace, C, OC, B*T, EMMTranspose::TN, accumulate_gradient, stream);
+        if (dbias.has_value()) {
+            backward_bias(dbias.value(), dout.Quant.value(), dout_scale, bias_buffer.value(), B, T, OC, rs.DeviceProp, stream);
+        }
     }
 }
 
@@ -335,12 +344,14 @@ void LLamaModel::backward(Tensor inputs, Tensor targets, NCCLCommunicator& comm,
     // ZeRO-3 note: We just finished the forward pass, so LMHead and LNF_w are still available locally, no further gathering needed.
     //              Same for layer L-1, so the first thing we need to prefetch is L-2 down in the loop below.
 
-    // BackwarDone ensures that zero-2 gradient accumulation of the previous step has finished, so we can safely write to d_lmhead again.
+    // BackwardDone ensures that zero-2 gradient accumulation of the previous step has finished, so we can safely write to d_lmhead again.
     CUDA_CHECK(cudaEventSynchronize(rs->BackwardDone));
     auto& d_lmhead = Grads->get_lmhead_full(main_stream, comm, accumulate);
     Parameters->gather_head(comm);
-    matmul_backward(rs->DLNF, d_lmhead, std::nullopt, rs->Output, rs->LNF, Parameters->get_head(main_stream), std::nullopt,
-                    nullptr, nullptr, accumulate, rs->CublasLtHandle, rs->Workspace, B, T, C, Vp, rs->DeviceProp, main_stream);
+    // for some reason, we cannot set scale == nullptr here ?!
+    // so instead supply the value one (get_device_one())
+    matmul(rs->DLNF, Parameters->get_head(main_stream), rs->Output, std::nullopt, get_device_one(), rs->CublasLtHandle, rs->Workspace, C, B*T, V, EMMTranspose::NN, false, main_stream);
+    matmul(d_lmhead, rs->LNF, rs->Output, std::nullopt, get_device_one(), rs->CublasLtHandle, rs->Workspace, C, V, B*T, EMMTranspose::NT, accumulate, main_stream);
     Parameters->release_head(main_stream);
     Grads->notify_lmhead(main_stream, comm);
 
