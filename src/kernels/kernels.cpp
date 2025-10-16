@@ -280,3 +280,15 @@ void matmul(Tensor& c, const Tensor& a, const Tensor& b, std::optional<Tensor> b
         throw std::logic_error("matmul_forward: invalid DType combination");
     }
 }
+
+void backward_bias(Tensor& dbias, const Tensor& dout, const float* dout_abs_max, Tensor& dbias_buffer, int B, int T, int OC, const cudaDeviceProp& dp, cudaStream_t stream) {
+    if(dbias.DType == ETensorDType::FP32 && dout.DType == ETensorDType::FP32) {
+        backward_bias(dbias.get<float>(), dout.get<float>(), dout_abs_max, dbias_buffer.get<float>(), B, T, OC, dp, stream);
+    } else if(dbias.DType == ETensorDType::BF16 && dout.DType == ETensorDType::BF16) {
+        backward_bias(dbias.get<nv_bfloat16>(), dout.get<nv_bfloat16>(), dout_abs_max, dbias_buffer.get<float>(), B, T, OC, dp, stream);
+    }  else if(dbias.DType == ETensorDType::BF16 && dout.DType == ETensorDType::FP8_E4M3) {
+        backward_bias(dbias.get<nv_bfloat16>(), dout.get<__nv_fp8_e4m3>(), dout_abs_max, dbias_buffer.get<float>(), B, T, OC, dp, stream);
+    } else {
+        throw std::logic_error("backward_bias: unsupported dtype");
+    }
+}

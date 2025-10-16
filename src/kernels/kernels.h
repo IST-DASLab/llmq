@@ -91,6 +91,7 @@ int get_bias_backward_scratch_size(ETensorDType dtype, int OC, const cudaDeviceP
 void backward_bias(float* dbias, const float* dout, const float* dout_abs_max, float* dbias_buffer, int B, int T, int OC, const cudaDeviceProp& dp, cudaStream_t stream);
 void backward_bias(nv_bfloat16* dbias, const nv_bfloat16* dout, const float* dout_abs_max, float* dbias_buffer, int B, int T, int OC, const cudaDeviceProp& dp, cudaStream_t stream);
 void backward_bias(nv_bfloat16* dbias, const __nv_fp8_e4m3* dout, const float* dout_abs_max, float* dbias_buffer, int B, int T, int OC, const cudaDeviceProp& dp, cudaStream_t stream);
+void backward_bias(Tensor& dbias, const Tensor& dout, const float* dout_abs_max, Tensor& dbias_buffer, int B, int T, int OC, const cudaDeviceProp& dp, cudaStream_t stream);
 
 
 void matmul_backward(Tensor dinp, Tensor dweight, std::optional<Tensor> dbias,
