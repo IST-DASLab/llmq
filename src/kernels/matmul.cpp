@@ -63,7 +63,7 @@ void matmul_cublaslt(floatO* d, const floatX* a, const floatX* b, const floatB* 
                      std::byte* workspace, std::size_t workspace_size,
                      int m, int n, int k, cudaStream_t stream, cublasLtHandle_t handle,
                      const float* scale=nullptr, bool transA=true, bool transB=false,
-                     bool accumulate=false, bool backward=false)
+                     bool accumulate=false)
 {
     bool has_bias = (bias != nullptr);
 
@@ -114,11 +114,9 @@ void matmul_cublaslt(floatO* d, const floatX* a, const floatX* b, const floatB* 
                                                      &workspace_size, sizeof(workspace_size)));
 
     // setup epilogue and associated pointers for bias & gelu
-    cublasLtEpilogue_t epilogue;
+    cublasLtEpilogue_t epilogue = CUBLASLT_EPILOGUE_DEFAULT;
     if(has_bias){
-        epilogue = backward ? CUBLASLT_EPILOGUE_BGRADB : CUBLASLT_EPILOGUE_BIAS;
-    } else {
-        epilogue = CUBLASLT_EPILOGUE_DEFAULT;
+        epilogue = CUBLASLT_EPILOGUE_BIAS;
     }
     CUBLAS_CHECK(cublasLtMatmulDescSetAttribute(operationDesc, CUBLASLT_MATMUL_DESC_EPILOGUE, &epilogue, sizeof(epilogue)));
 
@@ -178,61 +176,35 @@ void matmul_cublaslt(floatO* d, const floatX* a, const floatX* b, const floatB* 
     CUDA_CHECK(cudaGetLastError());
 }
 
-template<class floatO, class floatB>
-__global__ void add_bias_kernel(floatO* out, const floatB* bias, int B, int T, int OC) {
-    int idx = blockIdx.x * blockDim.x + threadIdx.x;
-    int stride = blockDim.x * gridDim.x;
-    for (int i = idx; i < B * T * OC; i += stride) {
-        int col = i % OC;
-        out[i] += bias[col];
-    }
-}
-
-template<class floatO, class floatB>
-void add_bias_impl(floatO* out, const floatB* bias, int B, int T, int OC, cudaStream_t stream) {
-    int block_size = 256;
-    int grid_size = div_ceil(OC * B * T, block_size);
-    add_bias_kernel<<<grid_size, block_size, 0, stream>>>(out, bias, B, T, OC);
-    CUDA_CHECK(cudaGetLastError());
-}
-
-void add_bias(float* out, const float* bias, int B, int T, int OC, cudaStream_t stream) {
-    add_bias_impl(out, bias, B, T, OC, stream);
-}
-
-void add_bias(nv_bfloat16* out, const nv_bfloat16* bias, int B, int T, int OC, cudaStream_t stream) {
-    add_bias_impl(out, bias, B, T, OC, stream);
-}
-
 // small wrapper around matmul_cublaslt for the forward pass (keeping historical order of arguments)
 void matmul_forward(float* out, const float* inp, const float* weight, const float* bias, const float* scale,
                     cublasLtHandle_t handle, std::byte* workspace, std::size_t workspace_size,
                     int B, int T, int C, int OC, cudaStream_t stream) {
-    matmul_cublaslt(out, weight, inp, bias, workspace, workspace_size, OC, B*T, C, stream, handle, scale, true, false, false, false);
+    matmul_cublaslt(out, weight, inp, bias, workspace, workspace_size, OC, B*T, C, stream, handle, scale, true, false, false);
 }
 
 void matmul_forward(float* out, const nv_bfloat16* inp, const nv_bfloat16* weight, const float* bias, const float* scale,
                     cublasLtHandle_t handle, std::byte* workspace, std::size_t workspace_size,
                     int B, int T, int C, int OC, cudaStream_t stream) {
-    matmul_cublaslt(out, weight, inp, bias, workspace, workspace_size, OC, B*T, C, stream, handle,  scale, true, false, false, false);
+    matmul_cublaslt(out, weight, inp, bias, workspace, workspace_size, OC, B*T, C, stream, handle,  scale, true, false, false);
 }
 
 void matmul_forward(float* out, const __nv_fp8_e4m3* inp, const __nv_fp8_e4m3* weight, const float* bias, const float* scale,
                     cublasLtHandle_t handle, std::byte* workspace, std::size_t workspace_size,
                     int B, int T, int C, int OC, cudaStream_t stream) {
-    matmul_cublaslt(out, weight, inp, bias, workspace, workspace_size, OC, B*T, C, stream, handle,  scale, true, false, false, false);
+    matmul_cublaslt(out, weight, inp, bias, workspace, workspace_size, OC, B*T, C, stream, handle,  scale, true, false, false);
 }
 
 void matmul_forward(float* out, const __nv_fp8_e4m3* inp, const __nv_fp8_e4m3* weight, const nv_bfloat16* bias, const float* scale,
                     cublasLtHandle_t handle, std::byte* workspace, std::size_t workspace_size,
                     int B, int T, int C, int OC, cudaStream_t stream) {
-    matmul_cublaslt(out, weight, inp, bias, workspace, workspace_size, OC, B*T, C, stream, handle,  scale, true, false, false, false);
+    matmul_cublaslt(out, weight, inp, bias, workspace, workspace_size, OC, B*T, C, stream, handle,  scale, true, false, false);
 }
 
 void matmul_forward(float* out, const std::int8_t* inp, const std::int8_t* weight, const float* bias, const float* scale,
                     cublasLtHandle_t handle, std::byte* workspace, std::size_t workspace_size,
                     int B, int T, int C, int OC, cudaStream_t stream) {
-    matmul_cublaslt(out, weight, inp, bias, workspace, workspace_size, OC, B*T, C, stream, handle,  scale, true, false, false, false);
+    matmul_cublaslt(out, weight, inp, bias, workspace, workspace_size, OC, B*T, C, stream, handle,  scale, true, false, false);
     if(bias) {
         add_bias(out, bias, B, T, OC, stream);
     }
@@ -241,13 +213,13 @@ void matmul_forward(float* out, const std::int8_t* inp, const std::int8_t* weigh
 void matmul_forward(nv_bfloat16* out, const nv_bfloat16* inp, const nv_bfloat16* weight, const nv_bfloat16* bias, const float* scale,
                     cublasLtHandle_t handle, std::byte* workspace, std::size_t workspace_size,
                     int B, int T, int C, int OC, cudaStream_t stream) {
-    matmul_cublaslt(out, weight, inp, bias, workspace, workspace_size, OC, B*T, C, stream, handle,  scale, true, false, false, false);
+    matmul_cublaslt(out, weight, inp, bias, workspace, workspace_size, OC, B*T, C, stream, handle,  scale, true, false, false);
 }
 
 void matmul_forward(nv_bfloat16* out, const __nv_fp8_e4m3* inp, const __nv_fp8_e4m3* weight, const nv_bfloat16* bias, const float* scale,
                     cublasLtHandle_t handle, std::byte* workspace, std::size_t workspace_size,
                     int B, int T, int C, int OC, cudaStream_t stream) {
-    matmul_cublaslt(out, weight, inp, bias, workspace, workspace_size, OC, B*T, C, stream, handle,  scale, true, false, false, false);
+    matmul_cublaslt(out, weight, inp, bias, workspace, workspace_size, OC, B*T, C, stream, handle,  scale, true, false, false);
 }
 
 void matmul_forward(Tensor& out, const Tensor& inp, const Tensor& weight, std::optional<Tensor> bias, const float* scale,
@@ -286,115 +258,6 @@ void matmul_forward(Tensor& out, const Tensor& inp, const Tensor& weight, std::o
     }
 }
 
-
-template<typename floatX, typename OutFloat, bool UseAuxBuffer>
-__global__ void matmul_backward_bias_kernel9(OutFloat* dbias, const floatX* dout, const float* abs_max, int B, int T, int OC,
-                                             std::bool_constant<UseAuxBuffer>) {
-    using x128 = GenericVector<floatX, 16/sizeof(floatX)>;
-    using f128 = GenericVector<float, 16/sizeof(float)>;
-    constexpr const int bdx = 4;
-    constexpr const int bdy = 32 / bdx;
-    assert(blockDim.x == bdx);
-    assert(blockDim.y == bdy);
-
-    int warp_d = (int)threadIdx.x;
-    int warp_c = (int)threadIdx.y;
-    int block_d = (int)threadIdx.z;
-
-    const int OC_per_warp = bdy * x128::size;  // 64 at BF16
-
-    int local_oc = warp_c * x128::size;
-    int global_oc = blockIdx.x * OC_per_warp + local_oc;
-
-    int local_bt = warp_d + bdx * block_d;
-    int bt_per_block = bdx * blockDim.z;
-
-    float accumulators[x128::size];
-    for (int k = 0; k < x128::size; k++) {
-        accumulators[k] = 0.0f;
-    }
-
-    if(global_oc < OC) {
-        // sum up over all bt within registers
-        for (int idx = blockIdx.y * bt_per_block + local_bt; idx < B * T; idx += gridDim.y * bt_per_block) {
-            x128 packed_dout = x128::load(dout + global_oc + idx*OC);
-            for (int k = 0; k < x128::size; k++) {
-                accumulators[k] += (float)packed_dout[k];
-            }
-        }
-    }
-
-    __shared__ float sub_results[x128::size][32][bdy];
-
-    // reduce within-warp results
-    for (int k = 0; k < x128::size; k++) {
-        float v = accumulators[k];
-        v += __shfl_down_sync(0xffffffff, v, 1, 4);
-        v += __shfl_down_sync(0xffffffff, v, 2, 4);
-        if(warp_d == 0) {
-            sub_results[k][block_d][warp_c] = v;
-        }
-    }
-    __syncthreads();
-
-    // block-wide reductions
-    for (int k = block_d; k < x128::size; k += blockDim.z) {
-        float a = 0.f;
-        for (int r = warp_d; r < blockDim.z; r += bdx) {
-            float v = sub_results[k][r][warp_c];
-            v += __shfl_down_sync(0xffffffff, v, 1, 4);
-            v += __shfl_down_sync(0xffffffff, v, 2, 4);
-            a += v;
-        }
-        if(warp_d == 0 && global_oc < OC) {
-            if(abs_max != nullptr) {
-                a *= *abs_max;
-                if constexpr (std::is_same_v<floatX, __nv_fp8_e4m3>) {
-                    a /= 448.f;
-                }
-            }
-            if constexpr (!UseAuxBuffer) {
-                dbias[global_oc + k] = (OutFloat)(a + (float)dbias[global_oc + k]);
-            } else {
-                dbias[global_oc + k + blockIdx.y * OC] = a;
-            }
-        }
-    }
-}
-
-template<class floatX>
-__global__ void reduce_add_sum_kernel(floatX* dst, const float* src, size_t n, size_t m) {
-    using x128 = GenericVector<floatX, 16/sizeof(floatX)>;
-    using f128 = GenericVector<float, 16/sizeof(float)>;
-    const size_t idx = (blockIdx.x * blockDim.x + threadIdx.x) * f128::size;
-    assert(n % x128::size == 0);
-    if (idx < n) {
-        f128 acc;
-        for(int k = 0; k < f128::size; ++k) {
-            acc[k] = 0.f;
-        }
-
-        for(int l = 0; l < m; ++l) {
-            f128 s = f128::load(src + idx + n * l);
-            for(int k = 0; k < f128::size; ++k) {
-                acc[k] += s[k];
-            }
-        }
-        for(int k = 0; k < f128::size; ++k) {
-            dst[idx + k] = (floatX) ((float)dst[idx + k] + acc[k]);
-        }
-    }
-}
-
-int get_bias_backward_scratch_size(ETensorDType dtype, int OC, const cudaDeviceProp& dp) {
-    const int block_size = dp.maxThreadsPerMultiProcessor == 1536 ? 768 : 1024;
-    const int OC_per_warp = 8 * ( 16 / get_dtype_size(dtype) ); // 64 at BF16
-    const int grid_size_x = div_ceil(OC, OC_per_warp); // e.g. 12 horizontal blocks for 768 OCs at BF16
-    const int grid_size_y = max(1, block_size * dp.multiProcessorCount / (block_size * grid_size_x)); // full GPU!
-    return grid_size_y * OC * sizeof(float);
-}
-
-
 template<class floatX>
 void matmul_backward_imp(floatX* dinp, floatX* dweight, floatX* dbias,
                          const floatX* dout, const floatX* inp, const floatX* weight,
@@ -402,42 +265,17 @@ void matmul_backward_imp(floatX* dinp, floatX* dweight, floatX* dbias,
                          bool accumulate_gradient,
                          cublasLtHandle_t handle, std::byte* workspace, std::size_t workspace_size,
                          int B, int T, int C, int OC, const cudaDeviceProp& dp, cudaStream_t stream) {
-    using x128 = GenericVector<floatX, 16/sizeof(floatX)>;
-    using f128 = GenericVector<float, 16/sizeof(float)>;
-
     // backward to bias, if given, does a +=
     if (dbias != NULL) {
-        // Each warp is responsible for 8 * "x128::size" = 64 OCs at BF16 (OC must be a multiple of 64!)
-        // Block size is 1024 | 768 threads (32|24 warps) and we reduce those values into 1 at the end
-
-        const int block_size = dp.maxThreadsPerMultiProcessor == 1536 ? 768 : 1024;
-
-        dim3 block_dim = {4, 8, (unsigned)block_size/32};
-        const int OC_per_warp = block_dim.y * x128::size; // 64 at BF16
-        const int grid_size_x = div_ceil(OC, OC_per_warp); // e.g. 12 horizontal blocks for 768 OCs at BF16
-        const int grid_size_y = max(1, block_size * dp.multiProcessorCount / (block_size * grid_size_x)); // full GPU!
-
-        // If we have enough OC that we don't need cross-block reductions, we can skip the bias_buffer accumulation
-        // and write results directly to the output.
-        if(grid_size_y == 1) {
-            matmul_backward_bias_kernel9<<<dim3(grid_size_x, grid_size_y), block_dim, 0, stream>>>(dbias, dout, nullptr, B, T, OC, std::bool_constant<false>());
-            CUDA_CHECK(cudaGetLastError());
-        } else {
-            // kernel 9 overwrites temp buffer, so no need to memset
-            matmul_backward_bias_kernel9<<<dim3(grid_size_x, grid_size_y), block_dim, 0, stream>>>(dbias_buffer, dout, nullptr, B, T, OC, std::bool_constant<true>());
-            CUDA_CHECK(cudaGetLastError());
-            reduce_add_sum_kernel<<<div_ceil((size_t)OC, 256 * f128::size), 256, 0, stream>>>(dbias, dbias_buffer, OC, grid_size_y);
-            CUDA_CHECK(cudaGetLastError());
-        }
-        dbias = NULL; // prevent dbias calculation from also being fused in matmul_cublaslt below (if we enabled fusion)
+        backward_bias(dbias, dout, nullptr, dbias_buffer, B, T, OC, dp, stream);
     }
 
     // backward to input, uses = in the backward pass (set the gradient)
-    matmul_cublaslt(dinp, weight, dout, (float*)nullptr, workspace, workspace_size, C, B*T, OC, stream, handle, device_one, false, false, false, true);
+    matmul_cublaslt(dinp, weight, dout, (float*)nullptr, workspace, workspace_size, C, B*T, OC, stream, handle, device_one, false, false, false);
 
     // backward to weight, uses += in the backward pass (accumulate the gradient) by setting alpha=one
-    matmul_cublaslt(dweight, inp, dout, (float*)nullptr /*dbias*/, workspace, workspace_size, C, OC, B*T, stream, handle, device_one, false, true,
-                    accumulate_gradient, true);
+    matmul_cublaslt(dweight, inp, dout, (float*)nullptr, workspace, workspace_size, C, OC, B*T, stream, handle, device_one, false, true,
+                    accumulate_gradient);
 }
 
 template<class floatX, class Float8>
@@ -447,43 +285,17 @@ void matmul_backward_fp8_imp(floatX* dinp, floatX* dweight, floatX* dbias,
                              bool accumulate_gradient,
                              cublasLtHandle_t handle, std::byte* workspace, std::size_t workspace_size,
                              int B, int T, int C, int OC, const cudaDeviceProp& dp, cudaStream_t stream) {
-    using x128 = GenericVector<floatX, 16/sizeof(floatX)>;
-    using f128 = GenericVector<float, 16/sizeof(float)>;
-
-    // TODO
     // backward to bias, if given, does a +=
     if (dbias != NULL) {
-        // Each warp is responsible for 8 * "x128::size" = 64 OCs at BF16 (OC must be a multiple of 64!)
-        // Block size is 1024 | 768 threads (32|24 warps) and we reduce those values into 1 at the end
-
-        const int block_size = dp.maxThreadsPerMultiProcessor == 1536 ? 768 : 1024;
-
-        dim3 block_dim = {4, 8, (unsigned)block_size/32};
-        const int OC_per_warp = block_dim.y * x128::size; // 64 at BF16
-        const int grid_size_x = div_ceil(OC, OC_per_warp); // e.g. 12 horizontal blocks for 768 OCs at BF16
-        const int grid_size_y = max(1, block_size * dp.multiProcessorCount / (block_size * grid_size_x)); // full GPU!
-
-        // If we have enough OC that we don't need cross-block reductions, we can skip the bias_buffer accumulation
-        // and write results directly to the output.
-        if(grid_size_y == 1) {
-            matmul_backward_bias_kernel9<<<dim3(grid_size_x, grid_size_y), block_dim, 0, stream>>>(dbias, dout, dout_abs_max, B, T, OC, std::bool_constant<false>());
-            CUDA_CHECK(cudaGetLastError());
-        } else {
-            // kernel 9 overwrites temp buffer, so no need to memset
-            matmul_backward_bias_kernel9<<<dim3(grid_size_x, grid_size_y), block_dim, 0, stream>>>(dbias_buffer, dout, dout_abs_max, B, T, OC, std::bool_constant<true>());
-            CUDA_CHECK(cudaGetLastError());
-            reduce_add_sum_kernel<<<div_ceil((size_t)OC, 256 * f128::size), 256, 0, stream>>>(dbias, dbias_buffer, OC, grid_size_y);
-            CUDA_CHECK(cudaGetLastError());
-        }
-        dbias = NULL; // prevent dbias calculation from also being fused in matmul_cublaslt below (if we enabled fusion)
+        backward_bias(dbias, dout, dout_abs_max, dbias_buffer, B, T, OC, dp, stream);
     }
 
     // backward to input, uses = in the backward pass (set the gradient)
-    matmul_cublaslt(dinp, weight, dout, (float*)nullptr, workspace, workspace_size, C, B*T, OC, stream, handle, dinp_scale, true, false, false, true);
+    matmul_cublaslt(dinp, weight, dout, (float*)nullptr, workspace, workspace_size, C, B*T, OC, stream, handle, dinp_scale, true, false, false);
 
     // backward to weight, uses += in the backward pass (accumulate the gradient) by setting alpha=one
-    matmul_cublaslt(dweight, inp, dout_t, (float*)nullptr /*dbias*/, workspace, workspace_size, C, OC, B*T, stream, handle, dweight_scale, true, false,
-                    accumulate_gradient, true);
+    matmul_cublaslt(dweight, inp, dout_t, (float*)nullptr, workspace, workspace_size, C, OC, B*T, stream, handle, dweight_scale, true, false,
+                    accumulate_gradient);
 }
 
 void matmul_backward(float* dinp, float* dweight, float* dbias,
