@@ -59,31 +59,31 @@ void fused_residual_rmsnorm_forward(Tensor& residual, Tensor& normed, Tensor& rr
 
 void matmul(float* c, const float* a, const float* b, const float* bias, const float* scale,
             cublasLtHandle_t handle, std::byte* workspace, std::size_t workspace_size,
-            int B, int T, int C, int OC, EMMTranspose mode, bool accumulate, cudaStream_t stream);
+            int M, int N, int K, EMMTranspose mode, bool accumulate, cudaStream_t stream);
 
 void matmul(float* c, const nv_bfloat16* a, const nv_bfloat16* b, const float* bias, const float* scale,
             cublasLtHandle_t handle, std::byte* workspace, std::size_t workspace_size,
-            int B, int T, int C, int OC, EMMTranspose mode, bool accumulate, cudaStream_t stream);
+            int M, int N, int K, EMMTranspose mode, bool accumulate, cudaStream_t stream);
 
 void matmul(float* c, const __nv_fp8_e4m3* a, const __nv_fp8_e4m3* b, const float* bias, const float* scale,
             cublasLtHandle_t handle, std::byte* workspace, std::size_t workspace_size,
-            int B, int T, int C, int OC, EMMTranspose mode, bool accumulate, cudaStream_t stream);
+            int M, int N, int K, EMMTranspose mode, bool accumulate, cudaStream_t stream);
 
 void matmul(float* c, const __nv_fp8_e4m3* a, const __nv_fp8_e4m3* b, const nv_bfloat16* bias, const float* scale,
             cublasLtHandle_t handle, std::byte* workspace, std::size_t workspace_size,
-            int B, int T, int C, int OC, EMMTranspose mode, bool accumulate, cudaStream_t stream);
+            int M, int N, int K, EMMTranspose mode, bool accumulate, cudaStream_t stream);
 
 void matmul(nv_bfloat16* c, const nv_bfloat16* a, const nv_bfloat16* b, const nv_bfloat16* bias, const float* scale,
             cublasLtHandle_t handle, std::byte* workspace, std::size_t workspace_size,
-            int B, int T, int C, int OC, EMMTranspose mode, bool accumulate, cudaStream_t stream);
+            int M, int N, int K, EMMTranspose mode, bool accumulate, cudaStream_t stream);
 
 void matmul(nv_bfloat16* c, const __nv_fp8_e4m3* a, const __nv_fp8_e4m3* b, const nv_bfloat16* bias, const float* scale,
             cublasLtHandle_t handle, std::byte* workspace, std::size_t workspace_size,
-            int B, int T, int C, int OC, EMMTranspose mode, bool accumulate, cudaStream_t stream);
+            int M, int N, int K, EMMTranspose mode, bool accumulate, cudaStream_t stream);
 
 void matmul(Tensor& c, const Tensor& a, const Tensor& b, std::optional<Tensor> bias, const float* scale,
             cublasLtHandle_t handle, Tensor& workspace,
-            int B, int T, int C, int OC, EMMTranspose mode, bool accumulate, cudaStream_t stream);
+            int M, int N, int K, EMMTranspose mode, bool accumulate, cudaStream_t stream);
 
 void add_bias(float* out, const float* bias, int B, int T, int OC, cudaStream_t stream);
 void add_bias(nv_bfloat16* out, const nv_bfloat16* bias, int B, int T, int OC, cudaStream_t stream);
