@@ -26,7 +26,7 @@ void forward_qmm(Tensor& out, QuantizableTensor& inp, Tensor& weight, std::optio
                       const cudaDeviceProp& dp, bool reuse_inp_quant, bool inp_has_abs_max,
                       cudaStream_t stream) {
     if (weight.DType == inp.Value.DType) {
-        matmul_forward(out, inp.Value, weight, bias, nullptr, handle, workspace, B, T, C, OC, stream);
+        matmul(out, weight, inp.Value, bias, nullptr, handle, workspace, B, T, C, OC, EMMTranspose::TN, false, stream);
     } else {
         float* act_scale = inp.Quant->Scales;
         float* wgt_scale = weight.Scales;
@@ -41,7 +41,7 @@ void forward_qmm(Tensor& out, QuantizableTensor& inp, Tensor& weight, std::optio
 
         float scale = weight.DType == ETensorDType::FP8_E4M3 ? 448.f : std::numeric_limits<std::int8_t>::max();
         matmul_out_scale(out_scale, act_scale, wgt_scale, 1.f / scale / scale, stream);
-        matmul_forward(out, inp.Quant.value(), weight, bias, out_scale, handle, workspace, B, T, C, OC, stream);
+        matmul(out, weight, inp.Quant.value(), bias, out_scale, handle, workspace, B, T, C, OC, EMMTranspose::TN, false, stream);
     }
 }
 
@@ -149,9 +149,8 @@ void LLamaModel::forward(Tensor inputs, NCCLCommunicator& comm, int micro_step) 
     }
 
     Parameters->gather_head(comm);
-    // TODO V vs Vp
-    matmul_forward(rs->Output, rs->LNF, Parameters->get_head(main_stream),
-                   std::nullopt, nullptr, rs->CublasLtHandle, rs->Workspace, B, T, C, V, main_stream);
+    matmul(rs->Output, Parameters->get_head(main_stream), rs->LNF,
+           std::nullopt, nullptr, rs->CublasLtHandle, rs->Workspace, B, T, C, V, EMMTranspose::TN, false, main_stream);
     Parameters->release_head(main_stream);
 
     // do not return before inputs can be accessed again.
