@@ -138,13 +138,14 @@ add_library(libllmq SHARED
 
         src/kernels/kernels.cpp
         src/kernels/encoder.cu
-        src/kernels/matmul.cu
+        src/kernels/matmul.cpp
         src/kernels/swiglu.cu
         src/kernels/rope.cu
         src/kernels/rmsnorm.cu
         src/kernels/cudnn_att.cpp
         src/kernels/quant.cu
         src/kernels/global_norm.cu
+        src/kernels/bias.cu
         src/kernels/adamw.cu
         src/kernels/attention.cu
         src/kernels/fused_classifier.cu

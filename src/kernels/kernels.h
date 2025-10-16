@@ -64,7 +64,14 @@ void matmul_forward(Tensor& out, const Tensor& inp, const Tensor& weight, std::o
                     cublasLtHandle_t handle, Tensor& workspace,
                     int B, int T, int C, int OC, cudaStream_t stream);
 
+void add_bias(float* out, const float* bias, int B, int T, int OC, cudaStream_t stream);
+void add_bias(nv_bfloat16* out, const nv_bfloat16* bias, int B, int T, int OC, cudaStream_t stream);
 int get_bias_backward_scratch_size(ETensorDType dtype, int OC, const cudaDeviceProp& dp);
+void backward_bias(float* dbias, const float* dout, const float* dout_abs_max, float* dbias_buffer, int B, int T, int OC, const cudaDeviceProp& dp, cudaStream_t stream);
+void backward_bias(nv_bfloat16* dbias, const nv_bfloat16* dout, const float* dout_abs_max, float* dbias_buffer, int B, int T, int OC, const cudaDeviceProp& dp, cudaStream_t stream);
+void backward_bias(nv_bfloat16* dbias, const __nv_fp8_e4m3* dout, const float* dout_abs_max, float* dbias_buffer, int B, int T, int OC, const cudaDeviceProp& dp, cudaStream_t stream);
+
+
 void matmul_backward(Tensor dinp, Tensor dweight, std::optional<Tensor> dbias,
                      const Tensor& dout, const Tensor& inp, const Tensor& weight,
                      std::optional<Tensor> dbias_buffer,
