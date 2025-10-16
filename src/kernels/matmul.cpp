@@ -19,6 +19,10 @@ cublasComputeType_t cublas_compute = CUBLAS_COMPUTE_32F;
 thread_local float* device_zero;
 thread_local float* device_one;
 
+float* get_device_one() {
+    return device_one;
+}
+
 // ----------------------------------------------------------------------------
 // Error checking
 
@@ -132,12 +136,6 @@ void matmul_cublaslt(floatO* d, const floatX* a, const floatX* b, const floatB* 
     // set scale type to FP32 (needs to be FP16 if and only if using CUBLAS_COMPUTE_16F, so it's FP32 even for FP8!)
     cublasDataType_t scale_type = CUDA_R_32F;
     CUBLAS_CHECK(cublasLtMatmulDescSetAttribute(operationDesc, CUBLASLT_MATMUL_DESC_SCALE_TYPE, &scale_type, sizeof(scale_type)));
-    if(scale != nullptr) {
-        std::int32_t device_pointer_mode = CUBLASLT_POINTER_MODE_DEVICE;
-        CUBLAS_CHECK(
-            cublasLtMatmulDescSetAttribute(operationDesc, CUBLASLT_MATMUL_DESC_POINTER_MODE, &device_pointer_mode,
-                                           sizeof(device_pointer_mode)));
-    }
 
     // find a suitable algorithm (cached internally so shouldn't take much CPU time in practice)
     cublasLtMatmulAlgoGetHeuristic(handle, operationDesc, ALayout, BLayout, CLayout, DLayout,
@@ -155,6 +153,10 @@ void matmul_cublaslt(floatO* d, const floatX* a, const floatX* b, const floatB* 
     if(scale != nullptr) {
         alpha = scale;
         beta = accumulate ? device_one : device_zero;
+        std::int32_t device_pointer_mode = CUBLASLT_POINTER_MODE_DEVICE;
+        CUBLAS_CHECK(
+            cublasLtMatmulDescSetAttribute(operationDesc, CUBLASLT_MATMUL_DESC_POINTER_MODE, &device_pointer_mode,
+                                           sizeof(device_pointer_mode)));
     } else {
         // For some reason, using device_one/device_zero for bf16 x bf16 -> bf16 matmuls doesn't
         // work reliably
@@ -224,105 +226,3 @@ void matmul(float* c, const std::int8_t* a, const std::int8_t* b, const nv_bfloa
     }
 }
 */
-
-template<class floatX>
-void matmul_backward_imp(floatX* dinp, floatX* dweight, floatX* dbias,
-                         const floatX* dout, const floatX* inp, const floatX* weight,
-                         float* dbias_buffer, const float* dinp_scale, const float* dweight_scale,
-                         bool accumulate_gradient,
-                         cublasLtHandle_t handle, std::byte* workspace, std::size_t workspace_size,
-                         int B, int T, int C, int OC, const cudaDeviceProp& dp, cudaStream_t stream) {
-    // backward to bias, if given, does a +=
-    if (dbias != NULL) {
-        backward_bias(dbias, dout, nullptr, dbias_buffer, B, T, OC, dp, stream);
-    }
-
-    // backward to input, uses = in the backward pass (set the gradient)
-    matmul_cublaslt(dinp, weight, dout, (float*)nullptr, workspace, workspace_size, C, B*T, OC, stream, handle, device_one, EMMTranspose::NN, false);
-
-    // backward to weight, uses += in the backward pass (accumulate the gradient) by setting alpha=one
-    matmul_cublaslt(dweight, inp, dout, (float*)nullptr, workspace, workspace_size, C, OC, B*T, stream, handle, device_one, EMMTranspose::NT,
-                    accumulate_gradient);
-}
-
-template<class floatX, class Float8>
-void matmul_backward_fp8_imp(floatX* dinp, floatX* dweight, floatX* dbias,
-                             const Float8* dout, const Float8* dout_t, const Float8* inp, const Float8* weight,
-                             float* dbias_buffer, const float* dinp_scale, const float* dweight_scale, const float* dout_abs_max,
-                             bool accumulate_gradient,
-                             cublasLtHandle_t handle, std::byte* workspace, std::size_t workspace_size,
-                             int B, int T, int C, int OC, const cudaDeviceProp& dp, cudaStream_t stream) {
-    // backward to bias, if given, does a +=
-    if (dbias != NULL) {
-        backward_bias(dbias, dout, dout_abs_max, dbias_buffer, B, T, OC, dp, stream);
-    }
-
-    // backward to input, uses = in the backward pass (set the gradient)
-    matmul_cublaslt(dinp, weight, dout, (float*)nullptr, workspace, workspace_size, C, B*T, OC, stream, handle, dinp_scale, EMMTranspose::TN, false);
-
-    // backward to weight, uses += in the backward pass (accumulate the gradient) by setting alpha=one
-    matmul_cublaslt(dweight, inp, dout_t, (float*)nullptr, workspace, workspace_size, C, OC, B*T, stream, handle, dweight_scale, EMMTranspose::TN,
-                    accumulate_gradient);
-}
-
-void matmul_backward(float* dinp, float* dweight, float* dbias,
-                     const float* dout, const float* inp, const float* weight,
-                     float* dbias_buffer, const float* dinp_scale, const float* dweight_scale,
-                     bool accumulate_gradient,
-                     cublasLtHandle_t handle, std::byte* workspace, std::size_t workspace_size,
-                     int B, int T, int C, int OC, const cudaDeviceProp& dp, cudaStream_t stream) {
-    matmul_backward_imp(dinp, dweight, dbias, dout, inp, weight, dbias_buffer, dinp_scale, dweight_scale,
-                        accumulate_gradient, handle, workspace, workspace_size, B, T, C, OC, dp, stream);
-}
-
-void matmul_backward(nv_bfloat16* dinp, nv_bfloat16* dweight, nv_bfloat16* dbias,
-                     const nv_bfloat16* dout, const nv_bfloat16* inp, const nv_bfloat16* weight,
-                     float* dbias_buffer, const float* dinp_scale, const float* dweight_scale,
-                     bool accumulate_gradient,
-                     cublasLtHandle_t handle, std::byte* workspace, std::size_t workspace_size,
-                     int B, int T, int C, int OC, const cudaDeviceProp& dp, cudaStream_t stream) {
-    matmul_backward_imp(dinp, dweight, dbias, dout, inp, weight, dbias_buffer, dinp_scale, dweight_scale,
-                        accumulate_gradient, handle, workspace, workspace_size, B, T, C, OC, dp, stream);
-}
-
-void matmul_backward(Tensor dinp, Tensor dweight, std::optional<Tensor> dbias,
-                     const Tensor& dout, const Tensor& inp, const Tensor& weight,
-                     std::optional<Tensor> dbias_buffer, const float* dinp_scale, const float* dweight_scale,
-                     bool accumulate_gradient,
-                     cublasLtHandle_t handle, Tensor& workspace,
-                     int B, int T, int C, int OC, const cudaDeviceProp& dp, cudaStream_t stream) {
-    std::byte* ws = workspace.get<std::byte>();
-    std::size_t ws_size = workspace.bytes();
-    if(dinp.DType == ETensorDType::FP32 && inp.DType == ETensorDType::FP32) {
-        float* d_bias_ptr = dbias.has_value() ? dbias.value().get<float>() : nullptr;
-        float* bias_buffer_ptr = dbias_buffer.has_value() ? dbias_buffer.value().get<float>() : nullptr;
-        matmul_backward(dinp.get<float>(), dweight.get<float>(), d_bias_ptr, dout.get<float>(), inp.get<float>(), weight.get<float>(),
-                        bias_buffer_ptr, dinp_scale, dweight_scale, accumulate_gradient, handle, ws, ws_size, B, T, C, OC, dp, stream);
-    } else if(dinp.DType == ETensorDType::BF16 && inp.DType == ETensorDType::BF16) {
-        nv_bfloat16* d_bias_ptr = dbias.has_value() ? dbias.value().get<nv_bfloat16>() : nullptr;
-        float* bias_buffer_ptr = dbias_buffer.has_value() ? dbias_buffer.value().get<float>() : nullptr;
-        matmul_backward(dinp.get<nv_bfloat16>(), dweight.get<nv_bfloat16>(), d_bias_ptr, dout.get<nv_bfloat16>(), inp.get<nv_bfloat16>(), weight.get<nv_bfloat16>(),
-                        bias_buffer_ptr, dinp_scale, dweight_scale, accumulate_gradient, handle, ws, ws_size, B, T, C, OC, dp, stream);
-    } else {
-        throw std::logic_error("matmul_forward: invalid DType combination");
-    }
-}
-
-void matmul_backward_fp8(Tensor dinp, Tensor dweight, std::optional<Tensor> dbias,
-                     const Tensor& dout, const Tensor& dout_t, const Tensor& inp, const Tensor& weight,
-                     std::optional<Tensor> dbias_buffer, const float* dinp_scale, const float* dweight_scale, const float* dout_scale,
-                     bool accumulate_gradient,
-                     cublasLtHandle_t handle, Tensor& workspace,
-                     int B, int T, int C, int OC, const cudaDeviceProp& dp, cudaStream_t stream) {
-    std::byte* ws = workspace.get<std::byte>();
-    std::size_t ws_size = workspace.bytes();
-    if(dinp.DType == ETensorDType::BF16 && inp.DType == ETensorDType::FP8_E4M3) {
-        nv_bfloat16* d_bias_ptr = dbias.has_value() ? dbias.value().get<nv_bfloat16>() : nullptr;
-        float* bias_buffer_ptr = dbias_buffer.has_value() ? dbias_buffer.value().get<float>() : nullptr;
-        matmul_backward_fp8_imp(dinp.get<nv_bfloat16>(), dweight.get<nv_bfloat16>(), d_bias_ptr,
-            dout.get<__nv_fp8_e4m3>(), dout_t.get<__nv_fp8_e4m3>(), inp.get<__nv_fp8_e4m3>(), weight.get<__nv_fp8_e4m3>(),
-                                bias_buffer_ptr, dinp_scale, dweight_scale, dout_scale, accumulate_gradient, handle, ws, ws_size, B, T, C, OC, dp, stream);
-    }  else {
-        throw std::logic_error("matmul_backward_fp8: invalid DType combination");
-    }
-}

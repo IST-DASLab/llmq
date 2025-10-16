@@ -94,20 +94,6 @@ void backward_bias(nv_bfloat16* dbias, const __nv_fp8_e4m3* dout, const float* d
 void backward_bias(Tensor& dbias, const Tensor& dout, const float* dout_abs_max, Tensor& dbias_buffer, int B, int T, int OC, const cudaDeviceProp& dp, cudaStream_t stream);
 
 
-void matmul_backward(Tensor dinp, Tensor dweight, std::optional<Tensor> dbias,
-                     const Tensor& dout, const Tensor& inp, const Tensor& weight,
-                     std::optional<Tensor> dbias_buffer,
-                     const float* dinp_scale, const float* dweight_scale,
-                     bool accumulate_gradient,
-                     cublasLtHandle_t handle, Tensor& workspace,
-                     int B, int T, int C, int OC, const cudaDeviceProp& dp, cudaStream_t stream);
-void matmul_backward_fp8(Tensor dinp, Tensor dweight, std::optional<Tensor> dbias,
-                     const Tensor& dout, const Tensor& dout_t, const Tensor& inp, const Tensor& weight,
-                     std::optional<Tensor> dbias_buffer, const float* dinp_scale, const float* dweight_scale, const float* dout_scale,
-                     bool accumulate_gradient,
-                     cublasLtHandle_t handle, Tensor& workspace,
-                     int B, int T, int C, int OC, const cudaDeviceProp& dp, cudaStream_t stream);
-
 void precompute_freqs_cis(float *freqs_cis, int dim, int end, float theta);
 void precompute_freqs_cis(nv_bfloat16 *freqs_cis, int dim, int end, float theta);
 void rope_forward(float* out, const float* in, const float *freqs_cis, int B, int T, int Nq, int Nkv, int head_dim, cudaStream_t stream);
