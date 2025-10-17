@@ -60,6 +60,13 @@ NCCLCommunicator::NCCLCommunicator(int rank, int world, const void* nccl_id) :
     // must be created _after_ we set the device
     mCommsStream = create_named_stream("nccl_stream");
     mCommsSync = create_named_event("nccl_sync");  // todo disable timing for max perf
+
+    // launch a tiny communication kernel to trigger
+    // allocating internal buffers for nccl
+    float* dummy;
+    CUDA_CHECK(cudaMalloc(&dummy, 4));
+    reduce_abs_max(dummy);
+    CUDA_CHECK(cudaFree(dummy));
 }
 
 NCCLCommunicator::~NCCLCommunicator() {
