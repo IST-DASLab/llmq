@@ -693,6 +693,17 @@ void LLamaModel::allocate_run_state(const LLamaOptions& options, NCCLCommunicato
         Grads = LLamaGradsManager::create(42, 0, Config, options, comm.rank(), comm.world_size(), Allocator);
     }
 
+    // this is a bit devious, but unfortunately, it is necessary: There are some places in the cuda runtime when
+    // it _cannot_ evict managed pages from GPU to CPU, like jit-compilation or kernel launch(?). As a result,
+    // if the managed allocations use up the entire GPU memory, we can get weird failures when running the model,
+    // like cublas claiming "no suitable algorithm". To prevent this problem, we allocate some dummy memory here,
+    // which prevents the subsequent managed allocations from using up all the available device memory.
+    // We deallocate afterwards, which leaves that memory empty. As optM/optV are only accessed at the end of a step,
+    // the reserved memory remains free for driver use until we've done (almost) the full step.
+    std::byte* tmp;
+    if (options.OffloadOptM || options.OffloadOptV) {
+        cudaMalloc(&tmp, 1024*1024*128);
+    }
     {
         auto ctx = Allocator->with_context("Adam M");
         EAllocationType alloc_type = options.OffloadOptM ? EAllocationType::MANAGED : EAllocationType::ON_DEVICE;
@@ -709,6 +720,11 @@ void LLamaModel::allocate_run_state(const LLamaOptions& options, NCCLCommunicato
         c.DType = acts.Options.OptVarianceType;
         OptV = std::make_unique<sLLamaWeights>(allocate_weights(c, alloc_type, comm.rank(), comm.world_size(), *Allocator));
         zero_opt_buffer(*OptV, acts.MainStream);
+        //cudaMemPrefetchAsync(OptV->NonBlocks.LMHead.Data, OptV->NonBlocks.LMHead.bytes(), {cudaMemLocationTypeHost}, 0, acts.MainStream);
+    }
+
+    if (options.OffloadOptM || options.OffloadOptV) {
+        cudaFree(tmp);
     }
 
     OptimizerRNG = std::minstd_rand{42};
