@@ -695,7 +695,7 @@ void LLamaModel::allocate_run_state(const LLamaOptions& options, NCCLCommunicato
 
     {
         auto ctx = Allocator->with_context("Adam M");
-        EAllocationType alloc_type = options.OffloadOptM ? options.offload_alloc() : EAllocationType::ON_DEVICE;
+        EAllocationType alloc_type = options.OffloadOptM ? EAllocationType::MANAGED : EAllocationType::ON_DEVICE;
         LLamaConfig c = Config;
         c.DType = acts.Options.OptMomentumType;
         OptM = std::make_unique<sLLamaWeights>(allocate_weights(c, alloc_type, comm.rank(), comm.world_size(), *Allocator));
@@ -704,7 +704,7 @@ void LLamaModel::allocate_run_state(const LLamaOptions& options, NCCLCommunicato
 
     {
         auto ctx = Allocator->with_context("Adam V");
-        EAllocationType alloc_type = options.OffloadOptV ? options.offload_alloc() : EAllocationType::ON_DEVICE;
+        EAllocationType alloc_type = options.OffloadOptV ? EAllocationType::MANAGED : EAllocationType::ON_DEVICE;
         LLamaConfig c = Config;
         c.DType = acts.Options.OptVarianceType;
         OptV = std::make_unique<sLLamaWeights>(allocate_weights(c, alloc_type, comm.rank(), comm.world_size(), *Allocator));
