@@ -346,14 +346,17 @@ void LLamaModel::backward(Tensor inputs, Tensor targets, NCCLCommunicator& comm,
 
     // BackwardDone ensures that zero-2 gradient accumulation of the previous step has finished, so we can safely write to d_lmhead again.
     CUDA_CHECK(cudaEventSynchronize(rs->BackwardDone));
+
+    // handle the LM-head. We run the d_lmhead matmul first, so that the gradient reduction can overlap with the DLNF matmul.
     auto& d_lmhead = Grads->get_lmhead_full(main_stream, comm, accumulate);
+    matmul(d_lmhead, rs->LNF, rs->Output, std::nullopt, get_device_one(), rs->CublasLtHandle, rs->Workspace, C, V, B*T, EMMTranspose::NT, accumulate, main_stream);
+    Grads->notify_lmhead(main_stream, comm);
+
     Parameters->gather_head(comm);
     // for some reason, we cannot set scale == nullptr here ?!
     // so instead supply the value one (get_device_one())
     matmul(rs->DLNF, Parameters->get_head(main_stream), rs->Output, std::nullopt, get_device_one(), rs->CublasLtHandle, rs->Workspace, C, B*T, V, EMMTranspose::NN, false, main_stream);
-    matmul(d_lmhead, rs->LNF, rs->Output, std::nullopt, get_device_one(), rs->CublasLtHandle, rs->Workspace, C, V, B*T, EMMTranspose::NT, accumulate, main_stream);
     Parameters->release_head(main_stream);
-    Grads->notify_lmhead(main_stream, comm);
 
     auto& d_lnf_w = Grads->get_lnf_w_full(main_stream, comm, accumulate);
     Parameters->gather_lnf(comm);
