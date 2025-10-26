@@ -16,6 +16,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 # with a fallback implementation
 option(USE_CUFILE "Enable cuFile support for optimized file I/O" ON)
 option(USE_NVML "Enable nvml support for detailed GPU stats reporting" ON)
+option(PYTHON_BINDING "Build python bindings" OFF)
 
 FetchContent_Declare(
         json
@@ -35,6 +36,12 @@ FetchContent_Declare(
         QUIET
         GIT_REPOSITORY https://github.com/CLIUtils/CLI11.git
         GIT_TAG v2.3.2
+)
+FetchContent_Declare(
+        nanobind
+        QUIET
+        GIT_REPOSITORY https://github.com/wjakob/nanobind.git
+        GIT_TAG v2.9.2
 )
 
 # we could use fmt only if std::format is not available, but (e.g., g++-12), but
@@ -115,7 +122,7 @@ message(STATUS "CUDA Toolkit Version: ${CUDAToolkit_VERSION}")
 message(STATUS "cuBLAS Library: ${CUDA_cublas_LIBRARY}")
 message(STATUS "cuBLASLt Library: ${CUDA_cublasLt_LIBRARY}")
 
-add_library(libllmq SHARED
+add_library(llmq-common SHARED
         src/utilities/safetensors.cpp
         ${CUFILE_SOURCE}
         ${NVML_SOURCE}
@@ -156,24 +163,31 @@ add_library(libllmq SHARED
         src/kernels/convert.cu
 )
 
-target_link_libraries(libllmq PRIVATE ${CUFILE_LIBS} cudnn_frontend ${CUDNN_LIBRARY} nvidia::nccl fmt::fmt-header-only)
-target_link_libraries(libllmq PUBLIC CUDA::cudart CUDA::cublasLt ${NVML_LIBS} nlohmann_json::nlohmann_json)
-target_link_libraries(libllmq PUBLIC ${MULTI_GPU_DEPS})
-target_compile_definitions(libllmq PUBLIC ${MULTI_GPU_DEFS})
-target_include_directories(libllmq PRIVATE ${CUDNN_INCLUDE_DIR})
-target_include_directories(libllmq PUBLIC src)
-target_compile_options(libllmq PUBLIC $<$<COMPILE_LANGUAGE:CUDA>:--expt-relaxed-constexpr> $<$<COMPILE_LANGUAGE:CUDA>:-lineinfo>)
+target_link_libraries(llmq-common PRIVATE ${CUFILE_LIBS} cudnn_frontend ${CUDNN_LIBRARY} nvidia::nccl fmt::fmt-header-only)
+target_link_libraries(llmq-common PUBLIC CUDA::cudart CUDA::cublasLt ${NVML_LIBS} nlohmann_json::nlohmann_json)
+target_link_libraries(llmq-common PUBLIC ${MULTI_GPU_DEPS})
+target_compile_definitions(llmq-common PUBLIC ${MULTI_GPU_DEFS})
+target_include_directories(llmq-common PRIVATE ${CUDNN_INCLUDE_DIR})
+target_include_directories(llmq-common PUBLIC src)
+target_compile_options(llmq-common PUBLIC $<$<COMPILE_LANGUAGE:CUDA>:--expt-relaxed-constexpr> $<$<COMPILE_LANGUAGE:CUDA>:-lineinfo>)
 
 add_executable(train train.cpp)
-target_link_libraries(train PRIVATE libllmq CLI11::CLI11)
+target_link_libraries(train PRIVATE llmq-common CLI11::CLI11)
 
 add_executable(recompute-test src/testing/recompute.cpp)
-target_link_libraries(recompute-test PRIVATE libllmq CLI11::CLI11)
+target_link_libraries(recompute-test PRIVATE llmq-common CLI11::CLI11)
 
 add_executable(export-checkpoint export-checkpoint.cpp)
-target_link_libraries(export-checkpoint PRIVATE libllmq CLI11::CLI11)
+target_link_libraries(export-checkpoint PRIVATE llmq-common CLI11::CLI11)
 
-install(TARGETS libllmq train recompute-test export-checkpoint
+install(TARGETS llmq-common train recompute-test export-checkpoint
         LIBRARY DESTINATION lib
         RUNTIME DESTINATION bin
 )
+
+if (PYTHON_BINDING)
+    find_package(Python COMPONENTS Interpreter Development.Module)
+    FetchContent_MakeAvailable(nanobind)
+    nanobind_add_module(pyllmq STABLE_ABI src/binding/binding.cpp src/binding/py_train.cpp)
+    target_link_libraries(pyllmq PUBLIC llmq-common Python::Module fmt::fmt-header-only)
+endif ()

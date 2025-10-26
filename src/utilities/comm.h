@@ -12,6 +12,11 @@
 
 #include <cuda_bf16.h>
 
+namespace std
+{
+    class jthread;
+}
+
 struct Tensor;
 struct TensorShard;
 
@@ -72,7 +77,8 @@ public:
     }
 
     static std::unique_ptr<NCCLCommunicator> make_mpi_communicator();
-    static void launch_threads_communicators(int ngpus, bool memcpy_allgather, bool memcpy_send_recv, std::function<void(NCCLCommunicator& comm)> work);
+    static void run_threads_communicators(int ngpus, bool memcpy_allgather, bool memcpy_send_recv, std::function<void(NCCLCommunicator& comm)> work);
+    static  std::vector<std::jthread> launch_threads_communicators(int ngpus, bool memcpy_allgather, bool memcpy_send_recv, std::function<void(NCCLCommunicator& comm)> work);
 protected:
     void scatter_grad(float* value, std::size_t size);
     void scatter_grad(nv_bfloat16* value, std::size_t size);

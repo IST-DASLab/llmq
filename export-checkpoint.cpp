@@ -66,7 +66,7 @@ int main(int argc, const char** argv) {
 
     int world_size = get_checkpoint_world_size(CkptDir, latest_step);
 
-    NCCLCommunicator::launch_threads_communicators(
+    NCCLCommunicator::run_threads_communicators(
             world_size, true, true,
             [&](NCCLCommunicator& comm) {
 

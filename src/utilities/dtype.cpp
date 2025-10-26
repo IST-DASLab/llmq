@@ -3,6 +3,8 @@
 
 #include "dtype.h"
 
+#include <fmt/core.h>
+
 #include <algorithm>
 
 bool iequals(std::string_view lhs, std::string_view rhs){
@@ -33,7 +35,7 @@ ETensorDType dtype_from_str(std::string_view dtype) {
     } else if(iequals_any(dtype, "FP8", "F8")) {
         throw std::runtime_error("Invalid dtype FP8: Please specify E4M3 or E5M2");
     }
-    throw std::runtime_error("Invalid dtype");
+    throw std::runtime_error(fmt::format("Invalid dtype: '{}'", dtype));
 }
 
 const char* dtype_to_str(ETensorDType dtype) {

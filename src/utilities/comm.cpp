@@ -4,6 +4,7 @@
 #include "comm.h"
 
 #include <stdexcept>
+#include <utility>
 #include <variant>
 
 #include <nccl.h>
@@ -365,7 +366,14 @@ NCCLCommunicatorThreads::~NCCLCommunicatorThreads() {
     }
 }
 
-void NCCLCommunicator::launch_threads_communicators(int ngpus, bool memcpy_allgather, bool memcpy_send_recv, std::function<void(NCCLCommunicator& comm)> work) {
+void NCCLCommunicator::run_threads_communicators(int ngpus, bool memcpy_allgather, bool memcpy_send_recv, std::function<void(NCCLCommunicator& comm)> work) {
+    std::vector<std::jthread> threads = launch_threads_communicators(ngpus, memcpy_allgather, memcpy_send_recv, std::move(work));
+    for(auto& t: threads) {
+        t.join();
+    }
+}
+
+ std::vector<std::jthread> NCCLCommunicator::launch_threads_communicators(int ngpus, bool memcpy_allgather, bool memcpy_send_recv, std::function<void(NCCLCommunicator& comm)> work) {
     std::vector<std::jthread> threads;
     ncclUniqueId nccl_id;
     ncclCheck(ncclGetUniqueId(&nccl_id));
@@ -379,9 +387,7 @@ void NCCLCommunicator::launch_threads_communicators(int ngpus, bool memcpy_allga
         }
         );
     }
-    for(auto& t: threads) {
-        t.join();
-    }
+    return threads;
 }
 
 void NCCLCommunicator::schedule_destructive_all_to_all(const Tensor& tensor) {
