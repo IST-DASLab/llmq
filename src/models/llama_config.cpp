@@ -2,6 +2,7 @@
 //
 
 #include "llama_config.h"
+#include "utilities/utils.h"
 
 #include <fstream>
 
@@ -112,4 +113,44 @@ void save_llama_config(const LLamaConfig& config, const char* file_name) {
     }
 
     file << config_json.dump(4);
+}
+
+static LLamaConfig create_qwen25_config(int hidden_size, int intermediate_size, int q_heads, int kv_heads, int depth, float rms, bool tied, ETensorDType dtype) {
+    return {
+        .Architecture = LLamaConfig::QWEN2,
+        .BosTokenId = 151643,
+        .EosTokenId = 151643,
+        .HiddenSize = hidden_size,
+        .IntermediateSize = intermediate_size,
+        .VocabSize = 151936,
+        .NumQueryHeads = q_heads,
+        .NumKeyValHeads = kv_heads,
+        .NumLayers = depth,
+        .MaxPositionEmbeddings = 32768,
+        .RopeTheta = 1'000'000.0f,
+        .RmsNormEps = rms,
+        .TiedWordEmbeddings = tied,
+        .UseQKVBias = true,
+        .DType = dtype
+    };
+}
+
+LLamaConfig create_config_from_name(std::string_view name, ETensorDType dtype) {
+    if(iequals(name, "Qwen2.5-0.5B")) {
+        return create_qwen25_config(896, 4861, 14, 2, 24, 1e-06f, true, dtype);
+    } else if(iequals(name, "Qwen2.5-1.5B")) {
+        return create_qwen25_config(1536, 8960, 12, 2, 28, 1e-06f, true, dtype);
+    } else if(iequals(name, "Qwen2.5-3B")) {
+        return create_qwen25_config(2048, 11008, 16, 2, 36, 1e-06f, true, dtype);
+    } else if(iequals(name, "Qwen2.5-7B")) {
+        return create_qwen25_config(3584, 18944, 28, 4, 28, 1e-06f, false, dtype);
+    } else if(iequals(name, "Qwen2.5-14B")) {
+        return create_qwen25_config(5120, 13824, 40, 8, 48, 1e-05f, false, dtype);
+    } else if(iequals(name, "Qwen2.5-32B")) {
+        return create_qwen25_config(5120, 27648, 40, 8, 64, 1e-05f, false, dtype);
+    } else if(iequals(name, "Qwen2.5-72B")) {
+        return create_qwen25_config(8192, 29568, 64, 8, 80, 1e-05f, false, dtype);
+    }
+    // TODO add llama models
+    throw std::runtime_error(fmt::format("unknown model name {}", name));
 }

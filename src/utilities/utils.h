@@ -91,4 +91,7 @@ cudaStream_t create_named_stream(const char* name);
 cudaEvent_t create_named_event(const char* name);
 
 
+// ----------------------------------------------------------------------------
+bool iequals(std::string_view lhs, std::string_view rhs);
+
 #endif //LLMQ_SRC_MODELS_UTILS_H

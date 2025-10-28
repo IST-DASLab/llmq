@@ -219,6 +219,19 @@ void TrainingRunner::launch_training(int argc, const char** argv) {
     }
 }
 
+LLamaConfig create_config(const std::string& root, bool from_scratch, ETensorDType dtype) {
+    std::string config_path = root + "/config.json";
+    if(std::filesystem::exists(config_path)) {
+        return load_llama_config(config_path.c_str(), dtype);
+    } else if(from_scratch) {
+        auto cfg = create_config_from_name(root, dtype);
+        return cfg;
+    } else {
+        std::cerr << "Could not find model config at " << config_path << std::endl;
+        std::exit(EXIT_FAILURE);
+    }
+}
+
 void TrainingRunner::run_training(int argc, const char** argv, NCCLCommunicator& comm) {
     // TODO this is a quick hack, implement something better
     // local printf that prints only on rank 0
@@ -230,12 +243,11 @@ void TrainingRunner::run_training(int argc, const char** argv, NCCLCommunicator&
     std::unique_ptr<IGPUUtilTracker> gpu_util = IGPUUtilTracker::create();
     int total_batch_size = B * T * comm.world_size() * GradAccSteps;
 
-    std::string config_path = ModelRootPath + "/config.json";
     std::string model_path = ModelRootPath + "/model.safetensors";
     if (!std::filesystem::exists(model_path)) {
         model_path = ModelRootPath + "/model.safetensors.index.json";
     }
-    LLamaConfig config = load_llama_config(config_path.c_str(), ModelDType);
+    LLamaConfig config = create_config(ModelRootPath, FromScratch, ModelDType);
 
     TrainingRunLogger logger(LogFile, comm.rank(), TrainingRunLogger::DEFAULT);
     logger.log_cmd(argc, argv);

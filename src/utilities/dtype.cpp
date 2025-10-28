@@ -5,12 +5,7 @@
 
 #include <fmt/core.h>
 
-#include <algorithm>
-
-bool iequals(std::string_view lhs, std::string_view rhs){
-    return std::ranges::equal(lhs, rhs,
-        [](unsigned char a, unsigned char b){return std::tolower(a) == std::tolower(b);});
-}
+#include "utilities/utils.h"
 
 template<typename... Others>
 bool iequals_any(std::string_view lhs, Others&&... others) {

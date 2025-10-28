@@ -3,6 +3,8 @@
 
 #include "utils.h"
 
+#include <algorithm>
+
 #include <cuda_runtime.h>
 #include <nvtx3/nvToolsExt.h>
 #include <nvtx3/nvToolsExtCudaRt.h>
@@ -39,3 +41,11 @@ cudaEvent_t create_named_event(const char* name) {
     nvtxNameCudaEventA(event, name);
     return event;
 }
+
+bool iequals(std::string_view lhs, std::string_view rhs) {
+    return std::ranges::equal(
+        lhs, rhs, [](unsigned char a, unsigned char b) {
+            return std::tolower(a) == std::tolower(b);
+    });
+}
+

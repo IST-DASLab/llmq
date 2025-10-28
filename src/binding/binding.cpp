@@ -149,7 +149,11 @@ NB_MODULE(_pyllmq, m) {
             }
             std::string config_path = hf_path + "/config.json";
             return new LLamaConfig(load_llama_config(config_path.c_str(), dtype_from_str(dtype_str)));
-        }, nb::arg("name"), nb::arg("dtype"))
+        }, nb::arg("name"), nb::arg("dtype"), "Load the config file from an existing hf model")
+        .def_static("from_name", [](const std::string& name, const std::string& dtype_str)
+        {
+            return new LLamaConfig(create_config_from_name(name, dtype_from_str(dtype_str)));
+        }, nb::arg("name"), nb::arg("dtype"), "Create a config based on the model name.")
         ;
 
     nb::class_<LLamaOptions>(m, "LLamaOptions")
