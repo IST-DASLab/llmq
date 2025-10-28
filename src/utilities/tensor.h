@@ -48,26 +48,18 @@ struct Tensor {
 
     template<class TargetType>
     [[nodiscard]] constexpr const TargetType* get() const {
-#ifdef __CUDA_ARCH__
-        assert(dtype_from_type<TargetType> == DType);
-#else
         if(dtype_from_type<TargetType> != DType) {
             throw std::logic_error("DType mismatch");
         }
-#endif
 
         return reinterpret_cast<const TargetType*>(Data);
     }
 
     template<class TargetType>
-    [[nodiscard]] constexpr HOST_DEVICE TargetType* get() {
-#ifdef __CUDA_ARCH__
-        assert(dtype_from_pointer((TargetType*)nullptr) == DType);
-#else
+    [[nodiscard]] constexpr TargetType* get() {
         if(dtype_from_type<TargetType> != DType) {
             throw std::logic_error("DType mismatch");
         }
-#endif
 
         return reinterpret_cast<TargetType*>(Data);
     }

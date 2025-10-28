@@ -43,7 +43,7 @@ __device__ __host__ constexpr unsigned int get_noise_2d(int indexX, int indexY, 
 }
 
 // stochastic rounding built on top of Squirel Noise above (with seed updated per step via xorshift)
-__device__ __forceinline__ void stochastic_rounding(float in, __nv_bfloat16 *out, unsigned int seed, bool noise=true) {
+__device__ __forceinline__ void stochastic_rounding(float in, nv_bfloat16 *out, unsigned int seed, bool noise=true) {
     // todo - is this stochastic rounding *too good*? can we cut any corners?
     // makes sure each thread gets a different random number
     unsigned int random = noise ? get_noise_2d(threadIdx.x, blockIdx.x * blockDim.x + blockIdx.y, seed) : seed;

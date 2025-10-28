@@ -243,7 +243,7 @@ void fill_constant(Tensor& dest, float value, std::size_t count, cudaStream_t st
     if (dest.DType == ETensorDType::FP32) {
         fill_constant(dest.get<float>(), value, count, stream);
     } else if (dest.DType == ETensorDType::BF16) {
-        fill_constant(dest.get<nv_bfloat16>(), value, count, stream);
+        fill_constant(dest.get<nv_bfloat16>(), static_cast<nv_bfloat16>(value), count, stream);
     } else {
         throw std::logic_error("fill_constant: unsupported dtype");
     }

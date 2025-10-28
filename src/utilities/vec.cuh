@@ -159,7 +159,7 @@ public:
     }
 
     constexpr static __host__ __device__ GenericVector zeros() {
-        return constant(0.f);
+        return constant(static_cast<ElementType>(0.f));
     }
 
     constexpr static __host__ __device__ GenericVector ones() {
