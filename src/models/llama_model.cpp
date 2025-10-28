@@ -124,19 +124,6 @@ void LLamaModel::forward(Tensor inputs, NCCLCommunicator& comm, int micro_step) 
         }
 
         auto& wgt = Parameters->get_block(l, main_stream);
-        // fuse RMSNorm with residual; except, of course, in the first block, where we don't have a residual
-        // because this is a change in topology, this isn't part of the cuda graph
-        if (l == 0) {
-            rmsnorm_forward(rs->Acts[0].LN1.Value, rs->Acts[0].LN1_Rstd, rs->Encoded, wgt.LN1_w,
-                            quant_abs_max_ptr(rs->Acts[0].LN1), Config.RmsNormEps, B, T, C, main_stream);
-        } else if(l != Config.NumLayers) {
-            auto& acts = rs->Acts[l-1];
-            fused_residual_rmsnorm_forward(acts.ResidualFFN, rs->Acts[l].LN1.Value, rs->Acts[l].LN1_Rstd,
-                                           acts.ResidualAtt, acts.MlpDown, wgt.LN1_w,
-                                           quant_abs_max_ptr(rs->Acts[l].LN1),
-                                           Config.RmsNormEps, B * T, C, main_stream);
-        }
-
         trace_or_execute_cuda_graph([&](){_forward_block(l, wgt);},
             main_stream, rs->ForwardBlockGraph, rs->Options.UseCudaGraphs);
         Parameters->release_block(l, main_stream);
@@ -176,6 +163,20 @@ void LLamaModel::_forward_block(int layer, sLLamaBlockWeights<Tensor>& weights)
     Tensor residual = l == 0 ? rs->Encoded : rs->Acts[l - 1].ResidualFFN;
 
     auto& acts = rs->Acts[l];
+
+    // fuse RMSNorm with residual, except in the first layer when no residual exists yet.
+    // note that there is a unified kernel for fused/unfused rmsnorm, so this condition
+    // is in fact safe to use during graph capture.
+    if (l == 0) {
+        rmsnorm_forward(rs->Acts[0].LN1.Value, rs->Acts[0].LN1_Rstd, rs->Encoded, weights.LN1_w,
+                        quant_abs_max_ptr(rs->Acts[0].LN1), Config.RmsNormEps, B, T, C, main_stream);
+    } else {
+        auto& prev = rs->Acts[l-1];
+        fused_residual_rmsnorm_forward(prev.ResidualFFN, acts.LN1.Value, acts.LN1_Rstd,
+                                       prev.ResidualAtt, prev.MlpDown, weights.LN1_w,
+                                       quant_abs_max_ptr(acts.LN1),
+                                       Config.RmsNormEps, B * T, C, main_stream);
+    }
 
     // 1) projection to QKV vectors (note k,v may be fewer heads than q)
     forward_qmm(acts.QKV, acts.LN1, weights.Attn_QKV_w, weights.Attn_QKV_b,

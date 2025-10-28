@@ -20,9 +20,9 @@ __device__ inline float warpReduceSum(float val) {
 }
 
 template<class floatX>
-__global__ void rmsnorm_forward_kernel6(floatX* __restrict__ out, float* __restrict__ rms,
-                                        const floatX*  __restrict__ inp, const floatX*  __restrict__ weight,
-                                        float* __restrict__ abs_max_ptr, float epsilon, int N, int C) {
+__device__ void rmsnorm_forward_kernel(floatX* __restrict__ out, float* __restrict__ rms,
+                                       const floatX*  __restrict__ inp, const floatX*  __restrict__ weight,
+                                       float* __restrict__ abs_max_ptr, float epsilon, int N, int C) {
     using x128 = GenericVector<floatX, 16/sizeof(floatX)>;
 
     // this kernel is a simplified version of layernorm_forward_kernel6
@@ -101,10 +101,10 @@ __global__ void rmsnorm_forward_kernel6(floatX* __restrict__ out, float* __restr
 }
 
 template<typename floatX>
-__global__ void fused_residual_rmsnorm_forward_kernel5(floatX* residual, floatX* normed, float* rrms,
-                                               const floatX* inp1, const floatX* inp2,
-                                               const floatX* weight, float* __restrict__ abs_max_ptr, float epsilon,
-                                               int N, int C) {
+__device__ void fused_residual_rmsnorm_forward_kernel(floatX* residual, floatX* normed, float* rrms,
+                                                      const floatX* inp1, const floatX* inp2,
+                                                      const floatX* weight, float* __restrict__ abs_max_ptr, float epsilon,
+                                                      int N, int C) {
     using x128 = GenericVector<floatX, 16/sizeof(floatX)>;
     assert(blockDim.x == WARP_SIZE);
 
@@ -183,52 +183,29 @@ __global__ void fused_residual_rmsnorm_forward_kernel5(floatX* residual, floatX*
     }
 }
 
+// Dispatch inside the kernel for fused residual and pure rmsnorm. By having the dispatch inside,
+// we can make the full transformer block cuda-graph capturable.
+template<typename floatX>
+__global__ void rmsnorm_forward_unified_kernel(floatX* residual, floatX* normed, float* rrms,
+                                               const floatX* inp1, const floatX* inp2,
+                                               const floatX* weight, float* __restrict__ abs_max_ptr, float epsilon,
+                                               int N, int C) {
+    if(residual == nullptr) {
+        rmsnorm_forward_kernel(normed, rrms, inp1, weight, abs_max_ptr, epsilon, N, C);
+    } else {
+        fused_residual_rmsnorm_forward_kernel(residual, normed, rrms, inp1, inp2, weight, abs_max_ptr, epsilon, N, C);
+    }
+}
 
 
 // ----------------------------------------------------------------------------
 // Kernel launchers
 
 template<typename floatX>
-void rmsnorm_forward_imp(floatX* out, float* rms,
-                         const floatX* inp, const floatX* weight, float* abs_max_ptr,
-                         float epsilon, int B, int T, int C, cudaStream_t stream) {
-    NVTX_RANGE_FN();
-    const int block_size = 256;
-    int block_y = block_size / WARP_SIZE;
-    const int N = B * T;
-    const int grid_size = div_ceil(N, block_y);
-    size_t smem = (1 + block_y) * C * sizeof(floatX);
-
-    if (abs_max_ptr)
-        CUDA_CHECK(cudaMemsetAsync(abs_max_ptr, 0, sizeof(float), stream));
-
-    // in order to use more than 48 KiB of smem, need to call cudaFuncSetAttribute
-    // this may fail, in which case we fall back to the smem free implementation.
-    CUDA_CHECK(cudaGetLastError());
-    auto status = cudaFuncSetAttribute(rmsnorm_forward_kernel6<floatX>, cudaFuncAttributeMaxDynamicSharedMemorySize, smem);
-    CUDA_CHECK(cudaGetLastError());
-    if (status == cudaSuccess) {
-        rmsnorm_forward_kernel6<<<grid_size, dim3(WARP_SIZE, block_y), smem, stream>>>(out, rms, inp, weight, abs_max_ptr, epsilon, N, C);
-    } else {
-        // We should not allow for these perf regressions for now - just throw an error
-        assert(false);
-    }
-    CUDA_CHECK(cudaGetLastError());
-}
-
-void rmsnorm_forward(float* out, float* rms, const float* inp, const float* weight, float* abs_max_ptr, float epsilon, int B, int T, int C, cudaStream_t stream) {
-    rmsnorm_forward_imp(out, rms, inp, weight, abs_max_ptr, epsilon, B, T, C, stream);
-}
-void rmsnorm_forward(nv_bfloat16* out, float* rms, const nv_bfloat16* inp, const nv_bfloat16* weight, float* abs_max_ptr, float epsilon, int B, int T, int C, cudaStream_t stream)  {
-    rmsnorm_forward_imp(out, rms, inp, weight, abs_max_ptr, epsilon, B, T, C, stream);
-}
-
-template<typename floatX>
-void fused_residual_rmsnorm_forward_impl(floatX* residual, floatX* normed, float* rrms,
-                             const floatX* inp1, const floatX* inp2,
-                             const floatX* weight, float* abs_max_ptr,
-                             float epsilon, int N, int C, cudaStream_t stream) {
-    // same as forward kernel but has a fused residual connection
+void rmsnorm_forward_unified_imp(floatX* residual, floatX* normed, float* rrms,
+                                 const floatX* inp1, const floatX* inp2,
+                                 const floatX* weight, float* abs_max_ptr,
+                                 float epsilon, int N, int C, cudaStream_t stream) {
     const int block_size = 256;
     int block_y = block_size / WARP_SIZE;
     const int grid_size = div_ceil(N, block_y);
@@ -240,10 +217,10 @@ void fused_residual_rmsnorm_forward_impl(floatX* residual, floatX* normed, float
     // in order to use more than 48 KiB of smem, need to call cudaFuncSetAttribute
     // this may fail, in which case we fall back to the smem free implementation.
     CUDA_CHECK(cudaGetLastError());
-    auto status = cudaFuncSetAttribute(fused_residual_rmsnorm_forward_kernel5<floatX>, cudaFuncAttributeMaxDynamicSharedMemorySize, smem);
+    auto status = cudaFuncSetAttribute(rmsnorm_forward_unified_kernel<floatX>, cudaFuncAttributeMaxDynamicSharedMemorySize, smem);
     CUDA_CHECK(cudaGetLastError());
     if(status == cudaSuccess) {
-        fused_residual_rmsnorm_forward_kernel5<<<grid_size, dim3(WARP_SIZE, block_y), smem, stream>>>(residual, normed,
+        rmsnorm_forward_unified_kernel<<<grid_size, dim3(WARP_SIZE, block_y), smem, stream>>>(residual, normed,
                                                                                               rrms, inp1, inp2,
                                                                                               weight, abs_max_ptr, epsilon, N, C);
     } else {
@@ -252,14 +229,21 @@ void fused_residual_rmsnorm_forward_impl(floatX* residual, floatX* normed, float
     CUDA_CHECK(cudaGetLastError());
 }
 
+void rmsnorm_forward(float* out, float* rms, const float* inp, const float* weight, float* abs_max_ptr, float epsilon, int B, int T, int C, cudaStream_t stream) {
+    rmsnorm_forward_unified_imp<float>(nullptr, out, rms, inp, nullptr, weight, abs_max_ptr, epsilon, B*T, C, stream);
+}
+void rmsnorm_forward(nv_bfloat16* out, float* rms, const nv_bfloat16* inp, const nv_bfloat16* weight, float* abs_max_ptr, float epsilon, int B, int T, int C, cudaStream_t stream)  {
+    rmsnorm_forward_unified_imp<nv_bfloat16>(nullptr, out, rms, inp, nullptr, weight, abs_max_ptr, epsilon, B*T, C, stream);
+}
+
 void fused_residual_rmsnorm_forward(float* residual, float* normed, float* rrms, const float* inp1, const float* inp2, const float* weight, float* abs_max_ptr,
                                     float epsilon, int N, int C, cudaStream_t stream) {
-    fused_residual_rmsnorm_forward_impl(residual, normed, rrms, inp1, inp2, weight, abs_max_ptr, epsilon, N, C, stream);
+    rmsnorm_forward_unified_imp(residual, normed, rrms, inp1, inp2, weight, abs_max_ptr, epsilon, N, C, stream);
 }
 
 void fused_residual_rmsnorm_forward(nv_bfloat16* residual, nv_bfloat16* normed, float* rrms, const nv_bfloat16* inp1, const nv_bfloat16* inp2, const nv_bfloat16* weight, float* abs_max_ptr,
                                     float epsilon, int N, int C, cudaStream_t stream) {
-    fused_residual_rmsnorm_forward_impl(residual, normed, rrms, inp1, inp2, weight, abs_max_ptr, epsilon, N, C, stream);
+    rmsnorm_forward_unified_imp(residual, normed, rrms, inp1, inp2, weight, abs_max_ptr, epsilon, N, C, stream);
 }
 
 template<class floatX>
