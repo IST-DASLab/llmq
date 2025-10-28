@@ -40,5 +40,6 @@ struct LLamaConfig {
 
 LLamaConfig load_llama_config(const char* file_name, ETensorDType dtype);
 void save_llama_config(const LLamaConfig& config, const char* file_name);
+LLamaConfig create_config_from_name(std::string_view name, ETensorDType dtype);
 
 #endif //LLMQ_SRC_MODELS_LLAMA_CONFIG_H

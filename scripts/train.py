@@ -316,13 +316,6 @@ def main():
     log_options["matmul_dtype"] = log_options["matmul_dtype"] or config.model_dtype
     logger.log_options(log_options)
 
-    # Load model configuration
-    print(f"Loading model from {config.model}...")
-    if config.from_scratch:
-        # For from-scratch training, you'd need to provide architecture details
-        # This is simplified - in practice you'd load from a config file
-        raise NotImplementedError("--from-scratch requires specifying model architecture")
-
     # Setup data loaders
     train_files = list(map(str, Path.glob(Path(), config.train_file)))
     eval_files = list(map(str, Path.glob(Path(), config.eval_file)))
@@ -352,7 +345,15 @@ def main():
         else:
             print("No checkpoint found")
             exit(1)
+    elif  config.from_scratch:
+        print(f"Creating {config.model} from scratch...")
+        trainer = pyllmq.LLMQTrainer(ngpu=config.gpus, config=pyllmq.LLamaConfig.from_name(config.model, config.model_dtype),
+                                     options=options, batch_size=config.batch_size, seq_len=config.seq_len, grad_accum=config.grad_accumulation,
+                                     memcpy_all_gather=config.memcpy_all_gather, memcpy_send_recv=config.memcpy_send_recv)
+        trainer.init_weights()
+        latest_step = 0
     else:
+        print(f"Loading model from {config.model}...")
         trainer = pyllmq.LLMQTrainer.from_pretrained(
             name=config.model,
             ngpu=config.gpus,
