@@ -52,7 +52,7 @@ void MultiGPUPyTrainer::save_checkpoint(std::string directory, int step) {
     });
 }
 
-void MultiGPUPyTrainer::step(std::int32_t* inputs, std::int32_t* targets) {
+void MultiGPUPyTrainer::step(const std::int32_t* inputs, const std::int32_t* targets) {
     for(int i = 0; i < mContexts.size(); ++i) {
         auto& ctx = mContexts.at(i);
         auto* ib = ctx.Model->get_input_buffer().get<std::int32_t>();
@@ -74,6 +74,33 @@ void MultiGPUPyTrainer::step(std::int32_t* inputs, std::int32_t* targets) {
     });
     ++mMicroStep;
 }
+
+float MultiGPUPyTrainer::validate(const std::int32_t* inputs, const std::int32_t* targets) {
+    for(int i = 0; i < mContexts.size(); ++i) {
+        auto& ctx = mContexts.at(i);
+        auto* ib = ctx.Model->get_input_buffer().get<std::int32_t>();
+        auto* tb = ctx.Model->get_target_buffer().get<std::int32_t>();
+
+        std::memcpy(ib, inputs + i * B * T, B * T * sizeof(std::int32_t));
+        std::memcpy(tb, targets + i * B * T, B * T * sizeof(std::int32_t));
+    }
+
+    float loss;
+
+    run_work([micro_idx = mMicroStep, &loss](sThreadContext& ctx) {
+        Tensor inputs = ctx.Model->get_input_buffer();
+        Tensor targets = ctx.Model->get_target_buffer();
+        float calc_loss = ctx.Model->validate(inputs, targets, *ctx.Communicator, micro_idx);
+        if (ctx.Communicator->rank() == 0) {
+            loss = calc_loss;
+        }
+    });
+
+    ++mMicroStep;
+
+    return loss;
+}
+
 
 
 std::pair<float, float> MultiGPUPyTrainer::update(float lr, float beta1, float beta2, int step, float weight_decay, float grad_clip) {

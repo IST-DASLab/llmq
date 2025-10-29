@@ -171,6 +171,14 @@ NB_MODULE(pyllmq, m) {
 
             trainer->step(inputs.data(), targets.data());
         })
+        .def("validate", [](MultiGPUPyTrainer* trainer, TokenArray inputs, TokenArray targets) {
+            CHECK_SHAPE(inputs, trainer->batch_size() * trainer->world_size(), trainer->seq_length());
+            CHECK_SHAPE(targets, trainer->batch_size() * trainer->world_size(), trainer->seq_length());
+            CHECK_CONTIGUOUS(inputs);
+            CHECK_CONTIGUOUS(targets);
+
+            return trainer->validate(inputs.data(), targets.data());
+        })
         .def("update", [](MultiGPUPyTrainer* trainer, float lr, float beta1, float beta2, int step, float weight_decay, float grad_clip){
             auto [loss, norm] = trainer->update(lr, beta1, beta2, step, weight_decay, grad_clip);
             nb::dict ret;

@@ -22,7 +22,8 @@ public:
     void init_weights();
     void load_checkpoint(std::string directory, int step);
     void save_checkpoint(std::string directory, int step);
-    void step(std::int32_t* inputs, std::int32_t* targets);
+    void step(const std::int32_t* inputs, const std::int32_t* targets);
+    float validate(const std::int32_t* inputs, const std::int32_t* targets);
     std::pair<float, float> update(float lr, float beta1, float beta2, int step, float weight_decay, float grad_clip);
     void stop();
 
