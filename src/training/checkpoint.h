@@ -16,7 +16,7 @@ std::string get_checkpoint_path(std::string checkpoint_directory, int step);
 
 //! Saves distributed model state and training metadata
 std::string save_checkpoint(std::string checkpoint_directory, int step, IModel& model,
-                            const DataLoader& loader, NCCLCommunicator& comm);
+                            const DataLoader* loader, NCCLCommunicator& comm);
 
 //! Restores model and training state from checkpoint.
 void load_checkpoint(std::string checkpoint_directory, int step, IModel& model,

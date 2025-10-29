@@ -7,6 +7,7 @@
 
 #include "py_train.h"
 #include "training/dataloader.h"
+#include "training/checkpoint.h"
 
 namespace nb = nanobind;
 
@@ -161,6 +162,7 @@ NB_MODULE(pyllmq, m) {
         .def("import_weights", &MultiGPUPyTrainer::import_weights)
         .def("init_weights", &MultiGPUPyTrainer::init_weights)
         .def("load_checkpoint", &MultiGPUPyTrainer::load_checkpoint)
+        .def("save_checkpoint", &MultiGPUPyTrainer::save_checkpoint)
         .def("step", [](MultiGPUPyTrainer* trainer, TokenArray inputs, TokenArray targets) {
             CHECK_SHAPE(inputs, trainer->batch_size() * trainer->world_size(), trainer->seq_length());
             CHECK_SHAPE(targets, trainer->batch_size() * trainer->world_size(), trainer->seq_length());
@@ -201,4 +203,8 @@ NB_MODULE(pyllmq, m) {
         .def_prop_ro("num_chunks", &DataLoader::num_chunks)
         .def_prop_ro("num_tokens", &DataLoader::num_tokens)
         ;
+
+    m.def("find_latest_checkpoint", find_latest_checkpoint);
+    m.def("get_all_checkpoints", get_all_checkpoints);
+    m.def("get_checkpoint_path", get_checkpoint_path);
 }

@@ -42,7 +42,13 @@ void MultiGPUPyTrainer::init_weights() {
 
 void MultiGPUPyTrainer::load_checkpoint(std::string directory, int step) {
     run_work([directory, step](sThreadContext& ctx) {
-        ::load_checkpoint(directory, step, *ctx.Model, ctx.TrainLoader.get(), *ctx.Communicator);
+        ::load_checkpoint(directory, step, *ctx.Model, nullptr, *ctx.Communicator);
+    });
+}
+
+void MultiGPUPyTrainer::save_checkpoint(std::string directory, int step) {
+    run_work([directory, step](sThreadContext& ctx) {
+        ::save_checkpoint(directory, step, *ctx.Model, nullptr, *ctx.Communicator);
     });
 }
 

@@ -18,7 +18,7 @@ std::string get_checkpoint_path(std::string checkpoint_directory, int step) {
     return checkpoint_directory;
 }
 
-std::string save_checkpoint(std::string target, int step, IModel& model, const DataLoader& loader, NCCLCommunicator& comm) {
+std::string save_checkpoint(std::string target, int step, IModel& model, const DataLoader* loader, NCCLCommunicator& comm) {
     comm.barrier();
 
     nlohmann::json meta_data;
@@ -37,12 +37,14 @@ std::string save_checkpoint(std::string target, int step, IModel& model, const D
     comm.barrier();  // only write checkpoint.json once we know all the shard files are saved
 
     if (comm.rank() == 0) {
-        meta_data["data-loader"] = nlohmann::json::object({
-            {"seed", loader.seed()},
-            {"chunk_index", loader.chunk_index()},
-            {"file_index", loader.file_index()},
-            {"epoch", loader.epoch()}
-        });
+        if(loader) {
+            meta_data["data-loader"] = nlohmann::json::object({
+                  {"seed",        loader->seed()},
+                  {"chunk_index", loader->chunk_index()},
+                  {"file_index",  loader->file_index()},
+                  {"epoch",       loader->epoch()}
+            });
+        }
 
         meta_data["run"] = nlohmann::json::object({
             {"step", step},
