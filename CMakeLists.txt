@@ -189,18 +189,32 @@ endif ()
 
 
 if (PYTHON_BINDING)
-    find_package(Python COMPONENTS Interpreter Development.Module)
+    find_package(Python COMPONENTS Interpreter Development.Module OPTIONAL_COMPONENTS Development.SABIModule)
     FetchContent_MakeAvailable(nanobind)
-    nanobind_add_module(pyllmq STABLE_ABI src/binding/binding.cpp src/binding/py_train.cpp)
-    target_link_libraries(pyllmq PUBLIC llmq-common Python::Module fmt::fmt-header-only)
+    nanobind_add_module(_pyllmq STABLE_ABI src/binding/binding.cpp src/binding/py_train.cpp)
+    target_link_libraries(_pyllmq PUBLIC llmq-common Python::Module fmt::fmt-header-only)
 
-    set_target_properties(pyllmq PROPERTIES
+
+    set_target_properties(_pyllmq PROPERTIES
             INSTALL_RPATH "$ORIGIN"
             BUILD_WITH_INSTALL_RPATH OFF
             INSTALL_RPATH_USE_LINK_PATH FALSE
     )
 
-    install(TARGETS pyllmq llmq-common
+    # Generate __init__.py in the build directory
+    file(WRITE ${CMAKE_CURRENT_BINARY_DIR}/pyllmq/__init__.py "from ._pyllmq import *\n")
+
+    install(FILES ${CMAKE_CURRENT_BINARY_DIR}/pyllmq/__init__.py
+            DESTINATION pyllmq
+    )
+
+    install(TARGETS _pyllmq llmq-common
             LIBRARY DESTINATION pyllmq
+    )
+
+    # Install scripts as a subpackage
+    install(DIRECTORY scripts/
+            DESTINATION pyllmq/scripts
+            FILES_MATCHING PATTERN "*.py"
     )
 endif ()

@@ -53,7 +53,7 @@ static inline auto check_contiguous(const NBArray& arr, std::string_view name) {
 #define CHECK_CONTIGUOUS(obj) check_contiguous(obj, #obj)
 
 
-NB_MODULE(pyllmq, m) {
+NB_MODULE(_pyllmq, m) {
     nb::class_<GPUUtilInfo>(m, "GPUUtilInfo")
         .def_rw("clock", &GPUUtilInfo::clock)
         .def_rw("max_clock", &GPUUtilInfo::max_clock)
