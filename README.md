@@ -20,6 +20,7 @@ These are:
 * [cudnn-frontend](https://github.com/NVIDIA/cudnn-frontend)
 * [CLI11](https://github.com/CLIUtils/CLI11)
 * [fmt](https://github.com/fmtlib/fmt)
+* [nanobind](https://github.com/wjakob/nanobind) (for optional python bindings)
 
 To build the training executable, run
 ```shell
@@ -261,6 +262,16 @@ For the optimizer state, this will slow down the optimizer step drastically (mem
 - `--memcpy-send-recv` - Use memcpy for send/receive operations (threads backend only).
 - `--all-to-all-reduce` - Use all-to-all-based reduce algorithm (combine with --memcpy-send-recv).
 - `--use-cuda-graphs` / `--no-use-cuda-graphs` - Enable or disable CUDA graphs for performance.
+
+## Python bindings
+While it is nice to demonstrate training in pure C++/Cuda, there are scenarios where it is desirable to use Python for training, e.g., when using an alternative learning-rate schedule.
+
+The Python bindings are provided in the `src/bindings` directory, and can be built using the
+`pyllmq` target. The `demo.py` script provides an example of how to use the bindings.
+By design, the bindings expose only coarse-grained operations; that is, the minimum unit
+of work is a full forward+backward pass across all GPUs. While this may be a bit inflexible,
+it allows benefiting from the full optimization of the C++ backend, and there are no GPU-CPU
+synchronizations until the `update` call.
 
 
 ## Code organization

@@ -13,6 +13,25 @@ class DataLoader;
 class IGPUUtilTracker;
 struct GPUUtilInfo;
 
+//! \brief A multi-GPU trainer wrapper to be used for python bindings
+//! \details When wrapping llm.q for python, the  main source of difficulty is handling
+//! multi-GPU support. The cpp version supports both multi-process and multi-thread, with
+//! multi-thread being the more interesting (due to cudaMemcpy) option.
+//! However, mapping multi-threading to python is problematic due to GIL (maybe that will be better once
+//! free-threaded python is widely used); hence, this wrapper is used to hide all worker threads
+//! from the python interface.
+//!
+//! Internally, we start up one thread per GPU, and keep track of its training state (`sThreadContext`).
+//! Each interface function wraps the desired model call into a std::function that gets sent to the thread
+//! context. Each thread runs an infinite loop, and picks up the work it has been sent. Interface functions
+//! only return once the work is done. If the work function does not synchronize with the GPU, "done" in this
+//! case means that the CPU execution has finished, but the GPU might still be busy. This allows overlap of
+//! python execution with GPU execution.
+//!
+//! As a consequence of this implementation strategy, data loading in python will be slightly different than in the
+//! cpp implementation. For cpp, each thread has its own DataLoader, providing `B*T` tokens each step. For python,
+//! we have only one interface-visible thread, which gets `nGPU*B*T` tokens per step, and splits them into `B*T`-sized
+//! chunks for each GPU.
 class MultiGPUPyTrainer
 {
 public:

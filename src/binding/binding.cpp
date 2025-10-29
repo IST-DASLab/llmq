@@ -1,14 +1,17 @@
 #include <nanobind/nanobind.h>
 #include <nanobind/stl/string.h>
 #include <nanobind/stl/vector.h>
+#include <nanobind/stl/optional.h>
 #include <nanobind/ndarray.h>
 
+#include <filesystem>
 #include <fmt/format.h>
 
 #include "py_train.h"
 #include "training/dataloader.h"
 #include "training/checkpoint.h"
 #include "utilities/gpu_info.h"
+#include "utilities/safetensors.h"
 
 namespace nb = nanobind;
 
@@ -19,111 +22,6 @@ static std::optional<ETensorDType> opt_dtype_from_str(const std::string& dtype_s
         return std::nullopt;
     }
     return dtype_from_str(dtype_str);
-}
-
-static bool get_bool_from_dict(nb::dict dict_obj, const char* key, bool default_val) {
-    return nb::cast<bool>(dict_obj.get(key, nb::cast(default_val)));
-}
-
-static std::string get_string_from_dict(nb::dict dict_obj, const char* key, const char* default_val = "") {
-    return nb::cast<std::string>(dict_obj.get(key, nb::cast(default_val)));
-}
-
-static int get_int_from_dict(nb::dict dict_obj, const char* key, int default_val = 0) {
-    return nb::cast<int>(dict_obj.get(key, nb::cast(default_val)));
-}
-
-static float get_float_from_dict(nb::dict dict_obj, const char* key, float default_val = 0.0f) {
-    return nb::cast<float>(dict_obj.get(key, nb::cast(default_val)));
-}
-
-LLamaConfig config_from_dict(nb::dict dict_obj) {
-    LLamaConfig config;
-
-    // Architecture enum (string -> enum mapping)
-    std::string arch_str = get_string_from_dict(dict_obj, "architecture");
-    if (arch_str == "qwen2" || arch_str == "QWEN2") {
-        config.Architecture = LLamaConfig::QWEN2;
-    } else {
-        config.Architecture = LLamaConfig::LLAMA;  // Default to LLAMA
-    }
-
-    // Integer fields
-    config.BosTokenId = get_int_from_dict(dict_obj, "bos_token_id", 1);
-    config.EosTokenId = get_int_from_dict(dict_obj, "eos_token_id", 2);
-    config.HiddenSize = get_int_from_dict(dict_obj, "hidden_size");
-    config.IntermediateSize = get_int_from_dict(dict_obj, "intermediate_size");
-    config.VocabSize = get_int_from_dict(dict_obj, "vocab_size");
-    config.NumQueryHeads = get_int_from_dict(dict_obj, "num_attention_heads");
-    config.NumKeyValHeads = get_int_from_dict(dict_obj, "num_key_value_heads");
-    config.NumLayers = get_int_from_dict(dict_obj, "num_hidden_layers");
-    config.MaxPositionEmbeddings = get_int_from_dict(dict_obj, "max_position_embeddings");
-
-    // Float fields
-    config.RopeTheta = get_float_from_dict(dict_obj, "rope_theta", 10000.0f);
-    config.RmsNormEps = get_float_from_dict(dict_obj, "rms_norm_eps", 1e-6f);
-
-    // Boolean fields
-    config.TiedWordEmbeddings = get_bool_from_dict(dict_obj, "tie_word_embeddings", false);
-    config.UseQKVBias = get_bool_from_dict(dict_obj, "use_qkv_bias", false);
-
-    // DType field
-    std::string dtype_str = get_string_from_dict(dict_obj, "dtype");
-    if (!dtype_str.empty()) {
-        config.DType = dtype_from_str(dtype_str);
-    }
-
-    return config;
-}
-
-LLamaOptions options_from_dict(nb::dict dict_obj) {
-    auto get_bool = [dict_obj](const char* key, bool default_val) -> bool {
-        return get_bool_from_dict(dict_obj, key, default_val);
-    };
-
-    auto get_string = [dict_obj](const char* key) -> std::string {
-        return get_string_from_dict(dict_obj, key);
-    };
-
-    LLamaOptions options;
-
-    // Boolean options
-    options.KeepAllActivations = get_bool("keep_all_activations", false);
-    options.RecomputeSwiGLu = get_bool("recompute_swiglu", false);
-    options.RecomputeRMSNorm = get_bool("recompute_rmsnorm", false);
-    options.RecomputeFFN = get_bool("recompute_ffn", false);
-    options.RecomputeQKV = get_bool("recompute_qkv", false);
-    options.RecomputeAtt = get_bool("recompute_att", false);
-    options.RecomputeBlock = get_bool("recompute_block", false);
-    options.UseCudaGraphs = get_bool("use_cuda_graphs", false);
-
-    options.OffloadMaster = get_bool("offload_master", false);
-    options.OffloadQuants = get_bool("offload_quants", false);
-    options.OffloadOptM = get_bool("offload_opt_m", false);
-    options.OffloadOptV = get_bool("offload_opt_v", false);
-    options.UseWriteCombined = get_bool("use_write_combined", false);
-    options.ShardWeights = get_bool("shard_weights", false);
-    options.PersistentQuants = get_bool("persistent_quants", false);
-
-    options.ShardGradients = get_bool("shard_gradients", false);
-    options.UseAllToAllReduce = get_bool("use_all_to_all_reduce", false);
-
-    options.InitProjectionsToZero = get_bool("init_projections_to_zero", false);
-
-    // Optional dtype options
-    options.MatmulType = opt_dtype_from_str(get_string("matmul_type"));
-    options.MasterDType = opt_dtype_from_str(get_string("master_dtype"));
-
-    // Required dtype options with defaults
-    if (auto opt = opt_dtype_from_str(get_string("opt_momentum_type")); opt.has_value()) {
-        options.OptMomentumType = opt.value();
-    }
-
-    if (auto opt = opt_dtype_from_str(get_string("opt_variance_type")); opt.has_value()) {
-        options.OptVarianceType = opt.value();
-    }
-
-    return options;
 }
 
 template<typename NBArray, std::size_t NDims>
@@ -181,14 +79,163 @@ NB_MODULE(pyllmq, m) {
         })
         ;
 
+    nb::class_<LLamaConfig> (m, "LLamaConfig")
+        .def("__init__", [](LLamaConfig *t,
+            const std::string& arch, std::optional<int> bos_token_id, std::optional<int> eos_token_id,
+            int hidden_size, int intermediate_size, std::optional<int> vocab_size, int num_attention_heads, int num_key_value_heads,
+            int num_hidden_layers, std::optional<int> max_position_embeddings, std::optional<float> rope_theta, float rms_norm_eps, bool tie_word_embeddings, std::optional<bool> use_qkv_bias, std::string dtype) {
+            // default values depend on selected architecture
+             LLamaConfig::LLamaBasedModels architecture;
+            if(arch == "qwen2" || arch == "Qwen2" || arch == "Qwen2ForCausalLM") {
+                architecture = LLamaConfig::QWEN2;
+                eos_token_id = eos_token_id.value_or(151643);
+                bos_token_id = bos_token_id.value_or(151643);
+                vocab_size = vocab_size.value_or(151936);
+                max_position_embeddings = max_position_embeddings.value_or(32768);
+                rope_theta = rope_theta.value_or(1000000.0);
+                use_qkv_bias = use_qkv_bias.value_or(true);
+            } else {
+                throw std::runtime_error("At this point, only qwen2 architecture is supported.");
+            }
+
+            new (t) LLamaConfig{
+                .Architecture = architecture,
+                .BosTokenId = bos_token_id.value(),
+                .EosTokenId = eos_token_id.value(),
+                .HiddenSize = hidden_size,
+                .IntermediateSize = intermediate_size,
+                .VocabSize = vocab_size.value(),
+                .NumQueryHeads = num_attention_heads,
+                .NumKeyValHeads = num_key_value_heads,
+                .NumLayers = num_hidden_layers,
+                .MaxPositionEmbeddings = max_position_embeddings.value(),
+                .RopeTheta = rope_theta.value(),
+                .RmsNormEps = rms_norm_eps,
+                .TiedWordEmbeddings = tie_word_embeddings,
+                .UseQKVBias = use_qkv_bias.value(),
+                .DType = dtype_from_str(dtype)
+            };
+        }, nb::kw_only(),
+             nb::arg("architecture"), nb::arg("bos_token_id") = nb::none(), nb::arg("eos_token_id") = nb::none(), nb::arg("hidden_size"), nb::arg("intermediate_size"),
+             nb::arg("vocab_size") = nb::none(), nb::arg("num_attention_heads"), nb::arg("num_key_value_heads"), nb::arg("num_hidden_layers"), nb::arg("max_position_embeddings") = nb::none(),
+             nb::arg("rope_theta") = nb::none(), nb::arg("rms_norm_eps"), nb::arg("tie_word_embeddings"), nb::arg("use_qkv_bias") = nb::none(), nb::arg("dtype") = "bf16")
+        .def_rw("architecture", &LLamaConfig::Architecture)
+        .def_rw("bos_token_id", &LLamaConfig::BosTokenId)
+        .def_rw("eos_token_id", &LLamaConfig::EosTokenId)
+        .def_rw("hidden_size", &LLamaConfig::HiddenSize)
+        .def_rw("intermediate_size", &LLamaConfig::IntermediateSize)
+        .def_rw("vocab_size", &LLamaConfig::VocabSize)
+        .def_rw("num_attention_heads", &LLamaConfig::NumQueryHeads)
+        .def_rw("num_key_value_heads", &LLamaConfig::NumKeyValHeads)
+        .def_rw("num_hidden_layers", &LLamaConfig::NumLayers)
+        .def_rw("max_position_embeddings", &LLamaConfig::MaxPositionEmbeddings)
+        .def_rw("rope_theta", &LLamaConfig::RopeTheta)
+        .def_rw("rms_norm_eps", &LLamaConfig::RopeTheta)
+        .def_rw("tie_word_embeddings", &LLamaConfig::TiedWordEmbeddings)
+        .def_rw("use_qkv_bias", &LLamaConfig::UseQKVBias)
+        .def_prop_rw("dtype",
+                     [](const LLamaConfig* cfg){ return dtype_to_str(cfg->DType); },
+                     [](LLamaConfig* cfg, const std::string& dtype_str){ cfg->DType = dtype_from_str(dtype_str); })
+        .def_prop_ro("head_size", &LLamaConfig::head_size)
+        .def_prop_ro("qkv_channels", &LLamaConfig::qkv_channels)
+        .def_prop_ro("model_name", &LLamaConfig::model_name)
+        ;
+
+    nb::class_<LLamaOptions>(m, "LLamaOptions")
+        .def("__init__", [](LLamaOptions *t, bool recompute_swiglu, bool recompute_rmsnorm,
+            bool recompute_ffn, bool recompute_qkv, bool recompute_att, bool recompute_block,
+            bool use_cuda_graphs,
+            bool offload_master, bool offload_quants, bool offload_opt_m, bool offload_opt_v,
+            bool use_write_combined, bool shard_weights, bool persistent_quants, bool shard_gradients, bool use_all_to_all_reduce, bool init_projections_to_zero,
+            const std::string matmul_type, const std::string master_dtype, const std::string momentum_type, const std::string variance_type) {
+            new (t) LLamaOptions{
+                .RecomputeSwiGLu = recompute_swiglu,
+                .RecomputeRMSNorm = recompute_rmsnorm,
+                .RecomputeFFN = recompute_ffn,
+                .RecomputeQKV = recompute_qkv,
+                .RecomputeAtt = recompute_att,
+                .RecomputeBlock = recompute_block,
+                .UseCudaGraphs = use_cuda_graphs,
+                .OffloadMaster = offload_master,
+                .OffloadQuants = offload_quants,
+                .OffloadOptM = offload_opt_m,
+                .OffloadOptV = offload_opt_v,
+                .UseWriteCombined = use_write_combined,
+                .ShardWeights = shard_weights,
+                .PersistentQuants = persistent_quants,
+                .ShardGradients = shard_gradients,
+                .UseAllToAllReduce = use_all_to_all_reduce,
+                .InitProjectionsToZero = init_projections_to_zero,
+                .MatmulType = opt_dtype_from_str(matmul_type),
+                .MasterDType = opt_dtype_from_str(master_dtype),
+                .OptMomentumType = dtype_from_str(momentum_type),
+                .OptVarianceType = dtype_from_str(variance_type)
+            };
+        }, nb::kw_only(),
+             nb::arg("recompute_swiglu") = false, nb::arg("recompute_rmsnorm") = false,
+             nb::arg("recompute_ffn") = false,    nb::arg("recompute_qkv") = false,
+             nb::arg("recompute_att") = false,    nb::arg("recompute_block") = false,
+             nb::arg("use_cuda_graphs") = true,   nb::arg("offload_master") = false,
+             nb::arg("offload_quants") = false,   nb::arg("offload_opt_m") = false,
+             nb::arg("offload_opt_v") = false,    nb::arg("use_write_combined") = false,
+             nb::arg("shard_weights") = false,    nb::arg("persistent_quants") = false,
+             nb::arg("shard_gradients") = false,  nb::arg("use_all_to_all_reduce") = false,
+             nb::arg("init_projections_to_zero") = false, nb::arg("matmul_type") = "",
+             nb::arg("master_dtype") = "",        nb::arg("momentum_type") = "fp32",
+             nb::arg("variance_type") = "fp32"
+                 )
+        .def_rw("recompute_swiglu", &LLamaOptions::RecomputeSwiGLu)
+        .def_rw("recompute_rmsnorm", &LLamaOptions::RecomputeRMSNorm)
+        .def_rw("recompute_ffn", &LLamaOptions::RecomputeFFN)
+        .def_rw("recompute_qkv", &LLamaOptions::RecomputeQKV)
+        .def_rw("recompute_att", &LLamaOptions::RecomputeAtt)
+        .def_rw("recompute_block", &LLamaOptions::RecomputeBlock)
+        .def_rw("use_cuda_graphs", &LLamaOptions::UseCudaGraphs)
+        .def_rw("offload_master", &LLamaOptions::OffloadMaster)
+        .def_rw("offload_quants", &LLamaOptions::OffloadQuants)
+        .def_rw("offload_opt_m", &LLamaOptions::OffloadOptM)
+        .def_rw("offload_opt_v", &LLamaOptions::OffloadOptV)
+        .def_rw("use_write_combined", &LLamaOptions::UseWriteCombined)
+        .def_rw("shard_weights", &LLamaOptions::ShardWeights)
+        .def_rw("persistent_quants", &LLamaOptions::PersistentQuants)
+        .def_rw("shard_gradients", &LLamaOptions::ShardGradients)
+        .def_rw("use_all_to_all_reduce", &LLamaOptions::UseAllToAllReduce)
+        .def_rw("init_projections_to_zero", &LLamaOptions::InitProjectionsToZero)
+        .def_prop_rw("matmul_type", [](const LLamaOptions* opt){ return dtype_to_str(opt->MatmulType.value()); },
+                     [](LLamaOptions* opt, const std::string& dtype_str){ opt->MatmulType = dtype_from_str(dtype_str); })
+        .def_prop_rw("master_dtype", [](const LLamaOptions* opt){ return dtype_to_str(opt->MasterDType.value()); },
+                     [](LLamaOptions* opt, const std::string& dtype_str){ opt->MasterDType = dtype_from_str(dtype_str); })
+        .def_prop_rw("momentum_type", [](const LLamaOptions* opt){ return dtype_to_str(opt->OptMomentumType); },
+                     [](LLamaOptions* opt, const std::string& dtype_str){ opt->OptMomentumType = dtype_from_str(dtype_str); })
+        .def_prop_rw("variance_type", [](const LLamaOptions* opt){ return dtype_to_str(opt->OptVarianceType); },
+                     [](LLamaOptions* opt, const std::string& dtype_str){ opt->OptVarianceType = dtype_from_str(dtype_str); })
+        ;
+
     nb::class_<MultiGPUPyTrainer>(m, "LLMQTrainer")
-        .def("__init__", [](MultiGPUPyTrainer *t, int ngpu, nb::dict config, nb::dict options, int batch_size, int seq_len, int grad_accum, bool memcpy_all_gather, bool memcpy_send_recv) {
-            new (t) MultiGPUPyTrainer(ngpu, config_from_dict(config), options_from_dict(options), batch_size, seq_len, grad_accum, memcpy_all_gather, memcpy_send_recv);
-        })
-        .def("import_weights", &MultiGPUPyTrainer::import_weights)
-        .def("init_weights", &MultiGPUPyTrainer::init_weights)
-        .def("load_checkpoint", &MultiGPUPyTrainer::load_checkpoint)
-        .def("save_checkpoint", &MultiGPUPyTrainer::save_checkpoint)
+        .def("__init__", [](MultiGPUPyTrainer *t, int ngpu, LLamaConfig config, LLamaOptions options, int batch_size, int seq_len, int grad_accum, bool memcpy_all_gather, bool memcpy_send_recv) {
+            new (t) MultiGPUPyTrainer(ngpu, config, options, batch_size, seq_len, grad_accum, memcpy_all_gather, memcpy_send_recv);
+        }, nb::arg("ngpu"), nb::arg("config"), nb::arg("options"), nb::arg("batch_size"), nb::arg("seq_len"), nb::arg("grad_accum"),
+             nb::arg("memcpy_all_gather") = true, nb::arg("memcpy_send_recv") = true)
+        .def("import_weights", &MultiGPUPyTrainer::import_weights, nb::arg("path"), "Import weights from a hf model directory (model.safetensors)")
+        .def_static("from_pretrained", [](const std::string& name, int ngpu, std::string dtype, LLamaOptions options, int batch_size, int seq_len, int grad_accum, bool memcpy_all_gather, bool memcpy_send_recv){
+            std::string hf_path = get_hf_model_files(name);
+            if (hf_path.empty()) {
+                throw std::runtime_error("Could not find model files for " + name);
+            }
+            std::string config_path = hf_path + "/config.json";
+            std::string model_path = hf_path + "/model.safetensors";
+            if (!std::filesystem::exists(model_path)) {
+                model_path = hf_path + "/model.safetensors.index.json";
+            }
+            LLamaConfig config = load_llama_config(config_path.c_str(), dtype_from_str(dtype));
+            auto trainer = new MultiGPUPyTrainer(ngpu, config, options, batch_size, seq_len, grad_accum, memcpy_all_gather, memcpy_send_recv);
+            trainer->import_weights(model_path);
+            return trainer;
+            }, nb::arg("name"), nb::arg("ngpu"), nb::arg("dtype"), nb::arg("options"), nb::arg("batch_size"), nb::arg("seq_len"), nb::arg("grad_accum"),
+                    nb::arg("memcpy_all_gather") = true, nb::arg("memcpy_send_recv") = true, "Import weights from a hf model name")
+        .def("init_weights", &MultiGPUPyTrainer::init_weights, "Initialize weights from scratch")
+        .def("load_checkpoint", &MultiGPUPyTrainer::load_checkpoint, nb::arg("path"), nb::arg("step"), "Load a checkpoint for the specified step from the given checkpoint directory")
+        .def("save_checkpoint", &MultiGPUPyTrainer::save_checkpoint, nb::arg("path"), nb::arg("step"), "Save a checkpoint for the specified step from to given checkpoint directory")
         .def("step", [](MultiGPUPyTrainer* trainer, TokenArray inputs, TokenArray targets) {
             CHECK_SHAPE(inputs, trainer->batch_size() * trainer->world_size(), trainer->seq_length());
             CHECK_SHAPE(targets, trainer->batch_size() * trainer->world_size(), trainer->seq_length());
@@ -196,7 +243,8 @@ NB_MODULE(pyllmq, m) {
             CHECK_CONTIGUOUS(targets);
 
             trainer->step(inputs.data(), targets.data());
-        })
+        }, nb::arg("inputs"), nb::arg("targets"),
+             "Perform one step of forward/backward with the given inputs and targets. This function runs asynchronously; the loss will be made available during the next call to `update`.")
         .def("validate", [](MultiGPUPyTrainer* trainer, TokenArray inputs, TokenArray targets) {
             CHECK_SHAPE(inputs, trainer->batch_size() * trainer->world_size(), trainer->seq_length());
             CHECK_SHAPE(targets, trainer->batch_size() * trainer->world_size(), trainer->seq_length());
@@ -204,16 +252,16 @@ NB_MODULE(pyllmq, m) {
             CHECK_CONTIGUOUS(targets);
 
             return trainer->validate(inputs.data(), targets.data());
-        })
+        }, nb::arg("inputs"), nb::arg("targets"), "Perform one step of forward and loss calculation with the given inputs and targets, and return the resulting loss.")
         .def("update", [](MultiGPUPyTrainer* trainer, float lr, float beta1, float beta2, int step, float weight_decay, float grad_clip){
             auto [loss, norm] = trainer->update(lr, beta1, beta2, step, weight_decay, grad_clip);
             nb::dict ret;
             ret["loss"] = loss;
             ret["norm"] = norm;
             return ret;
-        })
+        }, nb::arg("learning_rate"), nb::arg("beta1"), nb::arg("beta2"), nb::arg("step"), nb::arg("weight_decay"), nb::arg("grad_clip"),
+             "Run the optimizer step and return the loss and gradient norm. This function blocks until the optimizer step is complete.")
         .def("get_gpu_info", &MultiGPUPyTrainer::get_gpu_info)
-        .def("stop", &MultiGPUPyTrainer::stop)
         .def_prop_ro("world_size", &MultiGPUPyTrainer::world_size)
         .def_prop_ro("batch_size", &MultiGPUPyTrainer::batch_size)
         .def_prop_ro("seq_length", &MultiGPUPyTrainer::seq_length)
@@ -231,11 +279,12 @@ NB_MODULE(pyllmq, m) {
             Tensor tgt_t{ETensorDType::INT32, {static_cast<long>(targets.shape(0)), static_cast<long>(targets.shape(1)), 1, 1, 1},
                         reinterpret_cast<std::byte*>(targets.data())};
             d->load_batch(inp_t, tgt_t);
-        })
-        .def("epoch", &DataLoader::epoch)
-        .def("progress", &DataLoader::progress)
-        .def("advance_epoch", &DataLoader::advance_epoch)
-        .def("has_next", &DataLoader::has_next)
+        }, nb::arg("inputs"), nb::arg("targets"),
+             "Fill inputs and targets with the next batch of data")
+        .def("epoch", &DataLoader::epoch, "Get the current epoch number")
+        .def("progress", &DataLoader::progress, "Get the current progress within the current epoch, in percent")
+        .def("advance_epoch", &DataLoader::advance_epoch, "Advance to the next epoch, re-randomizing the order of chunks")
+        .def("has_next", &DataLoader::has_next, "Check if there is another batch of data available")
         .def_prop_ro("chunk_size", &DataLoader::chunk_size)
         .def_prop_ro("vocab_size", &DataLoader::vocab_size)
         .def_prop_ro("num_files", &DataLoader::num_files)
