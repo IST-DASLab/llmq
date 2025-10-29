@@ -201,6 +201,6 @@ if (PYTHON_BINDING)
     )
 
     install(TARGETS pyllmq llmq-common
-            LIBRARY DESTINATION .
+            LIBRARY DESTINATION pyllmq
     )
 endif ()

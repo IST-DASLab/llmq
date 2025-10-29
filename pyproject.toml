@@ -27,10 +27,10 @@ plotting = [
 ]
 
 [project.scripts]
-pyllmq-demo = "scripts.demo:main"
-pyllmq-tokenize = "scripts.tokenize_data:main"
-pyllmq-wandb = "scripts.export_wandb:main"
-pyllmq-plot = "scripts.plot_training_run:main"
+pyllmq-demo = "pyllmq.scripts.demo:main"
+pyllmq-tokenize = "pyllmq.scripts.tokenize_data:main"
+pyllmq-wandb = "pyllmq.scripts.export_wandb:main"
+pyllmq-plot = "pyllmq.scripts.plot_training_run:main"
 
 [build-system]
 requires = ["scikit-build-core>=0.10", "nanobind"]
@@ -42,7 +42,8 @@ wheel.py-api = "cp312"
 build.targets = ["pyllmq"]
 build-dir = "build/{wheel_tag}"
 cmake.build-type = "Release"
-wheel.packages = ["scripts"]
+[tool.scikit-build.wheel.packages]
+"pyllmq/scripts" = "scripts"
 
 [tool.scikit-build.cmake.define]
 PYTHON_BINDING = "ON"

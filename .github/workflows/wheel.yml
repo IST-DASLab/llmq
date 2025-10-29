@@ -1,0 +1,72 @@
+name: Wheel
+on:
+  create:
+  workflow_dispatch:
+  push:
+    branches:
+      - master
+      - release-*
+      - dev
+  pull_request:
+    branches:
+      - master
+      - dev
+
+jobs:
+  wheel:
+    runs-on: ubuntu-24.04
+    container:
+      image: nvidia/cuda:12.9.1-cudnn-devel-ubuntu24.04
+
+    env:
+      CMAKE_GENERATOR: Ninja
+      CMAKE_C_COMPILER_LAUNCHER: ccache
+      CMAKE_CXX_COMPILER_LAUNCHER: ccache
+      CMAKE_CUDA_COMPILER_LAUNCHER: ccache
+      CUDAARCHS: "89;90;100f;120f"
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install deps
+        run: apt update && apt install -y git
+
+      - name: ccache
+        uses: hendrikmuhs/ccache-action@v1.2
+        with:
+          key: wheel
+
+      - name: Install the latest version of uv
+        uses: astral-sh/setup-uv@v7
+
+      - name: Build wheel
+        run: |
+          uv build --wheel
+
+      - name: Upload wheel
+        uses: actions/upload-artifact@v4
+        with:
+          name: wheel
+          path: dist/pyllmq*.whl
+
+  release:
+    #if: github.event_name == 'workflow_dispatch'
+    needs: wheel
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download wheel artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: wheel
+          path: dist/
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ${{ github.ref_name }}
+          files: dist/*.whl
+          generate_release_notes: true
+          draft: true
