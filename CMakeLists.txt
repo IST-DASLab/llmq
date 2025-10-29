@@ -189,7 +189,7 @@ endif ()
 
 
 if (PYTHON_BINDING)
-    find_package(Python COMPONENTS Interpreter Development.Module)
+    find_package(Python COMPONENTS Interpreter Development.Module OPTIONAL_COMPONENTS Development.SABIModule)
     FetchContent_MakeAvailable(nanobind)
     nanobind_add_module(pyllmq STABLE_ABI src/binding/binding.cpp src/binding/py_train.cpp)
     target_link_libraries(pyllmq PUBLIC llmq-common Python::Module fmt::fmt-header-only)
@@ -201,6 +201,6 @@ if (PYTHON_BINDING)
     )
 
     install(TARGETS pyllmq llmq-common
-            LIBRARY DESTINATION pyllmq
+            LIBRARY DESTINATION .
     )
 endif ()

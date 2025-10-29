@@ -271,6 +271,10 @@ The Python bindings are provided in the `src/bindings` directory, and can be bui
 using `uv build --wheel`.
 The [demo.py](scripts/demo.py) script provides an example of how to use the bindings. Running it with `uv run pyllmq-demo` will trigger the wheel build automatically.
 
+Pre-built wheels are available from [GitHub Releases](https://github.com/IST-DASLab/llmq/releases) for convenience.
+Download the latest `.whl` file and install it with `uv pip install pyllmq-*.whl`, or run example scripts directly: `uv run --with pyllmq-*.whl script.py`. 
+The wheels are built against CUDA 12.9 and support compute capabilities 89, 90, 100f, and 120f.
+
 By design, the bindings expose only coarse-grained operations; that is, the minimum unit
 of work is a full forward+backward pass across all GPUs. While this may be a bit inflexible,
 it allows benefiting from the full optimization of the C++ backend, and there are no GPU-CPU

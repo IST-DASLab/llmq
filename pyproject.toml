@@ -1,6 +1,6 @@
 [project]
 name = "pyllmq"
-version = "0.1.0"
+version = "0.2.0"
 description = "Add your description here"
 readme = "README.md"
 authors = [
@@ -9,16 +9,15 @@ authors = [
 requires-python = ">=3.12"
 dependencies = [
     "numpy>=2.3.2",
+    "tqdm>=4.67.1",
 ]
 
 [project.optional-dependencies]
-data = [
+scripts = [
     "accelerate>=1.10.0",
     "datasets>=4.0.0",
     "torch>=2.8.0",
     "transformers>=4.55.0",
-]
-plotting = [
     "matplotlib>=3.10.5",
     "plotly>=6.3.0",
     "pyqt6>=6.9.1",
@@ -27,10 +26,10 @@ plotting = [
 ]
 
 [project.scripts]
-pyllmq-demo = "pyllmq.scripts.demo:main"
-pyllmq-tokenize = "pyllmq.scripts.tokenize_data:main"
-pyllmq-wandb = "pyllmq.scripts.export_wandb:main"
-pyllmq-plot = "pyllmq.scripts.plot_training_run:main"
+pyllmq-demo = "pyllmq_scripts.demo:main"
+pyllmq-tokenize = "pyllmq_scripts.tokenize_data:main"
+pyllmq-wandb = "pyllmq_scripts.export_wandb:main"
+pyllmq-plot = "pyllmq_scripts.plot_training_run:main"
 
 [build-system]
 requires = ["scikit-build-core>=0.10", "nanobind"]
@@ -43,7 +42,7 @@ build.targets = ["pyllmq"]
 build-dir = "build/{wheel_tag}"
 cmake.build-type = "Release"
 [tool.scikit-build.wheel.packages]
-"pyllmq/scripts" = "scripts"
+"pyllmq_scripts" = "scripts"
 
 [tool.scikit-build.cmake.define]
 PYTHON_BINDING = "ON"
