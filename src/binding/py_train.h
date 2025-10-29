@@ -26,7 +26,7 @@ public:
     void stop();
 
     int world_size() const;
-    int batch_size() const { return B * mGradAccumulation; }
+    int batch_size() const { return B; }
     int seq_length() const { return T; }
 
 private:

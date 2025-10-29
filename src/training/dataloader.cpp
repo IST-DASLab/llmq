@@ -184,8 +184,12 @@ std::int32_t DataLoader::chunk_index() const {
 void DataLoader::load_batch(Tensor& inputs, Tensor& targets) {
     assert(inputs.Device == -1);
     assert(targets.Device == -1);
-    assert(inputs.nelem() == mChunkSize);
-    assert(targets.nelem() == mChunkSize);
+    if(inputs.nelem() != mChunkSize) {
+        throw std::runtime_error(fmt::format("Expected inputs tensor of {} elements, got {}", mChunkSize, inputs.nelem()));
+    }
+    if(targets.nelem() != mChunkSize) {
+        throw std::runtime_error(fmt::format("Expected targets tensor of {} elements, got {}", mChunkSize, targets.nelem()));
+    }
 
     const long header_offset = 1024;
     const long element_size = 4;

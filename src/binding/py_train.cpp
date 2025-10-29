@@ -84,7 +84,7 @@ std::pair<float, float> MultiGPUPyTrainer::update(float lr, float beta1, float b
 
     mMicroStep = 0;
 
-    return {step_loss / B / T, step_norm};
+    return {step_loss / B / T / mGradAccumulation, step_norm};
 }
 
 void MultiGPUPyTrainer::stop() {

@@ -1,10 +1,12 @@
 #include <nanobind/nanobind.h>
 #include <nanobind/stl/string.h>
+#include <nanobind/stl/vector.h>
 #include <nanobind/ndarray.h>
 
 #include <fmt/format.h>
 
 #include "py_train.h"
+#include "training/dataloader.h"
 
 namespace nb = nanobind;
 
@@ -60,7 +62,7 @@ LLamaConfig config_from_dict(nb::dict dict_obj) {
     config.RmsNormEps = get_float_from_dict(dict_obj, "rms_norm_eps", 1e-6f);
 
     // Boolean fields
-    config.TiedWordEmbeddings = get_bool_from_dict(dict_obj, "tied_word_embeddings", false);
+    config.TiedWordEmbeddings = get_bool_from_dict(dict_obj, "tie_word_embeddings", false);
     config.UseQKVBias = get_bool_from_dict(dict_obj, "use_qkv_bias", false);
 
     // DType field
@@ -155,12 +157,11 @@ NB_MODULE(pyllmq, m) {
     nb::class_<MultiGPUPyTrainer>(m, "LLMQTrainer")
         .def("__init__", [](MultiGPUPyTrainer *t, int ngpu, nb::dict config, nb::dict options, int batch_size, int seq_len, int grad_accum, bool memcpy_all_gather, bool memcpy_send_recv) {
             new (t) MultiGPUPyTrainer(ngpu, config_from_dict(config), options_from_dict(options), batch_size, seq_len, grad_accum, memcpy_all_gather, memcpy_send_recv);
-            nb::print("Created LLMQTrainer");
         })
         .def("import_weights", &MultiGPUPyTrainer::import_weights)
         .def("init_weights", &MultiGPUPyTrainer::init_weights)
         .def("load_checkpoint", &MultiGPUPyTrainer::load_checkpoint)
-        .def("step", [](MultiGPUPyTrainer* trainer, TokenArray inputs, TokenArray targets){
+        .def("step", [](MultiGPUPyTrainer* trainer, TokenArray inputs, TokenArray targets) {
             CHECK_SHAPE(inputs, trainer->batch_size() * trainer->world_size(), trainer->seq_length());
             CHECK_SHAPE(targets, trainer->batch_size() * trainer->world_size(), trainer->seq_length());
             CHECK_CONTIGUOUS(inputs);
@@ -177,4 +178,27 @@ NB_MODULE(pyllmq, m) {
         })
         .def("stop", &MultiGPUPyTrainer::stop);
 
+    nb::class_<DataLoader>(m, "DataLoader")
+        .def("__init__", [](DataLoader *d, const std::vector<std::string>& file_list, int chunk_size, unsigned long seed = 42) {
+            new (d) DataLoader(file_list, chunk_size, 0, 1, seed);
+        })
+        .def("load_batch", [](DataLoader* d, TokenArray inputs, TokenArray targets) {
+            CHECK_CONTIGUOUS(inputs);
+            CHECK_CONTIGUOUS(targets);
+            Tensor inp_t{ETensorDType::INT32, {static_cast<long>(inputs.shape(0)), static_cast<long>(inputs.shape(1)), 1, 1, 1},
+                        reinterpret_cast<std::byte*>(inputs.data())};
+            Tensor tgt_t{ETensorDType::INT32, {static_cast<long>(targets.shape(0)), static_cast<long>(targets.shape(1)), 1, 1, 1},
+                        reinterpret_cast<std::byte*>(targets.data())};
+            d->load_batch(inp_t, tgt_t);
+        })
+        .def("epoch", &DataLoader::epoch)
+        .def("progress", &DataLoader::progress)
+        .def("advance_epoch", &DataLoader::advance_epoch)
+        .def("has_next", &DataLoader::has_next)
+        .def_prop_ro("chunk_size", &DataLoader::chunk_size)
+        .def_prop_ro("vocab_size", &DataLoader::vocab_size)
+        .def_prop_ro("num_files", &DataLoader::num_files)
+        .def_prop_ro("num_chunks", &DataLoader::num_chunks)
+        .def_prop_ro("num_tokens", &DataLoader::num_tokens)
+        ;
 }
