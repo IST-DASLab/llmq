@@ -267,7 +267,11 @@ For the optimizer state, this will slow down the optimizer step drastically (mem
 While it is nice to demonstrate training in pure C++/Cuda, there are scenarios where it is desirable to use Python for training, e.g., when using an alternative learning-rate schedule.
 
 The Python bindings are provided in the `src/bindings` directory, and can be built using the
-`pyllmq` target. The `demo.py` script provides an example of how to use the bindings.
+`pyllmq` target. The library can be built manually (`-DPYTHON_BINDING=ON`), or directly into a wheel file
+using `uv build --wheel`.
+The `demo.py` script provides an example of how to use the bindings. Running it with `uv run demo.py` will 
+trigger the wheel build automatically.
+
 By design, the bindings expose only coarse-grained operations; that is, the minimum unit
 of work is a full forward+backward pass across all GPUs. While this may be a bit inflexible,
 it allows benefiting from the full optimization of the C++ backend, and there are no GPU-CPU

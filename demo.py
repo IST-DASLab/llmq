@@ -21,6 +21,9 @@ config = pyllmq.LLamaConfig(
 options = pyllmq.LLamaOptions()
 
 # more options
+ngpu = 1
+batch_size = 2
+seq_len = 1024
 grad_accumulation = 4
 steps = 50
 eval_steps = 10
@@ -32,18 +35,21 @@ lr = 1e-5
 
 # set up the data loaders. it is _not_ required to use pyllmq.DataLoader, you can
 # fill in_tokens and out_tokens yourself;
-in_tokens = np.empty((4, 1024), dtype=np.int32)
-out_tokens = np.empty((4, 1024), dtype=np.int32)
-train_loader = pyllmq.DataLoader(["data/tiny-stories-qwen/train-000.bin"], 4 * 1024, 42)
-eval_loader = pyllmq.DataLoader(["data/tiny-stories-qwen/eval.bin"], 4 * 1024, 42)
+in_tokens = np.empty((ngpu * batch_size, seq_len), dtype=np.int32)
+out_tokens = np.empty((ngpu * batch_size, seq_len), dtype=np.int32)
+train_loader = pyllmq.DataLoader(["data/tiny-stories-qwen/train-000.bin"], ngpu * batch_size * seq_len, 42)
+eval_loader = pyllmq.DataLoader(["data/tiny-stories-qwen/eval.bin"], ngpu * batch_size * seq_len, 42)
 
 # create the trainer object and initialize the weights
-trainer = pyllmq.LLMQTrainer(ngpu=2, config=config, options=options, batch_size=2, seq_len=1024, grad_accum=grad_accumulation)
+print("creating trainer...")
+trainer = pyllmq.LLMQTrainer(ngpu=ngpu, config=config, options=options, batch_size=batch_size, seq_len=seq_len, grad_accum=grad_accumulation)
+print("initializing weights...")
 trainer.init_weights()
-# alternative: pyllmq.LLMQTrainer.from_pretrained("Qwen/Qwen2.5-0.5B", ngpu=2, dtype="bf16", options=options, batch_size=2, seq_len=1024, grad_accum=grad_accumulation)
+# alternative: pyllmq.LLMQTrainer.from_pretrained("Qwen/Qwen2.5-0.5B", ngpu=ngpu, dtype="bf16", options=options, batch_size=2, seq_len=1024, grad_accum=grad_accumulation)
 
 train_loader.load_batch(in_tokens, out_tokens)
 
+print("starting training...")
 for step in range(steps):
     for s in range(grad_accumulation):
         trainer.step(in_tokens, out_tokens)
@@ -58,7 +64,8 @@ for step in range(steps):
     # TODO pretty printing
     if step % 10 == 0:
         infos = trainer.get_gpu_info()
-        print(infos)
+        for info in infos:
+            print(f"             power: {info.power // 1000:4}W  temp: {info.temperature:4}°C  rx: {info.pcie_rx // 1024 // 1024}MiB  tx: {info.pcie_tx // 1024 // 1024}MiB")
 
 val_loss = 0.0
 for i in range(eval_steps):

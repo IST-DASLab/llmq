@@ -180,14 +180,27 @@ target_link_libraries(recompute-test PRIVATE llmq-common CLI11::CLI11)
 add_executable(export-checkpoint export-checkpoint.cpp)
 target_link_libraries(export-checkpoint PRIVATE llmq-common CLI11::CLI11)
 
-install(TARGETS llmq-common train recompute-test export-checkpoint
-        LIBRARY DESTINATION lib
-        RUNTIME DESTINATION bin
-)
+if (NOT SKBUILD)
+    install(TARGETS llmq-common train recompute-test export-checkpoint
+            LIBRARY DESTINATION lib
+            RUNTIME DESTINATION bin
+    )
+endif ()
+
 
 if (PYTHON_BINDING)
     find_package(Python COMPONENTS Interpreter Development.Module)
     FetchContent_MakeAvailable(nanobind)
     nanobind_add_module(pyllmq STABLE_ABI src/binding/binding.cpp src/binding/py_train.cpp)
     target_link_libraries(pyllmq PUBLIC llmq-common Python::Module fmt::fmt-header-only)
+
+    set_target_properties(pyllmq PROPERTIES
+            INSTALL_RPATH "$ORIGIN"
+            BUILD_WITH_INSTALL_RPATH OFF
+            INSTALL_RPATH_USE_LINK_PATH FALSE
+    )
+
+    install(TARGETS pyllmq llmq-common
+            LIBRARY DESTINATION .
+    )
 endif ()

@@ -1,18 +1,23 @@
 [project]
-name = "llmq"
+name = "pyllmq"
 version = "0.1.0"
 description = "Add your description here"
 readme = "README.md"
+authors = [
+    { name = "Erik Schultheis", email = "erik.schultheis@ist.ac.at" }
+]
 requires-python = ">=3.12"
 dependencies = [
-    "accelerate>=1.10.0",
-    "datasets>=4.0.0",
     "numpy>=2.3.2",
-    "torch>=2.8.0",
-    "transformers>=4.55.0",
 ]
 
 [project.optional-dependencies]
+data = [
+    "accelerate>=1.10.0",
+    "datasets>=4.0.0",
+    "torch>=2.8.0",
+    "transformers>=4.55.0",
+]
 plotting = [
     "matplotlib>=3.10.5",
     "plotly>=6.3.0",
@@ -20,3 +25,21 @@ plotting = [
     "wandb>=0.21.1",
     "lm-eval>=0.4.9",
 ]
+
+[build-system]
+requires = ["scikit-build-core>=0.10", "nanobind"]
+build-backend = "scikit_build_core.build"
+
+[tool.scikit-build]
+minimum-version = "build-system.requires"
+wheel.py-api = "cp312"
+build.targets = ["pyllmq"]
+build-dir = "build/{wheel_tag}"
+cmake.build-type = "Release"
+
+[tool.scikit-build.cmake.define]
+PYTHON_BINDING = "ON"
+CMAKE_CUDA_ARCHITECTURES = {env="CUDAARCHS"}
+
+[tool.uv]
+cache-keys = [{ file = "pyproject.toml" }, { file = "src/**/*.{h,c,hpp,cpp,cu,cuh}" }, { file = "CMakeLists.txt" }]
