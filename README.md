@@ -31,10 +31,10 @@ cmake --build build --parallel --target train
 
 ## How to train your (quantized) llm
 ### Data preparation
-In order to train/fine-tune a model, you first need some data. The [tokenize_data](tokenize_data.py) script provides a utility to prepare token files for training.
+In order to train/fine-tune a model, you first need some data. The [tokenize_data](scripts/tokenize_data.py) script provides a utility to prepare token files for training.
 It only supports a limited number of datasets, but hacking it for your own dataset should be straightforward.
 ```shell
-uv run tokenize_data.py --dataset tiny-shakespeare --model qwen
+uv run scripts/tokenize_data.py --dataset tiny-shakespeare --model qwen
 ```
 This will create `tiny-shakespeare-qwen-train.bin` and `tiny-shakespeare-qwen-eval.bin`.
 
@@ -101,14 +101,14 @@ and sets this in relation to the GPU's speed of light (SOL), i.e., the fastest p
 
 ### Inspecting the logs
 After 50 steps, the training will finish, and save the final model to `model.safetensors`. In addition, a log file will be created,
-which contains the training log in JSON format. We can visualize the log using the `plot-training-run.py` utility script:`
+which contains the training log in JSON format. We can visualize the log using the [plot_training_run.py](scripts/plot_training_run.py) utility script:`
 ```shell
-uv run python/plot-training-run.py log.json
+uv run scripts/plot_training_run.py log.json
 ```
 This shows the training and evaluation losses over time, for quick inspection.
 For a more detailed and interactive workflow, you can export the log to weights&biases:
 ```shell
-uv run python/export-wandb.py --log-file log.json --project <ProjectName>
+uv run scripts/export_wandb.py --log-file log.json --project <ProjectName>
 ```
 
 ### Evaluations
@@ -138,7 +138,7 @@ running evaluations with lm-eval provides independent verification of the result
 For a real training run, we aim for a 1.5B model in Qwen architecture, trained on 10B tokens of [Climb](https://research.nvidia.com/labs/lpr/climb/)
 using 4 x RTX 4090 GPUs:
 ```shell
-uv run tokenize_data.py --dataset climb-10b --model qwen
+uv run scripts/tokenize_data.py --dataset climb-10b --model qwen
 ./build/train --model=Qwen/Qwen2.5-1.5B \
      --from-scratch \
      "--train-file=data/climb-10b-qwen/train-*.bin"  --eval-file=data/climb-10b-qwen/eval.bin \
@@ -269,8 +269,7 @@ While it is nice to demonstrate training in pure C++/Cuda, there are scenarios w
 The Python bindings are provided in the `src/bindings` directory, and can be built using the
 `pyllmq` target. The library can be built manually (`-DPYTHON_BINDING=ON`), or directly into a wheel file
 using `uv build --wheel`.
-The `demo.py` script provides an example of how to use the bindings. Running it with `uv run demo.py` will 
-trigger the wheel build automatically.
+The [demo.py](scripts/demo.py) script provides an example of how to use the bindings. Running it with `uv run pyllmq-demo` will trigger the wheel build automatically.
 
 By design, the bindings expose only coarse-grained operations; that is, the minimum unit
 of work is a full forward+backward pass across all GPUs. While this may be a bit inflexible,

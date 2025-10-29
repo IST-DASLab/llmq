@@ -1,3 +1,10 @@
+#!/usr/bin/env -S uv run --script
+#
+# /// script
+# requires-python = ">=3.12"
+# dependencies = ["transformers", "datasets", "numpy"]
+# ///
+
 # Note: naming this script tokenize.py *breaks* transformers
 from pathlib import Path
 
@@ -7,78 +14,8 @@ import numpy as np
 import multiprocessing as mp
 import argparse
 
-parser = argparse.ArgumentParser()
-parser.add_argument("--dataset")
-parser.add_argument("--model")
-parser.add_argument("--out-dir", default="data")
 
-args = parser.parse_args()
-version = None
 worker_tokenizer = None
-subsample = None
-is_tiny = False
-
-if args.dataset == "tiny-shakespeare":
-    dst = "tiny-shakespeare"
-    key = "Text"
-    test_split = "test"
-    is_tiny = True
-elif args.dataset == "tiny-stories":
-    dst = "tiny-stories"
-    key = "text"
-    test_split = "validation"
-elif args.dataset == "gsm8k":
-    dst = "gsm8k"
-    def extract_example(example):
-        return example["question"] + "\n" + example["answer"]
-    key = extract_example
-    test_split = "test"
-    is_tiny = True
-elif args.dataset == "fineweb-1b":
-    dst = "fineweb-1b"
-    key = "text"
-    test_split = 10_000_000
-    subsample = 1_000_000_000
-elif args.dataset == "fineweb-10b":
-    dst = "fineweb-10b"
-    key = "text"
-    test_split = 10_000_000
-elif args.dataset == "climb-1b":
-    src = "OptimalScale/ClimbMix"
-    dst = "climb-1b"
-    key = "text"
-    test_split = 10_000_000
-    subsample = 1_000_000_000
-elif args.dataset == "climb-10b":
-    src = "OptimalScale/ClimbMix"
-    dst = "climb-10b"
-    key = "text"
-    test_split = 10_000_000
-    subsample = 10_000_000_000
-elif args.dataset == "climb-20b":
-    src = "OptimalScale/ClimbMix"
-    dst = "climb-20b"
-    key = "text"
-    test_split = 20_000_000
-    subsample = 20_000_000_000
-elif args.dataset == "limo":
-    dst = "limo"
-    def extract_example(example):
-        return example["question"] + "\n" + example["solution"]
-    key = extract_example
-    test_split = "test"
-    is_tiny = True
-else:
-    assert False, f"unknown dataset {args.dataset}"
-
-if args.model.lower() == "qwen":
-    model_name = "Qwen/Qwen2.5-0.5B"
-    dst += "-qwen"
-elif args.model.lower() == "llama":
-    model_name = "unsloth/llama-2-7b"
-    dst += "-llama"
-else:
-    assert False, f"unknown model {args.model}"
 
 
 def load_or_create_dataset(name: str):
@@ -178,7 +115,7 @@ def tokenize_example_worker(args: tuple):
     return worker_tokenizer(example, return_tensors='np', split_special_tokens=True).input_ids[0, ...]
 
 
-def process_single_file(ds_iter, file_name: str, max_tokens: int, pool) -> tuple[bool, int]:
+def process_single_file(ds_iter, key, file_name: str, vocab_size: int, max_tokens: int, pool) -> tuple[bool, int]:
     def example_generator(f: TokenizedDataFileWriter):
         try:
             while f.n_tokens < max_tokens:
@@ -187,7 +124,7 @@ def process_single_file(ds_iter, file_name: str, max_tokens: int, pool) -> tuple
             return
 
     has_more_data = False
-    with TokenizedDataFileWriter(file_name, tokenizer.vocab_size) as f:
+    with TokenizedDataFileWriter(file_name, vocab_size) as f:
         tokenized_examples = pool.imap(
             tokenize_example_worker,
             example_generator(f),
@@ -204,7 +141,7 @@ def process_single_file(ds_iter, file_name: str, max_tokens: int, pool) -> tuple
         return has_more_data, f.n_tokens
 
 
-def tokenize_dataset(file_name: str, ds, split_name: str, max_tokens: int = None, is_tiny: bool = False, first_is_eval: int = -1):
+def process_dataset(file_name: str, ds, tokenizer, key, split_name: str, max_tokens: int = None, *, model_name: str, is_tiny: bool = False, first_is_eval: int = -1):
     num_processes = max(1, min(mp.cpu_count() // 2, 8))
 
     ds_iter = iter(ds)
@@ -230,7 +167,7 @@ def tokenize_dataset(file_name: str, ds, split_name: str, max_tokens: int = None
             else:
                 output_filename = f"{file_name}/{split_name}-{file_index:03d}.bin"
 
-            has_more_data, tokens_written = process_single_file(ds_iter, output_filename, max_size, pool)
+            has_more_data, tokens_written = process_single_file(ds_iter, key, output_filename, tokenizer.vocab_size, max_size, pool)
 
             total_tokens += tokens_written
             print(f"Completed file {output_filename} with {tokens_written:,} tokens")
@@ -243,13 +180,88 @@ def tokenize_dataset(file_name: str, ds, split_name: str, max_tokens: int = None
                 break
 
 
-if __name__ == "__main__":
-    d = load_or_create_dataset(args.dataset)
+def generate_tokenized_dataset(dataset: str, model: str, out_dir: str = "data"):
+    subsample = None
+    is_tiny = False
+
+    if dataset == "tiny-shakespeare":
+        dst = "tiny-shakespeare"
+        key = "Text"
+        test_split = "test"
+        is_tiny = True
+    elif dataset == "tiny-stories":
+        dst = "tiny-stories"
+        key = "text"
+        test_split = "validation"
+    elif dataset == "gsm8k":
+        dst = "gsm8k"
+        def extract_example(example):
+            return example["question"] + "\n" + example["answer"]
+        key = extract_example
+        test_split = "test"
+        is_tiny = True
+    elif dataset == "fineweb-1b":
+        dst = "fineweb-1b"
+        key = "text"
+        test_split = 10_000_000
+        subsample = 1_000_000_000
+    elif dataset == "fineweb-10b":
+        dst = "fineweb-10b"
+        key = "text"
+        test_split = 10_000_000
+    elif dataset == "climb-1b":
+        dst = "climb-1b"
+        key = "text"
+        test_split = 10_000_000
+        subsample = 1_000_000_000
+    elif dataset == "climb-10b":
+        dst = "climb-10b"
+        key = "text"
+        test_split = 10_000_000
+        subsample = 10_000_000_000
+    elif dataset == "climb-20b":
+        dst = "climb-20b"
+        key = "text"
+        test_split = 20_000_000
+        subsample = 20_000_000_000
+    elif dataset == "limo":
+        dst = "limo"
+        def extract_example(example):
+            return example["question"] + "\n" + example["solution"]
+        key = extract_example
+        test_split = "test"
+        is_tiny = True
+    else:
+        assert False, f"unknown dataset {dataset}"
+
+    if model.lower() == "qwen":
+        model_name = "Qwen/Qwen2.5-0.5B"
+        dst += "-qwen"
+    elif model.lower() == "llama":
+        model_name = "unsloth/llama-2-7b"
+        dst += "-llama"
+    else:
+        assert False, f"unknown model {model}"
+
+    d = load_or_create_dataset(dataset)
     tokenizer = AutoTokenizer.from_pretrained(model_name)
-    dst = args.out_dir + "/" + dst
+    dst = out_dir + "/" + dst
 
     if isinstance(test_split, int):
-        tokenize_dataset(dst, d["train"], "train", subsample, is_tiny, test_split)
+        process_dataset(dst, d["train"], tokenizer, key, "train", subsample, is_tiny=is_tiny, first_is_eval=test_split, model_name=model_name)
     else:
-        tokenize_dataset(dst, d["train"], "train", subsample, is_tiny)
-        tokenize_dataset(dst, d[test_split], "eval", None, True)
+        process_dataset(dst, d["train"], tokenizer, key, "train", subsample, is_tiny=is_tiny, model_name=model_name)
+        process_dataset(dst, d[test_split], tokenizer, key, "eval", None, is_tiny=True, model_name=model_name)
+
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--dataset", required=True)
+    parser.add_argument("--model", required=True)
+    parser.add_argument("--out-dir", default="data")
+
+    args = parser.parse_args()
+    generate_tokenized_dataset(dataset=args.dataset, model=args.model, out_dir=arg.out_dir)
+
+if __name__ == "__main__":
+    main()

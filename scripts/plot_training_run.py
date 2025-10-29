@@ -1,3 +1,11 @@
+#!/usr/bin/env -S uv run --script
+#
+# /// script
+# requires-python = ">=3.12"
+# dependencies = ["matplotlib", "numpy"]
+# ///
+
+
 import argparse
 import json
 import collections
@@ -23,7 +31,7 @@ def extract_over_step(data: list[dict], key: str):
     return steps, values
 
 
-if __name__ == "__main__":
+def main():
     parser = argparse.ArgumentParser(description="Plot training run")
     parser.add_argument("log_file", type=argparse.FileType("r"), help="Log file", default="log.json")
     args = parser.parse_args()
@@ -41,3 +49,7 @@ if __name__ == "__main__":
     plt.legend()
     plt.show()
 
+
+
+if __name__ == "__main__":
+    main()
