@@ -120,6 +120,16 @@ std::pair<float, float> MultiGPUPyTrainer::update(float lr, float beta1, float b
     return {step_loss / B / T / mGradAccumulation, step_norm};
 }
 
+
+std::vector<GPUUtilInfo> MultiGPUPyTrainer::get_gpu_info() {
+    std::vector<GPUUtilInfo> infos(mContexts.size());
+    run_work([&](sThreadContext& ctx) {
+         infos[ctx.Communicator->rank()] = ctx.GPUUtil->update();
+    });
+    return infos;
+}
+
+
 void MultiGPUPyTrainer::stop() {
     mIsRunning = false;
 }

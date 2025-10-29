@@ -8,6 +8,7 @@
 #include "py_train.h"
 #include "training/dataloader.h"
 #include "training/checkpoint.h"
+#include "utilities/gpu_info.h"
 
 namespace nb = nanobind;
 
@@ -155,6 +156,31 @@ static inline auto check_contiguous(const NBArray& arr, std::string_view name) {
 
 
 NB_MODULE(pyllmq, m) {
+    nb::class_<GPUUtilInfo>(m, "GPUUtilInfo")
+        .def_rw("clock", &GPUUtilInfo::clock)
+        .def_rw("max_clock", &GPUUtilInfo::max_clock)
+        .def_rw("power", &GPUUtilInfo::power)
+        .def_rw("power_limit", &GPUUtilInfo::power_limit)
+        .def_rw("fan", &GPUUtilInfo::fan)
+        .def_rw("temperature", &GPUUtilInfo::temperature)
+        .def_rw("temp_slowdown", &GPUUtilInfo::temp_slowdown)
+        .def_rw("mem_free", &GPUUtilInfo::mem_free)
+        .def_rw("mem_total", &GPUUtilInfo::mem_total)
+        .def_rw("mem_reserved", &GPUUtilInfo::mem_reserved)
+        .def_rw("gpu_utilization", &GPUUtilInfo::gpu_utilization)
+        .def_rw("mem_utilization", &GPUUtilInfo::mem_utilization)
+        .def_rw("throttle_reason", &GPUUtilInfo::throttle_reason)
+        .def_rw("pcie_rx", &GPUUtilInfo::pcie_rx)
+        .def_rw("pcie_tx", &GPUUtilInfo::pcie_tx)
+        .def("__repr__", [](const GPUUtilInfo& gpu_util) {
+            return fmt::format(
+                R"(GPUUtilInfo(clock={}, max_clock={}, fan={}, power={}, power_limit={}, temperature={}, temp_slowdown={}, gpu_util={}, mem_util={}, throttle={}, dram_free={}, dram_total={}, dram_reserved={}, pcie_rx={}, pcie_tx={}))",
+                                 gpu_util.clock, gpu_util.max_clock, gpu_util.fan, gpu_util.power, gpu_util.power_limit, gpu_util.temperature, gpu_util.temp_slowdown,
+                                 gpu_util.gpu_utilization, gpu_util.mem_utilization, gpu_util.throttle_reason, gpu_util.mem_free, gpu_util.mem_total, gpu_util.mem_reserved,
+                                 gpu_util.pcie_rx, gpu_util.pcie_tx);
+        })
+        ;
+
     nb::class_<MultiGPUPyTrainer>(m, "LLMQTrainer")
         .def("__init__", [](MultiGPUPyTrainer *t, int ngpu, nb::dict config, nb::dict options, int batch_size, int seq_len, int grad_accum, bool memcpy_all_gather, bool memcpy_send_recv) {
             new (t) MultiGPUPyTrainer(ngpu, config_from_dict(config), options_from_dict(options), batch_size, seq_len, grad_accum, memcpy_all_gather, memcpy_send_recv);
@@ -186,7 +212,12 @@ NB_MODULE(pyllmq, m) {
             ret["norm"] = norm;
             return ret;
         })
-        .def("stop", &MultiGPUPyTrainer::stop);
+        .def("get_gpu_info", &MultiGPUPyTrainer::get_gpu_info)
+        .def("stop", &MultiGPUPyTrainer::stop)
+        .def_prop_ro("world_size", &MultiGPUPyTrainer::world_size)
+        .def_prop_ro("batch_size", &MultiGPUPyTrainer::batch_size)
+        .def_prop_ro("seq_length", &MultiGPUPyTrainer::seq_length)
+        ;
 
     nb::class_<DataLoader>(m, "DataLoader")
         .def("__init__", [](DataLoader *d, const std::vector<std::string>& file_list, int chunk_size, unsigned long seed = 42) {

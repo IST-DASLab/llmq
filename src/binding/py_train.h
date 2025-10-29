@@ -11,6 +11,7 @@
 
 class DataLoader;
 class IGPUUtilTracker;
+struct GPUUtilInfo;
 
 class MultiGPUPyTrainer
 {
@@ -26,6 +27,8 @@ public:
     float validate(const std::int32_t* inputs, const std::int32_t* targets);
     std::pair<float, float> update(float lr, float beta1, float beta2, int step, float weight_decay, float grad_clip);
     void stop();
+
+    std::vector<GPUUtilInfo> get_gpu_info();
 
     int world_size() const;
     int batch_size() const { return B; }
