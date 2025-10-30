@@ -139,6 +139,15 @@ NB_MODULE(_pyllmq, m) {
         .def_prop_ro("head_size", &LLamaConfig::head_size)
         .def_prop_ro("qkv_channels", &LLamaConfig::qkv_channels)
         .def_prop_ro("model_name", &LLamaConfig::model_name)
+        .def_static("from_pretrained", [](const std::string& name, const std::string& dtype_str)
+        {
+            std::string hf_path = get_hf_model_files(name);
+            if (hf_path.empty()) {
+                throw std::runtime_error("Could not find model files for " + name);
+            }
+            std::string config_path = hf_path + "/config.json";
+            return new LLamaConfig(load_llama_config(config_path.c_str(), dtype_from_str(dtype_str)));
+        }, nb::arg("name"), nb::arg("dtype"))
         ;
 
     nb::class_<LLamaOptions>(m, "LLamaOptions")
@@ -285,7 +294,7 @@ NB_MODULE(_pyllmq, m) {
         .def("epoch", &DataLoader::epoch, "Get the current epoch number")
         .def("progress", &DataLoader::progress, "Get the current progress within the current epoch, in percent")
         .def("advance_epoch", &DataLoader::advance_epoch, "Advance to the next epoch, re-randomizing the order of chunks")
-        .def("has_next", &DataLoader::has_next, "Check if there is another batch of data available")
+        .def("has_next", &DataLoader::has_next, nb::arg("chunks") = 1, "Check if there is another batch of data available")
         .def("set_state", &DataLoader::set_state, nb::arg("seed"), nb::arg("epoch"), nb::arg("file_index"), nb::arg("chunk_index"), "Sets the internal state of the dataloader.")
         .def_prop_ro("chunk_size", &DataLoader::chunk_size)
         .def_prop_ro("vocab_size", &DataLoader::vocab_size)
