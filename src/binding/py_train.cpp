@@ -1,5 +1,7 @@
 #include "py_train.h"
 
+#include <filesystem>
+
 #include <fmt/format.h>
 
 #include "utilities/gpu_info.h"
@@ -31,6 +33,16 @@ MultiGPUPyTrainer::~MultiGPUPyTrainer() {
 void MultiGPUPyTrainer::import_weights(std::string path) {
     run_work([path](sThreadContext& ctx) {
         ctx.Model->import_weights(path, true, *ctx.Communicator);
+    });
+}
+
+
+void MultiGPUPyTrainer::export_model(std::string path) {
+    run_work([path](sThreadContext& ctx) {
+        std::filesystem::path p(path);
+        std::filesystem::create_directories(p);
+        save_llama_config(ctx.Model->config(), (p / "config.json").c_str());
+        ctx.Model->export_weights((p / "model.safetensors").c_str(), *ctx.Communicator);
     });
 }
 

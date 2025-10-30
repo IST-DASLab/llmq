@@ -217,6 +217,7 @@ NB_MODULE(_pyllmq, m) {
         }, nb::arg("ngpu"), nb::arg("config"), nb::arg("options"), nb::arg("batch_size"), nb::arg("seq_len"), nb::arg("grad_accum"),
              nb::arg("memcpy_all_gather") = true, nb::arg("memcpy_send_recv") = true)
         .def("import_weights", &MultiGPUPyTrainer::import_weights, nb::arg("path"), "Import weights from a hf model directory (model.safetensors)")
+        .def("export_model", &MultiGPUPyTrainer::export_model, nb::arg("path"), "Export model as safetensors + config.json")
         .def_static("from_pretrained", [](const std::string& name, int ngpu, std::string dtype, LLamaOptions options, int batch_size, int seq_len, int grad_accum, bool memcpy_all_gather, bool memcpy_send_recv){
             std::string hf_path = get_hf_model_files(name);
             if (hf_path.empty()) {

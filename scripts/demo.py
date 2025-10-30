@@ -47,6 +47,7 @@ def main():
 
     # ensure training data exists
     if not Path("data/tiny-stories-qwen").exists():
+        print("generating training data...")
         from .tokenize_data import generate_tokenized_dataset
         generate_tokenized_dataset( "tiny-stories", "qwen")
 
@@ -98,7 +99,7 @@ def main():
 
     print(f"eval loss: {val_loss / eval_steps:6.3f}")
 
-    trainer.save_checkpoint("ckpt", step)
+    trainer.export_model("demo-model")
 
 
 if __name__ == "__main__":

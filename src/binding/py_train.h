@@ -39,6 +39,7 @@ public:
     ~MultiGPUPyTrainer();
 
     void import_weights(std::string path);
+    void export_model(std::string path);
     void init_weights();
     void load_checkpoint(std::string directory, int step);
     void save_checkpoint(std::string directory, int step);

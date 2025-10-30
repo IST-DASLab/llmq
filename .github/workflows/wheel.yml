@@ -51,7 +51,7 @@ jobs:
           path: dist/pyllmq*.whl
 
   release:
-    if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/heads/release-')
+    if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/heads/release-') || startsWith(github.ref, 'refs/tags/')
     needs: wheel
     runs-on: ubuntu-latest
     permissions:

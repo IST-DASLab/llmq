@@ -272,7 +272,7 @@ using `uv build --wheel`.
 The [demo.py](scripts/demo.py) script provides an example of how to use the bindings. Running it with `uv run pyllmq-demo` will trigger the wheel build automatically.
 
 Pre-built wheels are available from [GitHub Releases](https://github.com/IST-DASLab/llmq/releases) for convenience.
-Download the latest `.whl` file and install it with `uv pip install pyllmq-*.whl`, or run example scripts directly: `uv run --with pyllmq-*.whl script.py`. 
+Download the latest `.whl` file and install it with `uv pip install 'pyllmq-0.2.0-cp312-abi3-linux_x86_64.whl[scripts]'`, or run example scripts directly: `uv run --with 'pyllmq-0.2.0-cp312-abi3-linux_x86_64.whl[scripts]' pyllmq-demo`, replacing the file name as appropriate. The `[scripts]` extra installes additional packages that aren't strictly required for pyllmq, but are used in the utility scripts, such as `datasets` and `matplotlib`.
 The wheels are built against CUDA 12.9 and support compute capabilities 89, 90, 100f, and 120f.
 
 By design, the bindings expose only coarse-grained operations; that is, the minimum unit
@@ -289,6 +289,8 @@ The [src](src) directory contains four major subdirectories:
 * [Training](src/training): Contains training utilities, such as checkpointing, data loading, and logging. It also defines an abstract [Model](src/training/model.h) interface, which is the only way in which training utilities should interact with the model.
 * [Models](src/models): Contains the model implementations. This should not include anything from `training`, except for the [Model](src/models/model.h) interface.
 
+Additionally, the [scripts](scripts) directory contains utility python scripts, and
+[binding](src/binding) the glue code for python bindings.
 
 ## Speed
 TPS: tokens per second.

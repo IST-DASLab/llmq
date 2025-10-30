@@ -95,6 +95,8 @@ public:
     std::string_view model_type() const override;
 
     const TensorAllocator& get_allocator() const { return *Allocator; }
+
+    const LLamaConfig& config() { return Config; }
 protected:
     void _calculate_gradient_norm(NCCLCommunicator& comm, float grad_clip);
     void _reduce_loss(LLamaRunState& acts, NCCLCommunicator& comm, int B, int T);
