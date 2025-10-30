@@ -287,7 +287,7 @@ def main():
                         help="Continue from checkpoint")
 
     # Multi-GPU
-    parser.add_argument("--gpus", type=int, default=1, help="Number of GPUs")
+    parser.add_argument("--gpus", type=int, default=pyllmq.get_num_gpus(), help="Number of GPUs")
 
     # Memory optimization
     parser.add_argument("--recompute-swiglu", action="store_true", help="Recompute SwiGLU")
