@@ -60,7 +60,8 @@ private:
     int B;
     int T;
 
-    int mMicroStep = 0;
+    int mTrainMicroStep = 0;
+    int mEvalStep = 0;
     int mGradAccumulation = 1;
 
     std::vector<std::jthread> mThreads;

@@ -47,7 +47,7 @@ struct TrainingRunner {
     float Beta1 = 0.9f;
     float Beta2 = 0.95f;
     float GradClip = 1.0f;
-    float WeightDecay = 1.0f;
+    float WeightDecay = 0.1f;
     int GradAccSteps = 4;
 
     bool FromScratch = false;

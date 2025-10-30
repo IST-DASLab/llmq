@@ -74,17 +74,17 @@ void MultiGPUPyTrainer::step(const std::int32_t* inputs, const std::int32_t* tar
         std::memcpy(tb, targets + i * B * T, B * T * sizeof(std::int32_t));
     }
 
-    if(mMicroStep >= mGradAccumulation) {
-        throw std::runtime_error(fmt::format("step: micro_step {} >= grad_accumulation {}", mMicroStep, mGradAccumulation));
+    if(mTrainMicroStep >= mGradAccumulation) {
+        throw std::runtime_error(fmt::format("step: micro_step {} >= grad_accumulation {}", mTrainMicroStep, mGradAccumulation));
     }
 
-    run_work([micro_idx = mMicroStep, micro_batches = mGradAccumulation](sThreadContext& ctx) {
+    run_work([micro_idx = mTrainMicroStep, micro_batches = mGradAccumulation](sThreadContext& ctx) {
         Tensor inputs = ctx.Model->get_input_buffer();
         Tensor targets = ctx.Model->get_target_buffer();
         ctx.Model->forward(inputs, *ctx.Communicator, micro_idx);
         ctx.Model->backward(inputs, targets, *ctx.Communicator, micro_batches, micro_idx);
     });
-    ++mMicroStep;
+    ++mTrainMicroStep;
 }
 
 float MultiGPUPyTrainer::validate(const std::int32_t* inputs, const std::int32_t* targets) {
@@ -99,7 +99,7 @@ float MultiGPUPyTrainer::validate(const std::int32_t* inputs, const std::int32_t
 
     float loss;
 
-    run_work([micro_idx = mMicroStep, &loss](sThreadContext& ctx) {
+    run_work([micro_idx = mEvalStep, &loss](sThreadContext& ctx) {
         Tensor inputs = ctx.Model->get_input_buffer();
         Tensor targets = ctx.Model->get_target_buffer();
         float calc_loss = ctx.Model->validate(inputs, targets, *ctx.Communicator, micro_idx);
@@ -108,7 +108,7 @@ float MultiGPUPyTrainer::validate(const std::int32_t* inputs, const std::int32_t
         }
     });
 
-    ++mMicroStep;
+    ++mEvalStep;
 
     return loss;
 }
@@ -127,7 +127,9 @@ std::pair<float, float> MultiGPUPyTrainer::update(float lr, float beta1, float b
     step_loss = ctx.Model->get_loss();
     step_norm = ctx.Model->get_norm();
 
-    mMicroStep = 0;
+    // ensure we're re-gathering on next forward for eval and train
+    mTrainMicroStep = 0;
+    mEvalStep = 0;
 
     return {step_loss / B / T / mGradAccumulation, step_norm};
 }

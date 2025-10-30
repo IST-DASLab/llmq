@@ -25,7 +25,7 @@ class TrainingConfig:
     matmul_dtype: Optional[str] = None
 
     # Batch configuration
-    batch_size: int = 4
+    batch_size: int = 1
     seq_len: int = 1024
     grad_accumulation: int = 4
 
@@ -38,24 +38,24 @@ class TrainingConfig:
     opt_m_dtype: str = "float32"
     opt_v_dtype: str = "float32"
     grad_clip: float = 1.0
-    weight_decay: float = 1.0
+    weight_decay: float = 0.1
 
     # Training steps
-    steps: int = 1000
+    steps: int = -1
 
     # Evaluation
     eval_every: int = 100
     eval_num_steps: int = 100
 
     # Data files
-    train_file: str = "tiny-shakespeare-train.bin"
-    eval_file: str = "tiny-shakespeare-test.bin"
+    train_file: str = "data/tiny-stories-qwen/train*.bin"
+    eval_file: str = "data/tiny-stories-qwen/eval.bin"
 
     # Output and checkpointing
     out_dir: str = "output"
     checkpoint_dir: str = "ckpt"
     log_file: str = "log.json"
-    ckpt_interval: int = 100
+    ckpt_interval: int = 1000
     ckpt_keep_n: int = -1
     ckpt_major: int = -1
     continue_from_checkpoint: bool = False
@@ -241,47 +241,48 @@ def run_evaluation(trainer: pyllmq.LLMQTrainer, eval_loader: pyllmq.DataLoader,
 
 def main():
     parser = argparse.ArgumentParser(description="Train LLaMa model")
+    default = TrainingConfig()
 
     # Model configuration
-    parser.add_argument("--model", default="Qwen/Qwen2.5-0.5B", help="Path to model directory or HuggingFace model name")
+    parser.add_argument("--model", default=default.model, help="Path to model directory or HuggingFace model name")
     parser.add_argument("--from-scratch", action="store_true", help="Train from random initialization")
     parser.add_argument("--init-proj-to-zero", action="store_true", help="Initialize projections to zero")
-    parser.add_argument("--model-dtype", default="bfloat16", help="Model dtype")
+    parser.add_argument("--model-dtype", default=default.model_dtype, help="Model dtype")
     parser.add_argument("--matmul-dtype", help="Matmul dtype (defaults to model-dtype)")
 
     # Batch configuration
-    parser.add_argument("--batch-size", "--batch", type=int, default=4, help="Micro-batch size")
-    parser.add_argument("--seq-len", "--seq-length", type=int, default=1024, help="Sequence length")
-    parser.add_argument("--grad-accumulation", type=int, default=4, help="Gradient accumulation steps")
+    parser.add_argument("--batch-size", "--batch", type=int, default=default.batch_size, help="Micro-batch size")
+    parser.add_argument("--seq-len", "--seq-length", type=int, default=default.seq_len, help="Sequence length")
+    parser.add_argument("--grad-accumulation", type=int, default=default.grad_accumulation, help="Gradient accumulation steps")
 
     # Optimizer
-    parser.add_argument("--learning-rate", "--lr", type=float, default=1e-5, help="Learning rate")
-    parser.add_argument("--warmup", type=int, default=-1, dest="warmup_steps", help="Warmup steps")
-    parser.add_argument("--final-lr-fraction", type=float, default=1.0, help="Final LR fraction")
-    parser.add_argument("--beta-1", type=float, default=0.9, help="Adam beta 1")
-    parser.add_argument("--beta-2", type=float, default=0.95, help="Adam beta 2")
-    parser.add_argument("--opt-m-dtype", default="float32", help="First-order momentum dtype")
-    parser.add_argument("--opt-v-dtype", default="float32", help="Second-order momentum dtype")
-    parser.add_argument("--grad-clip", type=float, default=1.0, help="Gradient clipping")
-    parser.add_argument("--weight-decay", type=float, default=1.0, help="Weight decay")
+    parser.add_argument("--learning-rate", "--lr", type=float, default=default.learning_rate, help="Learning rate")
+    parser.add_argument("--warmup", type=int, default=default.warmup_steps, dest="warmup_steps", help="Warmup steps")
+    parser.add_argument("--final-lr-fraction", type=float, default=default.final_lr_fraction, help="Final LR fraction")
+    parser.add_argument("--beta-1", type=float, default=default.beta_1, help="Adam beta 1")
+    parser.add_argument("--beta-2", type=float, default=default.beta_2, help="Adam beta 2")
+    parser.add_argument("--opt-m-dtype", default=default.opt_m_dtype, help="First-order momentum dtype")
+    parser.add_argument("--opt-v-dtype", default=default.opt_v_dtype, help="Second-order momentum dtype")
+    parser.add_argument("--grad-clip", type=float, default=default.grad_clip, help="Gradient clipping")
+    parser.add_argument("--weight-decay", type=float, default=default.weight_decay, help="Weight decay")
 
     # Training
-    parser.add_argument("--steps", type=int, default=1000, help="Training steps")
-    parser.add_argument("--eval-every-n-steps", type=int, default=100, dest="eval_every", help="Evaluation interval")
-    parser.add_argument("--eval-num-steps", type=int, default=100, help="Number of eval batches")
-    parser.add_argument("--log-gpu-util", type=int, default=25, help="GPU logging interval (0 to disable)")
+    parser.add_argument("--steps", type=int, default=default.steps, help="Training steps")
+    parser.add_argument("--eval-every-n-steps", type=int, default=default.eval_every, dest="eval_every", help="Evaluation interval")
+    parser.add_argument("--eval-num-steps", type=int, default=default.eval_num_steps, help="Number of eval batches")
+    parser.add_argument("--log-gpu-util", type=int, default=default.log_gpu_util, help="GPU logging interval (0 to disable)")
 
     # Data
-    parser.add_argument("--train-file", default="tiny-shakespeare-train.bin", help="Training data file")
-    parser.add_argument("--eval-file", default="tiny-shakespeare-test.bin", help="Evaluation data file")
+    parser.add_argument("--train-file", default=default.train_file, help="Training data file")
+    parser.add_argument("--eval-file", default=default.eval_file, help="Evaluation data file")
 
     # Output
-    parser.add_argument("--out-dir", default="output", help="Output directory")
-    parser.add_argument("--checkpoint-dir", default="ckpt", help="Checkpoint directory")
-    parser.add_argument("--log-file", default="log.json", help="Log file")
-    parser.add_argument("--ckpt-interval", type=int, default=100, help="Checkpoint interval")
-    parser.add_argument("--ckpt-keep-n", type=int, default=-1, help="Number of checkpoints to keep")
-    parser.add_argument("--ckpt-major", type=int, default=-1, help="Major checkpoint interval")
+    parser.add_argument("--out-dir", default=default.out_dir, help="Output directory")
+    parser.add_argument("--checkpoint-dir", default=default.checkpoint_dir, help="Checkpoint directory")
+    parser.add_argument("--log-file", default=default.log_file, help="Log file")
+    parser.add_argument("--ckpt-interval", type=int, default=default.ckpt_interval, help="Checkpoint interval")
+    parser.add_argument("--ckpt-keep-n", type=int, default=default.ckpt_keep_n, help="Number of checkpoints to keep")
+    parser.add_argument("--ckpt-major", type=int, default=default.ckpt_major, help="Major checkpoint interval")
     parser.add_argument("--continue", dest="continue_from_checkpoint", action="store_true",
                         help="Continue from checkpoint")
 
@@ -306,13 +307,17 @@ def main():
     parser.add_argument("--offload-opt-v", action="store_true", help="Offload second-order momentum")
     parser.add_argument("--persistent-quants", action="store_true", help="Keep quantized weights")
 
+    def add_toggle(arg: str, default: bool, help: str):
+        dest = arg.replace("-", "_")
+        parser.add_argument(f"--{arg}", dest=dest, action="store_true", default=default, help=help)
+        parser.add_argument(f"--no-{arg}", dest=dest, action="store_false")
+
     # Performance
-    parser.add_argument("--use-cuda-graphs", action="store_true", default=True, help="Use CUDA graphs")
-    parser.add_argument("--no-use-cuda-graphs", dest="use_cuda_graphs", action="store_false")
-    parser.add_argument("--memcpy-all-gather", action="store_true", help="Use memcpy for all-gather")
-    parser.add_argument("--memcpy-send-recv", action="store_true", help="Use memcpy for send/recv")
-    parser.add_argument("--all-to-all-reduce", action="store_true", help="Use all-to-all reduce")
-    parser.add_argument("--write-combined", action="store_true", help="Use write-combined memory")
+    add_toggle("use-cuda-graphs", True, "Use CUDA graphs for transformer blocks")
+    add_toggle("memcpy-all-gather", True, "Use cudaMemcpyAsync for all-gather (faster on PCIe)")
+    add_toggle("memcpy-send-recv", True, "Use cudaMemcpyAsync for send/recv (faster on PCIe). Only meaningful in conjunction with all-to-all-reduce")
+    add_toggle("all-to-all-reduce", True, "Use custom all-to-all reduce which can be used with memcpy-send-recv")
+    add_toggle("write-combined", False, "Use write-combined memory. May give faster PCIe transfers.")
 
     args = parser.parse_args()
 
@@ -340,10 +345,8 @@ def main():
         raise NotImplementedError("--from-scratch requires specifying model architecture")
 
     # Setup data loaders
-    total_batch_size = config.batch_size * config.seq_len * config.gpus * config.grad_accumulation
-
-    train_files = [config.train_file]
-    eval_files = [config.eval_file]
+    train_files = list(map(str, Path.glob(Path(), config.train_file)))
+    eval_files = list(map(str, Path.glob(Path(), config.eval_file)))
 
     in_tokens = np.empty((config.gpus * config.batch_size, config.seq_len), dtype=np.int32)
     out_tokens = np.empty((config.gpus * config.batch_size, config.seq_len), dtype=np.int32)
@@ -351,26 +354,23 @@ def main():
     train_loader = pyllmq.DataLoader(train_files, config.batch_size * config.seq_len * config.gpus, seed=0x83b45442)
     eval_loader = pyllmq.DataLoader(eval_files, config.batch_size * config.seq_len * config.gpus, seed=0x83b45442)
 
+    total_batch_size = config.batch_size * config.seq_len * config.gpus * config.grad_accumulation
+    steps_per_epoch = train_loader.num_tokens // total_batch_size
+
     # Create trainer
     print("Creating trainer...")
-    latest_step = -1
-
     if config.continue_from_checkpoint:
         latest_step = pyllmq.find_latest_checkpoint(ckpt_dir)
         if latest_step >= 0:
+            trainer = pyllmq.LLMQTrainer(ngpu=config.gpus, config=pyllmq.LLamaConfig.from_pretrained(config.model, config.model_dtype),
+                                         options=options, batch_size=config.batch_size, seq_len=config.seq_len, grad_accum=config.grad_accumulation,
+                                         memcpy_all_gather=config.memcpy_all_gather, memcpy_send_recv=config.memcpy_send_recv)
             print(f"Loading checkpoint from step {latest_step}...")
-            trainer = pyllmq.LLMQTrainer.from_checkpoint(
-                str(ckpt_dir / f"step_{latest_step}.ckpt"),
-                ngpu=config.gpus,
-                options=options,
-                batch_size=config.batch_size,
-                seq_len=config.seq_len,
-                grad_accum=config.grad_accumulation
-            )
+            trainer.load_checkpoint(ckpt_dir, latest_step)
         else:
-            print("No checkpoint found, starting from pretrained model")
-
-    if latest_step < 0:
+            print("No checkpoint found")
+            exit(1)
+    else:
         trainer = pyllmq.LLMQTrainer.from_pretrained(
             name=config.model,
             ngpu=config.gpus,
@@ -383,6 +383,9 @@ def main():
             memcpy_send_recv=config.memcpy_send_recv
         )
         latest_step = 0
+
+    if config.steps <= 0:
+        config.steps = steps_per_epoch
 
     # Setup learning rate schedule
     lr_schedule = LRSchedule(
@@ -397,11 +400,14 @@ def main():
 
     print(f"\nStarting training from step {latest_step}...\n")
     print(f"Total batch size: {total_batch_size} tokens")
-    print(f"Steps per epoch: {train_loader.num_tokens // total_batch_size}")
+    print(f"Steps per epoch: {steps_per_epoch}")
 
     # Training loop
     for step in range(latest_step, config.steps):
-        # Check if evaluation is needed
+        if not train_loader.has_next(config.grad_accumulation):
+            train_loader.advance_epoch()
+            train_loader.load_batch(in_tokens, out_tokens)
+
         run_eval = False
         if config.eval_every > 0 and step % config.eval_every == 0 and step > latest_step:
             run_eval = True
@@ -410,10 +416,9 @@ def main():
         if config.ckpt_interval > 0 and step % config.ckpt_interval == 0 and step > latest_step:
             print(f"Saving checkpoint to {config.checkpoint_dir}...")
             start_time = time.time()
-            ckpt_path = ckpt_dir / f"step_{step}.ckpt"
-            trainer.save_checkpoint(str(ckpt_path))
+            ckpt_path = trainer.save_checkpoint(ckpt_dir, step)
             elapsed_ms = int((time.time() - start_time) * 1000)
-            logger.log_checkpoint(step, str(ckpt_path), elapsed_ms)
+            logger.log_checkpoint(step, ckpt_path, elapsed_ms)
             print("done")
 
             # Clean old checkpoints
@@ -428,7 +433,7 @@ def main():
             start_time = time.time()
             val_loss = run_evaluation(trainer, eval_loader, in_tokens, out_tokens, config.eval_num_steps)
             elapsed_ms = int((time.time() - start_time) * 1000)
-            epoch = train_loader.epoch() + 0.01 * (train_loader.current_position / train_loader.num_tokens)
+            epoch = train_loader.epoch() + 0.01 * train_loader.progress()
             logger.log_eval(step, epoch, config.eval_num_steps * config.batch_size * config.seq_len,
                             elapsed_ms, val_loss)
             print(f"Validation loss: {val_loss:.4f}")
@@ -438,7 +443,8 @@ def main():
 
         for micro_step in range(config.grad_accumulation):
             trainer.step(in_tokens, out_tokens)
-            train_loader.load_batch(in_tokens, out_tokens)
+            if train_loader.has_next():
+                train_loader.load_batch(in_tokens, out_tokens)
 
         # Log GPU info
         if config.log_gpu_util > 0 and step % config.log_gpu_util == 0:
@@ -466,7 +472,7 @@ def main():
 
         # Log step
         tokens_processed = config.batch_size * config.seq_len * config.grad_accumulation * config.gpus
-        epoch = train_loader.epoch() + 0.01 * (train_loader.progress() / 100)
+        epoch = train_loader.epoch() + 0.01 * train_loader.progress()
         logger.log_step(step, epoch, tokens_processed, elapsed_ms,
                         result['norm'], result['loss'], lr)
 
