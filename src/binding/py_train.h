@@ -54,6 +54,8 @@ public:
     int batch_size() const { return B; }
     int seq_length() const { return T; }
 
+    std::vector<std::pair<std::string, std::size_t>> get_allocations(int gpu_id) const;
+
 private:
     LLamaConfig mConfig;
     LLamaOptions mOptions;
