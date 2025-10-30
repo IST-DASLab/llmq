@@ -359,7 +359,11 @@ std::string get_hf_hub() {
 }
 
 std::string get_hf_model_path(std::string model_name) {
-    model_name = "/models--" + model_name.replace(model_name.find_last_of('/'), 1, "--");
+    auto slash = model_name.find_last_of('/');
+    if(slash == std::string::npos) {
+        throw std::runtime_error("HF model name must be of the form org/name");
+    }
+    model_name = "/models--" + model_name.replace(slash, 1, "--");
     return get_hf_hub() + model_name;
 }
 
