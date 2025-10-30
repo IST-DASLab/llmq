@@ -18,9 +18,9 @@ bool iequals_any(std::string_view lhs, Others&&... others) {
 }
 
 ETensorDType dtype_from_str(std::string_view dtype) {
-    if(iequals_any(dtype, "F32",  "FP32", "float", "single")) {
+    if(iequals_any(dtype, "F32",  "FP32", "float", "float32", "single")) {
         return ETensorDType::FP32;
-    } else if(iequals_any(dtype, "FP16", "F16", "half")) {
+    } else if(iequals_any(dtype, "FP16", "F16", "float16", "half")) {
         return ETensorDType::FP16;
     } else if(iequals_any(dtype, "BF16", "bfloat16")) {
         return ETensorDType::BF16;

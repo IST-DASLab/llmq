@@ -185,7 +185,7 @@ NB_MODULE(_pyllmq, m) {
              nb::arg("variance_type") = "fp32"
                  )
         .def_rw("recompute_swiglu", &LLamaOptions::RecomputeSwiGLu)
-        .def_rw("recompute_rmsnorm", &LLamaOptions::RecomputeRMSNorm)
+        .def_rw("recompute_rms_norm", &LLamaOptions::RecomputeRMSNorm)
         .def_rw("recompute_ffn", &LLamaOptions::RecomputeFFN)
         .def_rw("recompute_qkv", &LLamaOptions::RecomputeQKV)
         .def_rw("recompute_att", &LLamaOptions::RecomputeAtt)
@@ -271,7 +271,7 @@ NB_MODULE(_pyllmq, m) {
     nb::class_<DataLoader>(m, "DataLoader")
         .def("__init__", [](DataLoader *d, const std::vector<std::string>& file_list, int chunk_size, unsigned long seed = 42) {
             new (d) DataLoader(file_list, chunk_size, 0, 1, seed);
-        })
+        }, nb::arg("file_list"), nb::arg("chunk_size"), nb::arg("seed") = 42)
         .def("load_batch", [](DataLoader* d, TokenArray inputs, TokenArray targets) {
             CHECK_CONTIGUOUS(inputs);
             CHECK_CONTIGUOUS(targets);
@@ -286,14 +286,18 @@ NB_MODULE(_pyllmq, m) {
         .def("progress", &DataLoader::progress, "Get the current progress within the current epoch, in percent")
         .def("advance_epoch", &DataLoader::advance_epoch, "Advance to the next epoch, re-randomizing the order of chunks")
         .def("has_next", &DataLoader::has_next, "Check if there is another batch of data available")
+        .def("set_state", &DataLoader::set_state, nb::arg("seed"), nb::arg("epoch"), nb::arg("file_index"), nb::arg("chunk_index"), "Sets the internal state of the dataloader.")
         .def_prop_ro("chunk_size", &DataLoader::chunk_size)
         .def_prop_ro("vocab_size", &DataLoader::vocab_size)
         .def_prop_ro("num_files", &DataLoader::num_files)
         .def_prop_ro("num_chunks", &DataLoader::num_chunks)
         .def_prop_ro("num_tokens", &DataLoader::num_tokens)
+        .def_prop_ro("seed", &DataLoader::seed)
         ;
 
     m.def("find_latest_checkpoint", find_latest_checkpoint);
     m.def("get_all_checkpoints", get_all_checkpoints);
     m.def("get_checkpoint_path", get_checkpoint_path);
+    m.def("find_latest_checkpoint", find_latest_checkpoint);
+    m.def("clean_old_checkpoints", clean_old_checkpoints);
 }
