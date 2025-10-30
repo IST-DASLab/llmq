@@ -309,4 +309,5 @@ NB_MODULE(_pyllmq, m) {
     m.def("get_checkpoint_path", get_checkpoint_path);
     m.def("find_latest_checkpoint", find_latest_checkpoint);
     m.def("clean_old_checkpoints", clean_old_checkpoints);
+    m.def("get_num_gpus", [](){ int count; CUDA_CHECK(cudaGetDeviceCount(&count)); return count; });
 }
