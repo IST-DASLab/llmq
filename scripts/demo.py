@@ -67,6 +67,10 @@ def main():
     trainer.init_weights()
     # alternative: pyllmq.LLMQTrainer.from_pretrained("Qwen/Qwen2.5-0.5B", ngpu=ngpu, dtype="bf16", options=options, batch_size=2, seq_len=1024, grad_accum=grad_accumulation)
 
+    print("\nmemory consumption:")
+    for k, v in trainer.get_allocator_info(0).items():
+        print(f" {k:20}: {v // 1024 // 1024:6} MiB")
+
     train_loader.load_batch(in_tokens, out_tokens)
 
     print("\nstarting training...\n")

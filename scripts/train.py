@@ -395,7 +395,11 @@ def main():
         config.learning_rate * config.final_lr_fraction
     )
 
-    # Load first batch
+    print("\nmemory consumption:")
+    for k, v in trainer.get_allocator_info(0).items():
+        print(f" {k:20}: {v // 1024 // 1024:6} MiB")
+
+    # preload first batch
     train_loader.load_batch(in_tokens, out_tokens)
 
     print(f"\nStarting training from step {latest_step}...\n")
