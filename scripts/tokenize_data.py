@@ -261,7 +261,7 @@ def main():
     parser.add_argument("--out-dir", default="data")
 
     args = parser.parse_args()
-    generate_tokenized_dataset(dataset=args.dataset, model=args.model, out_dir=arg.out_dir)
+    generate_tokenized_dataset(dataset=args.dataset, model=args.model, out_dir=args.out_dir)
 
 if __name__ == "__main__":
     main()
