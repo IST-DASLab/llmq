@@ -276,7 +276,7 @@ NB_MODULE(_pyllmq, m) {
         .def_prop_ro("world_size", &MultiGPUPyTrainer::world_size)
         .def_prop_ro("batch_size", &MultiGPUPyTrainer::batch_size)
         .def_prop_ro("seq_length", &MultiGPUPyTrainer::seq_length)
-        .def("get_allocator_info", [](const MultiGPUPyTrainer* trainer, int gpu_id) {
+        .def("get_allocator_info", [](MultiGPUPyTrainer* trainer, int gpu_id) {
             auto alloc = trainer->get_allocations(gpu_id);
             nb::dict ret;
             for(const auto& [name, size] : alloc) {
