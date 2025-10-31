@@ -328,9 +328,16 @@ NB_MODULE(_pyllmq, m) {
         ;
 
     nb::class_<TrainingRunLogger>(m, "TrainingRunLogger")
-        .def("__init__", [](TrainingRunLogger *t, const std::string& file_name, TrainingRunLogger::EVerbosity verbosity) {
+        .def("__init__", [](TrainingRunLogger *t, const std::string& file_name, nb::object callback_obj, TrainingRunLogger::EVerbosity verbosity) {
             new (t) TrainingRunLogger(file_name, 0, verbosity);
-        }, nb::arg("file_name"), nb::arg("verbosity") = TrainingRunLogger::EVerbosity::DEFAULT)
+            if(!callback_obj.is_none()) {
+                auto cb = nb::cast<nb::callable>(callback_obj);
+                t->set_callback([cb = std::move(cb)](const std::string_view& msg) {
+                    nb::gil_scoped_acquire gil;
+                    cb(nb::cast(std::string(msg)));
+                });
+            }
+        }, nb::arg("file_name"), nb::arg("callback") = nb::none(), nb::arg("verbosity") = TrainingRunLogger::EVerbosity::DEFAULT)
         .def("set_expected_time_per_token", &TrainingRunLogger::set_expected_time_per_token, nb::arg("nanoseconds"),
              "Set the expected time per token for MFU estimation")
         .def("log_cmd", [](TrainingRunLogger* logger, const std::vector<std::string>& args) {

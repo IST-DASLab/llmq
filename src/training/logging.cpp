@@ -259,6 +259,9 @@ void TrainingRunLogger::log_checkpoint(int step, std::string path, int duration_
 }
 
 void TrainingRunLogger::log_line(std::string_view line) {
+    if(mCallback)
+        mCallback(line);
+
     mLogFile.seekp(-3, std::ios::end);  // overwrite the array closing part
     if (!mFirst)
     {
@@ -287,4 +290,8 @@ void TrainingRunLogger::log_allocator(const std::vector<std::pair<std::string, s
             printf("  %16s: %5zu MiB\n", name.c_str(), amount / 1024 / 1024);
         }
     }
+}
+
+void TrainingRunLogger::set_callback(std::function<void(std::string_view)> cb) {
+    mCallback = std::move(cb);
 }

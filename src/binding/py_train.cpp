@@ -28,6 +28,9 @@ MultiGPUPyTrainer::MultiGPUPyTrainer(int ngpus, LLamaConfig config, LLamaOptions
 MultiGPUPyTrainer::~MultiGPUPyTrainer() {
     mIsRunning = false;
     std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    for(auto& t : mThreads) {
+        t.join();
+    }
 }
 
 void MultiGPUPyTrainer::import_weights(std::string path) {
@@ -187,11 +190,11 @@ void MultiGPUPyTrainer::main_loop(NCCLCommunicator& comm) {
         mIsRunning = true;
     };
 
-    while (!mIsRunning) {
+    while (!mIsRunning.load()) {
         std::this_thread::yield();
     }
 
-    while (mIsRunning) {
+    while (mIsRunning.load()) {
         if (auto work = fetch_work(ctx); work) {
             work(ctx);
             mWorkDone.fetch_add(1);
@@ -199,6 +202,7 @@ void MultiGPUPyTrainer::main_loop(NCCLCommunicator& comm) {
             std::this_thread::yield();
         }
     }
+    CUDA_CHECK(cudaDeviceSynchronize());
 }
 
 int MultiGPUPyTrainer::world_size() const {
