@@ -43,11 +43,15 @@ minimum-version = "build-system.requires"
 wheel.py-api = "cp312"
 build.targets = ["_pyllmq"]
 build-dir = "build/{wheel_tag}"
-cmake.build-type = "RelWithDebInfo"
+cmake.build-type = "Release"
 
 [tool.scikit-build.cmake.define]
 PYTHON_BINDING = "ON"
 CMAKE_CUDA_ARCHITECTURES = {env="CUDAARCHS"}
 
 [tool.uv]
-cache-keys = [{ file = "pyproject.toml" }, { file = "src/**/*.{h,c,hpp,cpp,cu,cuh}" }, { file = "CMakeLists.txt" }]
+cache-keys = [
+    { file = "pyproject.toml" },
+    { file = "src/**/*.{h,c,hpp,cpp,cu,cuh}" },
+    { file = "CMakeLists.txt" }
+]
