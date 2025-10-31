@@ -19,10 +19,12 @@ scripts = [
     "torch>=2.8.0",
     "transformers>=4.55.0",
     "matplotlib>=3.10.5",
-    "plotly>=6.3.0",
+    "plotly[express]>=6.3.0",
     "pyqt6>=6.9.1",
     "wandb>=0.21.1",
     "lm-eval>=0.4.9",
+    "pandas>=2.3.1",
+    "plotly[express]>=6.3.0",
 ]
 
 [project.scripts]
@@ -30,9 +32,10 @@ pyllmq-demo = "pyllmq.scripts.demo:main"
 pyllmq-tokenize = "pyllmq.scripts.tokenize_data:main"
 pyllmq-wandb = "pyllmq.scripts.export_wandb:main"
 pyllmq-plot = "pyllmq.scripts.plot_training_run:main"
+pyllmq-train = "pyllmq.scripts.train:main"
 
 [build-system]
-requires = ["scikit-build-core>=0.10", "nanobind"]
+requires = ["scikit-build-core>=0.11", "nanobind"]
 build-backend = "scikit_build_core.build"
 
 [tool.scikit-build]

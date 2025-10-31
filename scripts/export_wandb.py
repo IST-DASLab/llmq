@@ -2,7 +2,7 @@
 #
 # /// script
 # requires-python = ">=3.12"
-# dependencies = ["wandb"]
+# dependencies = ["wandb", "plotly[express]", "pandas"]
 # ///
 
 
