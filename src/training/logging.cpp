@@ -21,7 +21,6 @@ TrainingRunLogger::TrainingRunLogger(const std::string& file_name, int rank, EVe
 {
     if(mRank == 0) {
         auto log_path = std::filesystem::path(mFileName).parent_path();
-        std::cout << log_path << "\n";
         if (!log_path.empty()) {
             std::filesystem::create_directories(log_path);
         }
