@@ -7,8 +7,9 @@
 import pyllmq
 import numpy as np
 import argparse
-import time
+import contextlib
 import sys
+import time
 from pathlib import Path
 from typing import Optional, Tuple
 from dataclasses import dataclass, asdict
@@ -181,7 +182,7 @@ def run_evaluation(trainer: pyllmq.LLMQTrainer, eval_loader: pyllmq.DataLoader,
     return total_loss / batches, int((time.time() - start_time) * 1000)
 
 
-def main():
+def parse_args():
     parser = argparse.ArgumentParser(description="Train LLaMa model")
     default = TrainingConfig()
 
@@ -275,9 +276,12 @@ def main():
 
 
     args = parser.parse_args()
+    return TrainingConfig(**vars(args))
 
+
+def main():
     # Create config from args
-    config = TrainingConfig(**vars(args))
+    config = parse_args()
 
     # Setup options
     options = setup_options(config)
@@ -296,6 +300,9 @@ def main():
         "verbose": pyllmq.LogVerbosity.VERBOSE
     }
 
+    wandb_context = contextlib.nullcontext()
+    log_callback = lambda x: None
+
     if config.use_wandb:
         wandb_logger = pyllmq.setup_wandb(
             project_name=config.wandb_project or "llmq",
@@ -303,94 +310,106 @@ def main():
             name=config.wandb_name,
         )
         log_callback = wandb_logger.make_callback()
-    else:
-        log_callback = lambda x: None
+        wandb_context = wandb_logger.run
 
-    logger = pyllmq.TrainingRunLogger(
-        str(out_dir / config.log_file),
-        callback=log_callback,
-        verbosity=verbosity_map[config.verbosity]
-    )
-    logger.log_cmd(sys.argv)
-    log_options = asdict(config)
-    log_options["matmul_dtype"] = log_options["matmul_dtype"] or config.model_dtype
-    logger.log_options(log_options)
+    with wandb_context:
+        logger = pyllmq.TrainingRunLogger(
+            str(out_dir / config.log_file),
+            callback=log_callback,
+            verbosity=verbosity_map[config.verbosity]
+        )
+        logger.log_cmd(sys.argv)
+        log_options = asdict(config)
+        log_options["matmul_dtype"] = log_options["matmul_dtype"] or config.model_dtype
+        logger.log_options(log_options)
 
-    # Setup data loaders
-    train_files = list(map(str, Path.glob(Path(), config.train_file)))
-    eval_files = list(map(str, Path.glob(Path(), config.eval_file)))
+        # Setup data loaders
+        train_files = list(map(str, Path.glob(Path(), config.train_file)))
+        eval_files = list(map(str, Path.glob(Path(), config.eval_file)))
 
-    in_tokens = np.empty((config.gpus * config.batch_size, config.seq_len), dtype=np.int32)
-    out_tokens = np.empty((config.gpus * config.batch_size, config.seq_len), dtype=np.int32)
+        train_loader = pyllmq.DataLoader(train_files, config.batch_size * config.seq_len * config.gpus, seed=0x83b45442)
+        eval_loader = pyllmq.DataLoader(eval_files, config.batch_size * config.seq_len * config.gpus, seed=0x83b45442)
 
-    train_loader = pyllmq.DataLoader(train_files, config.batch_size * config.seq_len * config.gpus, seed=0x83b45442)
-    eval_loader = pyllmq.DataLoader(eval_files, config.batch_size * config.seq_len * config.gpus, seed=0x83b45442)
+        # Log dataset information
+        logger.log_dataset(train_loader, eval_loader)
 
-    # Log dataset information
-    logger.log_dataset(train_loader, eval_loader)
+        total_batch_size = config.batch_size * config.seq_len * config.gpus * config.grad_accumulation
+        steps_per_epoch = train_loader.num_tokens // total_batch_size
 
-    total_batch_size = config.batch_size * config.seq_len * config.gpus * config.grad_accumulation
-    steps_per_epoch = train_loader.num_tokens // total_batch_size
-
-    # Create trainer
-    print("Creating trainer...")
-    if config.continue_from_checkpoint:
-        latest_step = pyllmq.find_latest_checkpoint(ckpt_dir)
-        if latest_step >= 0:
-            trainer = pyllmq.LLMQTrainer(ngpu=config.gpus, config=pyllmq.LLamaConfig.from_pretrained(config.model, config.model_dtype),
+        # Create trainer
+        print("Creating trainer...")
+        if config.continue_from_checkpoint:
+            latest_step = pyllmq.find_latest_checkpoint(ckpt_dir)
+            if latest_step >= 0:
+                trainer = pyllmq.LLMQTrainer(ngpu=config.gpus, config=pyllmq.LLamaConfig.from_pretrained(config.model, config.model_dtype),
+                                             options=options, batch_size=config.batch_size, seq_len=config.seq_len, grad_accum=config.grad_accumulation,
+                                             memcpy_all_gather=config.memcpy_all_gather, memcpy_send_recv=config.memcpy_send_recv)
+                print(f"Loading checkpoint from step {latest_step}...")
+                trainer.load_checkpoint(ckpt_dir, latest_step)
+            else:
+                print("No checkpoint found")
+                exit(1)
+        elif config.from_scratch:
+            print(f"Creating {config.model} from scratch...")
+            trainer = pyllmq.LLMQTrainer(ngpu=config.gpus, config=pyllmq.LLamaConfig.from_name(config.model, config.model_dtype),
                                          options=options, batch_size=config.batch_size, seq_len=config.seq_len, grad_accum=config.grad_accumulation,
                                          memcpy_all_gather=config.memcpy_all_gather, memcpy_send_recv=config.memcpy_send_recv)
-            print(f"Loading checkpoint from step {latest_step}...")
-            trainer.load_checkpoint(ckpt_dir, latest_step)
+            trainer.init_weights()
+            latest_step = 0
         else:
-            print("No checkpoint found")
-            exit(1)
-    elif  config.from_scratch:
-        print(f"Creating {config.model} from scratch...")
-        trainer = pyllmq.LLMQTrainer(ngpu=config.gpus, config=pyllmq.LLamaConfig.from_name(config.model, config.model_dtype),
-                                     options=options, batch_size=config.batch_size, seq_len=config.seq_len, grad_accum=config.grad_accumulation,
-                                     memcpy_all_gather=config.memcpy_all_gather, memcpy_send_recv=config.memcpy_send_recv)
-        trainer.init_weights()
-        latest_step = 0
-    else:
-        print(f"Loading model from {config.model}...")
-        trainer = pyllmq.LLMQTrainer.from_pretrained(
-            name=config.model,
-            ngpu=config.gpus,
-            dtype=config.model_dtype,
-            options=options,
-            batch_size=config.batch_size,
-            seq_len=config.seq_len,
-            grad_accum=config.grad_accumulation,
-            memcpy_all_gather=config.memcpy_all_gather,
-            memcpy_send_recv=config.memcpy_send_recv
+            print(f"Loading model from {config.model}...")
+            trainer = pyllmq.LLMQTrainer.from_pretrained(
+                name=config.model,
+                ngpu=config.gpus,
+                dtype=config.model_dtype,
+                options=options,
+                batch_size=config.batch_size,
+                seq_len=config.seq_len,
+                grad_accum=config.grad_accumulation,
+                memcpy_all_gather=config.memcpy_all_gather,
+                memcpy_send_recv=config.memcpy_send_recv
+            )
+            latest_step = 0
+
+        if config.steps <= 0:
+            config.steps = steps_per_epoch
+
+        # Setup learning rate schedule
+        lr_schedule = LRSchedule(
+            config.learning_rate,
+            config.steps,
+            config.warmup_steps,
+            config.learning_rate * config.final_lr_fraction
         )
-        latest_step = 0
 
-    if config.steps <= 0:
-        config.steps = steps_per_epoch
+        # Log allocator stats
+        for idx in range(config.gpus):
+            logger.log_allocator(trainer.get_allocator_info(idx))
 
-    # Setup learning rate schedule
-    lr_schedule = LRSchedule(
-        config.learning_rate,
-        config.steps,
-        config.warmup_steps,
-        config.learning_rate * config.final_lr_fraction
-    )
+        # calculate the expected time at peak flops for speed-of-light estimation
+        logger.set_expected_time_per_token(trainer)
 
-    # Log allocator stats
-    for idx in range(config.gpus):
-        logger.log_allocator(trainer.get_allocator_info(idx))
+        print(f"\nStarting training from step {latest_step}...\n")
+        print(f"Total batch size: {total_batch_size} tokens")
+        print(f"Steps per epoch: {steps_per_epoch}")
 
-    # calculate the expected time at peak flops for speed-of-light estimation
-    logger.set_expected_time_per_token(trainer)
+        run_training_loop(config, trainer, eval_loader, train_loader, latest_step, logger,
+                          lr_schedule)
 
+        # Save final model
+        print(f"Saving model to {config.out_dir}...")
+        trainer.export_model(str(out_dir))
+        print("done")
+
+        print(f"\nTraining complete! Logs saved to {out_dir / config.log_file}")
+
+
+def run_training_loop(config: TrainingConfig, trainer: pyllmq.LLMQTrainer, eval_loader: pyllmq.DataLoader, train_loader: pyllmq.DataLoader,
+                      latest_step: int, logger: pyllmq.TrainingRunLogger, lr_schedule: LRSchedule):
     # preload first batch
+    in_tokens = np.empty((config.gpus * config.batch_size, config.seq_len), dtype=np.int32)
+    out_tokens = np.empty((config.gpus * config.batch_size, config.seq_len), dtype=np.int32)
     train_loader.load_batch(in_tokens, out_tokens)
-
-    print(f"\nStarting training from step {latest_step}...\n")
-    print(f"Total batch size: {total_batch_size} tokens")
-    print(f"Steps per epoch: {steps_per_epoch}")
 
     # Training loop
     for step in range(latest_step, config.steps):
@@ -406,14 +425,14 @@ def main():
         if config.ckpt_interval > 0 and step % config.ckpt_interval == 0 and step > latest_step:
             print(f"Saving checkpoint to {config.checkpoint_dir}...")
             start_time = time.time()
-            ckpt_path = trainer.save_checkpoint(ckpt_dir, step)
+            ckpt_path = trainer.save_checkpoint(config.checkpoint_dir, step)
             elapsed_ms = int((time.time() - start_time) * 1000)
             logger.log_checkpoint(step, ckpt_path, elapsed_ms)
             print("done")
 
             # Clean old checkpoints
             if config.ckpt_keep_n > 0:
-                removed = pyllmq.clean_old_checkpoints(ckpt_dir, config.ckpt_keep_n, config.ckpt_major)
+                removed = pyllmq.clean_old_checkpoints(config.checkpoint_dir, config.ckpt_keep_n, config.ckpt_major)
                 if removed:
                     print(f"Cleaned {len(removed)} checkpoints")
 
@@ -456,13 +475,6 @@ def main():
     print("\nRunning final evaluation...")
     final_loss, _ = run_evaluation(trainer, eval_loader, in_tokens, out_tokens, eval_loader.num_chunks)
     print(f"Final validation loss: {final_loss:.4f}")
-
-    # Save final model
-    print(f"Saving model to {config.out_dir}...")
-    trainer.export_model(str(out_dir))
-    print("done")
-
-    print(f"\nTraining complete! Logs saved to {out_dir / config.log_file}")
 
 
 if __name__ == "__main__":
