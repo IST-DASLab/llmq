@@ -6,6 +6,7 @@
 #include <stdexcept>
 #include <utility>
 #include <variant>
+#include <future>
 
 #include <nccl.h>
 #include <fmt/core.h>
@@ -63,10 +64,39 @@ NCCLCommunicator::NCCLCommunicator(int rank, int world, const void* nccl_id) :
     mCommsSync = create_named_event("nccl_sync");  // todo disable timing for max perf
 }
 
+#include <pthread.h>
+
 NCCLCommunicator::~NCCLCommunicator() {
+    // When used with the python bindings, ncclCommFinalize() can hang forever;
+    // I haven't found a fix, so here we just make sure that the hang gets localized
+    // to a helper thread (which we leak, but generally ~NCCLCommunicator is expected
+    // to run at program shutdown anyway)
+    auto terminate_future = std::async(std::launch::async, [this]() {
+        this->terminate_nccl();
+    });
+
+    if (terminate_future.wait_for(std::chrono::seconds(2)) == std::future_status::timeout) {
+        fprintf(stderr, "NCCL termination timed out, detaching\n");
+        // this *will* leak resources, but at least we're not hanging forever
+        new auto(std::move(terminate_future));
+    }
     CUDA_CHECK(cudaEventDestroy(mCommsSync));
     CUDA_CHECK(cudaStreamDestroy(mCommsStream));
-    ncclCheck(ncclCommDestroy(mNcclComm));
+}
+
+void NCCLCommunicator::terminate_nccl() {
+    ncclResult_t result;
+    ncclCheck(ncclCommGetAsyncError(mNcclComm, &result));
+    // do "nice" shutdown if we're in a good state,
+    // just abort if there is something weird going on.
+    if (std::uncaught_exceptions() == 0 && result == ncclSuccess) {
+        CUDA_CHECK(cudaStreamSynchronize(mCommsStream));
+        CUDA_CHECK(cudaDeviceSynchronize());
+        ncclCheck(ncclCommFinalize(mNcclComm));
+        ncclCheck(ncclCommDestroy(mNcclComm));
+    } else {
+        ncclCheck(ncclCommAbort(mNcclComm));
+    }
 }
 
 void NCCLCommunicator::begin_transaction(cudaEvent_t ready) {
@@ -361,7 +391,6 @@ NCCLCommunicatorThreads::NCCLCommunicatorThreads(int rank, int world, bool memcp
 
 NCCLCommunicatorThreads::~NCCLCommunicatorThreads() {
     if(mShare && mShare->Barrier) {
-        //
         mShare->Barrier->arrive_and_drop();
     }
 }
@@ -373,7 +402,7 @@ void NCCLCommunicator::run_threads_communicators(int ngpus, bool memcpy_allgathe
     }
 }
 
- std::vector<std::jthread> NCCLCommunicator::launch_threads_communicators(int ngpus, bool memcpy_allgather, bool memcpy_send_recv, std::function<void(NCCLCommunicator& comm)> work) {
+std::vector<std::jthread> NCCLCommunicator::launch_threads_communicators(int ngpus, bool memcpy_allgather, bool memcpy_send_recv, std::function<void(NCCLCommunicator& comm)> work) {
     std::vector<std::jthread> threads;
     ncclUniqueId nccl_id;
     ncclCheck(ncclGetUniqueId(&nccl_id));
@@ -384,6 +413,8 @@ void NCCLCommunicator::run_threads_communicators(int ngpus, bool memcpy_allgathe
             NCCLCommunicatorThreads comm(i, ngpus, memcpy_allgather, memcpy_send_recv, &nccl_id, bar);
             nvtxNameOsThread(pthread_self(), "worker");
             work(comm);
+            bar->Barrier->arrive_and_wait();
+            printf("Worker %d finished\n", i);
         }
         );
     }

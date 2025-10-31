@@ -27,6 +27,15 @@ MultiGPUPyTrainer::MultiGPUPyTrainer(int ngpus, LLamaConfig config, LLamaOptions
 
 MultiGPUPyTrainer::~MultiGPUPyTrainer() {
     mIsRunning = false;
+
+    // make sure all work has finished
+    for(auto& ctx : mContexts) {
+        if(ctx.Communicator) {
+            CUDA_CHECK(cudaSetDevice(ctx.Communicator->rank()));
+            CUDA_CHECK(cudaDeviceSynchronize());
+        }
+    }
+
     std::this_thread::sleep_for(std::chrono::milliseconds(100));
     for(auto& t : mThreads) {
         t.join();
@@ -202,6 +211,12 @@ void MultiGPUPyTrainer::main_loop(NCCLCommunicator& comm) {
             std::this_thread::yield();
         }
     }
+    CUDA_CHECK(cudaDeviceSynchronize());
+    comm.barrier();
+    
+    // free resources
+    ctx.Model.reset();
+    ctx.GPUUtil.reset();
     CUDA_CHECK(cudaDeviceSynchronize());
 }
 
