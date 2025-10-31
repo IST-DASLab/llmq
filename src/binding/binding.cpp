@@ -10,6 +10,7 @@
 #include "py_train.h"
 #include "training/dataloader.h"
 #include "training/checkpoint.h"
+#include "training/logging.h"
 #include "utilities/gpu_info.h"
 #include "utilities/safetensors.h"
 
@@ -318,4 +319,76 @@ NB_MODULE(_pyllmq, m) {
     m.def("find_latest_checkpoint", find_latest_checkpoint);
     m.def("clean_old_checkpoints", clean_old_checkpoints);
     m.def("get_num_gpus", [](){ int count; CUDA_CHECK(cudaGetDeviceCount(&count)); return count; });
+
+    nb::enum_<TrainingRunLogger::EVerbosity>(m, "LogVerbosity")
+        .value("SILENT", TrainingRunLogger::EVerbosity::SILENT)
+        .value("QUIET", TrainingRunLogger::EVerbosity::QUIET)
+        .value("DEFAULT", TrainingRunLogger::EVerbosity::DEFAULT)
+        .value("VERBOSE", TrainingRunLogger::EVerbosity::VERBOSE)
+        ;
+
+    nb::class_<TrainingRunLogger>(m, "TrainingRunLogger")
+        .def("__init__", [](TrainingRunLogger *t, const std::string& file_name, TrainingRunLogger::EVerbosity verbosity) {
+            new (t) TrainingRunLogger(file_name, 0, verbosity);
+        }, nb::arg("file_name"), nb::arg("verbosity") = TrainingRunLogger::EVerbosity::DEFAULT)
+        .def("set_expected_time_per_token", &TrainingRunLogger::set_expected_time_per_token, nb::arg("nanoseconds"),
+             "Set the expected time per token for MFU estimation")
+        .def("log_cmd", [](TrainingRunLogger* logger, const std::vector<std::string>& args) {
+            std::vector<const char*> argv;
+            argv.reserve(args.size());
+            for (const auto& arg : args) {
+                argv.push_back(arg.c_str());
+            }
+            logger->log_cmd(args.size(), argv.data());
+        }, nb::arg("args"), "Log command line arguments")
+
+        .def("log_options", [](TrainingRunLogger* logger, const nb::dict& options) {
+            std::vector<std::pair<std::string_view, std::variant<bool, int, float, std::string>>> cpp_options;
+            std::vector<std::string> keys;
+            keys.reserve(options.size());
+            cpp_options.reserve(options.size());
+            for (auto item : options) {
+                nb::object value = nb::cast<nb::object>(item.second);
+                keys.push_back(nb::cast<std::string>(item.first));
+                std::string& key = keys.back(); // ensure key has sufficient lifetime
+                if (nb::isinstance<nb::bool_>(value)) {
+                    cpp_options.emplace_back(key, nb::cast<bool>(value));
+                } else if (nb::isinstance<nb::int_>(value)) {
+                    cpp_options.emplace_back(key, nb::cast<int>(value));
+                } else if (nb::isinstance<nb::float_>(value)) {
+                    cpp_options.emplace_back(key, nb::cast<float>(value));
+                } else if (nb::isinstance<nb::str>(value)) {
+                    cpp_options.emplace_back(key, nb::cast<std::string>(value));
+                } else {
+                    throw std::runtime_error("Unsupported option type for key: " + key);
+                }
+            }
+            logger->log_options(cpp_options);
+        }, nb::arg("options"), "Log training options as a dict")
+        .def("log_dataset", &TrainingRunLogger::log_dataset, nb::arg("train_loader"), nb::arg("eval_loader"),
+             "Log dataset information")
+        .def("log_step", &TrainingRunLogger::log_step,
+             nb::arg("step"), nb::arg("epoch"), nb::arg("step_tokens"), nb::arg("duration_ms"),
+             nb::arg("norm"), nb::arg("loss"), nb::arg("lr"),
+             "Log a training step")
+        .def("log_eval", &TrainingRunLogger::log_eval,
+             nb::arg("step"), nb::arg("epoch"), nb::arg("eval_tokens"), nb::arg("duration_ms"), nb::arg("loss"),
+             "Log an evaluation step")
+        .def("log_gpu_state", &TrainingRunLogger::log_gpu_state,
+             nb::arg("step"), nb::arg("gpu_id"), nb::arg("gpu_util"),
+             "Log GPU utilization state")
+        .def("log_allocator", [](TrainingRunLogger* logger, const nb::dict& stats) {
+            std::vector<std::pair<std::string, std::size_t>> cpp_stats;
+            cpp_stats.reserve(stats.size());
+            for (auto item : stats) {
+                std::string key = nb::cast<std::string>(item.first);
+                std::size_t value = nb::cast<std::size_t>(item.second);
+                cpp_stats.emplace_back(key, value);
+            }
+            logger->log_allocator(cpp_stats);
+        }, nb::arg("stats"), "Log memory allocator statistics")
+        .def("log_checkpoint", &TrainingRunLogger::log_checkpoint,
+             nb::arg("step"), nb::arg("path"), nb::arg("duration_ms"),
+             "Log checkpoint save")
+        ;
 }

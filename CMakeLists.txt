@@ -201,10 +201,7 @@ if (PYTHON_BINDING)
             INSTALL_RPATH_USE_LINK_PATH FALSE
     )
 
-    # Generate __init__.py in the build directory
-    file(WRITE ${CMAKE_CURRENT_BINARY_DIR}/pyllmq/__init__.py "from ._pyllmq import *\n")
-
-    install(FILES ${CMAKE_CURRENT_BINARY_DIR}/pyllmq/__init__.py
+    install(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/src/binding/python/
             DESTINATION pyllmq
     )
 
