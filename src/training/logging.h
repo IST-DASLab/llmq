@@ -9,6 +9,7 @@
 #include <string_view>
 #include <variant>
 #include <vector>
+#include <functional>
 
 struct GPUUtilInfo;
 class NCCLCommunicator;
@@ -28,6 +29,7 @@ public:
     ~TrainingRunLogger();
 
     void set_expected_time_per_token(long nanoseconds);
+    void set_callback(std::function<void(std::string_view)> cb);
 
     void log_cmd(int argc, const char** argv);
     void log_options(const std::vector<std::pair<std::string_view, std::variant<bool, int, float, std::string>>>& options);
@@ -57,6 +59,9 @@ private:
 
     // to estimate MFU
     long mExpectedTimePerToken = -1;
+
+    // arbitrary callback for log lines
+    std::function<void(std::string_view)> mCallback;
 };
 
 #endif //LLMQ_LOGGING_H

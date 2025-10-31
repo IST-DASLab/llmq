@@ -91,6 +91,11 @@ class TrainingConfig:
     # Logging verbosity
     verbosity: str = "default"
 
+    # Wandb integration
+    use_wandb: bool = False
+    wandb_project: str = ""
+    wandb_name: str = "llmq"
+
 
 class LRSchedule:
     def __init__(self, base_lr: float, max_steps: int, warmup_steps: int, final_lr: float):
@@ -259,6 +264,10 @@ def main():
     # Logging
     parser.add_argument("--verbosity", choices=["silent", "quiet", "default", "verbose"],
                         default=default.verbosity, help="Logging verbosity level")
+    parser.add_argument("--use-wandb", action="store_true", help="Enable Weights & Biases logging")
+    parser.add_argument("--wandb-project", default=default.wandb_project, help="W&B project name (defaults to 'LLMQ')")
+    parser.add_argument("--wandb-name", default=default.wandb_name, help="W&B run name")
+
 
     args = parser.parse_args()
 
@@ -281,8 +290,20 @@ def main():
         "default": pyllmq.LogVerbosity.DEFAULT,
         "verbose": pyllmq.LogVerbosity.VERBOSE
     }
+
+    if config.use_wandb:
+        wandb_logger = pyllmq.setup_wandb(
+            project_name=config.wandb_project or "llmq",
+            config=asdict(config),
+            name=config.wandb_name,
+        )
+        log_callback = wandb_logger.make_callback()
+    else:
+        log_callback = lambda x: None
+
     logger = pyllmq.TrainingRunLogger(
         str(out_dir / config.log_file),
+        callback=log_callback,
         verbosity=verbosity_map[config.verbosity]
     )
     logger.log_cmd(sys.argv)

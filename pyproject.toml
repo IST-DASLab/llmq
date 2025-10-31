@@ -40,7 +40,7 @@ minimum-version = "build-system.requires"
 wheel.py-api = "cp312"
 build.targets = ["_pyllmq"]
 build-dir = "build/{wheel_tag}"
-cmake.build-type = "Release"
+cmake.build-type = "RelWithDebInfo"
 
 [tool.scikit-build.cmake.define]
 PYTHON_BINDING = "ON"
