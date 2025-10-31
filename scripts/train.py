@@ -381,6 +381,9 @@ def main():
     for idx in range(config.gpus):
         logger.log_allocator(trainer.get_allocator_info(idx))
 
+    # calculate the expected time at peak flops for speed-of-light estimation
+    logger.set_expected_time_per_token(trainer)
+
     # preload first batch
     train_loader.load_batch(in_tokens, out_tokens)
 

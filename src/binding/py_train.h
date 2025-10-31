@@ -53,6 +53,8 @@ public:
     int world_size() const;
     int batch_size() const { return B; }
     int seq_length() const { return T; }
+    const LLamaConfig& config() const { return mConfig; }
+    const LLamaOptions& options() const { return mOptions; }
 
     std::vector<std::pair<std::string, std::size_t>> get_allocations(int gpu_id);
 

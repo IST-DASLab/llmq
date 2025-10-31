@@ -13,6 +13,7 @@
 #include "training/logging.h"
 #include "utilities/gpu_info.h"
 #include "utilities/safetensors.h"
+#include "utilities/sol.h"
 
 namespace nb = nanobind;
 
@@ -397,5 +398,14 @@ NB_MODULE(_pyllmq, m) {
         .def("log_checkpoint", &TrainingRunLogger::log_checkpoint,
              nb::arg("step"), nb::arg("path"), nb::arg("duration_ms"),
              "Log checkpoint save")
+         .def("set_expected_time_per_token", [](TrainingRunLogger* logger, const MultiGPUPyTrainer* trainer){
+             auto& config = trainer->config();
+             auto& options = trainer->options();
+                auto ops = get_transformer_ops(
+                    config.NumLayers * ((long)config.HiddenSize * (config.IntermediateSize * 3 + config.HiddenSize * 1 + config.qkv_channels())),
+                    options.MatmulType.value_or(config.DType), (long)config.VocabSize * config.HiddenSize, config.DType,
+                    config.NumQueryHeads * config.head_size(), config.NumLayers, trainer->seq_length());
+                 logger->set_expected_time_per_token(estimate_speed_of_light(get_gpu_name().c_str(), ops) / trainer->world_size());
+             })
         ;
 }
