@@ -1,5 +1,5 @@
-#ifndef HALO_CPP_SRC_BINDING_PY_TRAIN_H
-#define HALO_CPP_SRC_BINDING_PY_TRAIN_H
+#ifndef LLMQ_SRC_BINDING_PY_TRAIN_H
+#define LLMQ_SRC_BINDING_PY_TRAIN_H
 
 #include <string>
 #include <utility>
@@ -85,4 +85,4 @@ private:
 };
 
 
-#endif //HALO_CPP_SRC_BINDING_PY_TRAIN_H
+#endif //LLMQ_SRC_BINDING_PY_TRAIN_H

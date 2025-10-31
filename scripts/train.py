@@ -7,11 +7,10 @@
 import pyllmq
 import numpy as np
 import argparse
-import json
 import time
 import sys
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Tuple
 from dataclasses import dataclass, asdict
 
 
@@ -89,71 +88,8 @@ class TrainingConfig:
     all_to_all_reduce: bool = False
     write_combined: bool = False
 
-
-class TrainingLogger:
-    def __init__(self, log_file: str, rank: int):
-        self.log_file = Path(log_file)
-        self.rank = rank
-        self.logs = []
-
-    def log(self, entry: dict):
-        """Add a log entry"""
-        if self.rank == 0:
-            entry["timestamp"] = time.time()
-            self.logs.append(entry)
-
-    def save(self):
-        """Save logs to file"""
-        if self.rank == 0:
-            with open(self.log_file, 'w') as f:
-                json.dump(self.logs, f, indent=2)
-
-    def log_config(self, config: dict):
-        """Log training configuration"""
-        self.log({"type": "config", "data": config})
-
-    def log_step(self, step: int, epoch: float, tokens: int, time_ms: int,
-                 norm: float, loss: float, lr: float):
-        """Log a training step"""
-        self.log({
-            "type": "train_step",
-            "step": step,
-            "epoch": epoch,
-            "tokens": tokens,
-            "time_ms": time_ms,
-            "norm": norm,
-            "loss": loss,
-            "lr": lr,
-            "tok_per_sec": tokens * 1000.0 / time_ms if time_ms > 0 else 0
-        })
-
-    def log_eval(self, step: int, epoch: float, tokens: int, time_ms: int, loss: float):
-        """Log evaluation results"""
-        self.log({
-            "type": "eval",
-            "step": step,
-            "epoch": epoch,
-            "tokens": tokens,
-            "time_ms": time_ms,
-            "loss": loss
-        })
-
-    def log_checkpoint(self, step: int, path: str, time_ms: int):
-        """Log checkpoint save"""
-        self.log({
-            "type": "checkpoint",
-            "step": step,
-            "path": path,
-            "time_ms": time_ms
-        })
-
-    def log_gpu_state(self, step: int, gpu_info: dict):
-        """Log GPU utilization"""
-        self.log({
-            "type": "gpu_state",
-            "step": step,
-            "info": gpu_info
-        })
+    # Logging verbosity
+    verbosity: str = "default"
 
 
 class LRSchedule:
@@ -220,8 +156,9 @@ def setup_options(config: TrainingConfig) -> pyllmq.LLamaOptions:
 
 
 def run_evaluation(trainer: pyllmq.LLMQTrainer, eval_loader: pyllmq.DataLoader,
-                   in_tokens: np.ndarray, out_tokens: np.ndarray, max_steps: int) -> float:
+                   in_tokens: np.ndarray, out_tokens: np.ndarray, max_steps: int) -> Tuple[float, int]:
     """Run evaluation on test set"""
+    start_time = time.time()
     eval_loader.set_state(eval_loader.seed, 0, 0, 0)
     total_loss = 0.0
     batches = 0
@@ -234,9 +171,9 @@ def run_evaluation(trainer: pyllmq.LLMQTrainer, eval_loader: pyllmq.DataLoader,
 
     if batches == 0:
         print("WARNING: insufficient validation data", file=sys.stderr)
-        return 0.0
+        return 0.0, 0
 
-    return total_loss / batches
+    return total_loss / batches, int((time.time() - start_time) * 1000)
 
 
 def main():
@@ -319,6 +256,10 @@ def main():
     add_toggle("all-to-all-reduce", True, "Use custom all-to-all reduce which can be used with memcpy-send-recv")
     add_toggle("write-combined", False, "Use write-combined memory. May give faster PCIe transfers.")
 
+    # Logging
+    parser.add_argument("--verbosity", choices=["silent", "quiet", "default", "verbose"],
+                        default=default.verbosity, help="Logging verbosity level")
+
     args = parser.parse_args()
 
     # Create config from args
@@ -333,9 +274,21 @@ def main():
     ckpt_dir.mkdir(parents=True, exist_ok=True)
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    # Initialize logger
-    logger = TrainingLogger(config.log_file, rank=0)
-    logger.log_config(asdict(config))
+    # Logger setup
+    verbosity_map = {
+        "silent": pyllmq.LogVerbosity.SILENT,
+        "quiet": pyllmq.LogVerbosity.QUIET,
+        "default": pyllmq.LogVerbosity.DEFAULT,
+        "verbose": pyllmq.LogVerbosity.VERBOSE
+    }
+    logger = pyllmq.TrainingRunLogger(
+        str(out_dir / config.log_file),
+        verbosity=verbosity_map[config.verbosity]
+    )
+    logger.log_cmd(sys.argv)
+    log_options = asdict(config)
+    log_options["matmul_dtype"] = log_options["matmul_dtype"] or config.model_dtype
+    logger.log_options(log_options)
 
     # Load model configuration
     print(f"Loading model from {config.model}...")
@@ -353,6 +306,9 @@ def main():
 
     train_loader = pyllmq.DataLoader(train_files, config.batch_size * config.seq_len * config.gpus, seed=0x83b45442)
     eval_loader = pyllmq.DataLoader(eval_files, config.batch_size * config.seq_len * config.gpus, seed=0x83b45442)
+
+    # Log dataset information
+    logger.log_dataset(train_loader, eval_loader)
 
     total_batch_size = config.batch_size * config.seq_len * config.gpus * config.grad_accumulation
     steps_per_epoch = train_loader.num_tokens // total_batch_size
@@ -395,9 +351,9 @@ def main():
         config.learning_rate * config.final_lr_fraction
     )
 
-    print("\nmemory consumption:")
-    for k, v in trainer.get_allocator_info(0).items():
-        print(f" {k:20}: {v // 1024 // 1024:6} MiB")
+    # Log allocator stats
+    allocator_stats = trainer.get_allocator_info(0)
+    logger.log_allocator(allocator_stats)
 
     # preload first batch
     train_loader.load_batch(in_tokens, out_tokens)
@@ -433,14 +389,10 @@ def main():
 
         # Run evaluation
         if run_eval:
-            print("Running evaluation...")
-            start_time = time.time()
-            val_loss = run_evaluation(trainer, eval_loader, in_tokens, out_tokens, config.eval_num_steps)
-            elapsed_ms = int((time.time() - start_time) * 1000)
+            val_loss, elapsed_ms = run_evaluation(trainer, eval_loader, in_tokens, out_tokens, config.eval_num_steps)
             epoch = train_loader.epoch() + 0.01 * train_loader.progress()
-            logger.log_eval(step, epoch, config.eval_num_steps * config.batch_size * config.seq_len,
-                            elapsed_ms, val_loss)
-            print(f"Validation loss: {val_loss:.4f}")
+            eval_tokens = config.eval_num_steps * config.batch_size * config.seq_len * config.gpus
+            logger.log_eval(step, epoch, eval_tokens, elapsed_ms, val_loss)
 
         # Training step
         step_start = time.time()
@@ -458,13 +410,7 @@ def main():
                       f"rx: {info.pcie_rx // 1024 // 1024:4}MiB/s  tx: {info.pcie_tx // 1024 // 1024:4}MiB/s")
                 if hasattr(info, 'clock'):
                     print(f"         clock: {info.clock / 1000:.1f}GHz  fan: {info.fan:3}%")
-                logger.log_gpu_state(step, {
-                    "gpu": i,
-                    "power": info.power,
-                    "temperature": info.temperature,
-                    "pcie_rx": info.pcie_rx,
-                    "pcie_tx": info.pcie_tx
-                })
+                logger.log_gpu_state(step, i, info)
 
         # Optimizer update
         lr = lr_schedule.get_lr(step)
@@ -480,18 +426,9 @@ def main():
         logger.log_step(step, epoch, tokens_processed, elapsed_ms,
                         result['norm'], result['loss'], lr)
 
-        # Print progress
-        tok_per_sec = tokens_processed / step_time
-        print(f"step: {step:5}  loss: {result['loss']:6.3f}  norm: {result['norm']:6.3f}  "
-              f"lr: {lr:.2e}  time: {step_time:6.3f}s  tok/s: {tok_per_sec:8.1f}")
-
-        # Save logs periodically
-        if step % 10 == 0:
-            logger.save()
-
     # Final evaluation
     print("\nRunning final evaluation...")
-    final_loss = run_evaluation(trainer, eval_loader, in_tokens, out_tokens, eval_loader.num_chunks)
+    final_loss, _ = run_evaluation(trainer, eval_loader, in_tokens, out_tokens, eval_loader.num_chunks)
     print(f"Final validation loss: {final_loss:.4f}")
 
     # Save final model
@@ -499,9 +436,7 @@ def main():
     trainer.export_model(str(out_dir))
     print("done")
 
-    # Save final logs
-    logger.save()
-    print(f"\nTraining complete! Logs saved to {config.log_file}")
+    print(f"\nTraining complete! Logs saved to {out_dir / config.log_file}")
 
 
 if __name__ == "__main__":
