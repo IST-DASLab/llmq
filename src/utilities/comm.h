@@ -80,6 +80,8 @@ public:
     static void run_threads_communicators(int ngpus, bool memcpy_allgather, bool memcpy_send_recv, std::function<void(NCCLCommunicator& comm)> work);
     static  std::vector<std::jthread> launch_threads_communicators(int ngpus, bool memcpy_allgather, bool memcpy_send_recv, std::function<void(NCCLCommunicator& comm)> work);
 protected:
+    void terminate_nccl();
+
     void scatter_grad(float* value, std::size_t size);
     void scatter_grad(nv_bfloat16* value, std::size_t size);
 
