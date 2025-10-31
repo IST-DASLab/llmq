@@ -171,13 +171,18 @@ auto MultiGPUPyTrainer::fetch_work(sThreadContext& ctx) -> std::function<void(sT
     }
 }
 
-void MultiGPUPyTrainer::run_work(std::function<void(sThreadContext & ctx)> work) {
+void MultiGPUPyTrainer::run_work(std::function<void(sThreadContext & ctx)> work, int idx) {
     {
         std::lock_guard<std::mutex> lock(mGlobalMutex);
-        mWorkDone = 0;
 
-        for (auto& ctx: mContexts) {
-            ctx.Work = work;
+        if (idx >= 0) {
+            mWorkDone = mContexts.size() - 1;
+            mContexts.at(idx).Work = work;
+        } else {
+            mWorkDone = 0;
+            for (auto& ctx: mContexts) {
+                ctx.Work = work;
+            }
         }
     }
 
@@ -224,7 +229,11 @@ int MultiGPUPyTrainer::world_size() const {
     return mContexts.at(0).Communicator->world_size();
 }
 
-std::vector<std::pair<std::string, std::size_t>> MultiGPUPyTrainer::get_allocations(int gpu_id) const {
-    return mContexts.at(gpu_id).Model->get_allocator().get_allocation_segments();
+std::vector<std::pair<std::string, std::size_t>> MultiGPUPyTrainer::get_allocations(int gpu_id) {
+    std::vector<std::pair<std::string, std::size_t>> result;
+    run_work([&result](sThreadContext& ctx) {
+        result = ctx.Model->get_allocator().get_allocation_segments();
+    }, gpu_id);
+    return result;
 }
 

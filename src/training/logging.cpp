@@ -182,11 +182,16 @@ void TrainingRunLogger::log_eval(int step, float epoch, int eval_tokens, int dur
 
 void TrainingRunLogger::log_gpu_state(int step, int gpu_id, const GPUUtilInfo& gpu_util)
 {
-    if(mRank != 0) return;
     log_line(fmt::format(R"(  {{"log": "gpu", "time": "{}", "step": {}, "id": {}, "clock": {}, "max_clock": {}, "fan": {}, "power": {}, "power_limit": {}, "temperature": {}, "temp_slowdown": {}, "gpu_util": {}, "mem_util": {}, "throttle": "{}", "dram_free": {}, "pcie_rx": {}, "pcie_tx": {}}})",
        std::chrono::system_clock::now(), step, gpu_id, gpu_util.clock, gpu_util.max_clock, gpu_util.fan,
        gpu_util.power, gpu_util.power_limit, gpu_util.temperature, gpu_util.temp_slowdown, gpu_util.gpu_utilization,
        gpu_util.mem_utilization, gpu_util.throttle_reason, gpu_util.mem_free, gpu_util.pcie_rx, gpu_util.pcie_tx ));
+    if(mVerbosity >= 1) {
+        printf("[G] step %5d [gpu %2d] | power %4d W   | temp %3d /%3d°C | clock %4d MHz\n",
+               step, gpu_id, gpu_util.power / 1000, gpu_util.temperature, gpu_util.temp_slowdown, gpu_util.clock);
+        printf("                        | PCI↓%5d MiB/s| PCI↑%5d MiB/s\n",
+               static_cast<int>(gpu_util.pcie_rx / 1024 / 1024),  static_cast<int>(gpu_util.pcie_tx / 1024 / 1024));
+    }
 }
 
 void TrainingRunLogger::log_gpu_model(NCCLCommunicator& comm)

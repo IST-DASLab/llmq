@@ -262,8 +262,13 @@ def main():
     add_toggle("write-combined", False, "Use write-combined memory. May give faster PCIe transfers.")
 
     # Logging
-    parser.add_argument("--verbosity", choices=["silent", "quiet", "default", "verbose"],
-                        default=default.verbosity, help="Logging verbosity level")
+    parser.add_argument("-qq", "--silent", dest="verbosity", action="store_const", const="silent",
+                        help="Silent mode (no output)")
+    parser.add_argument("-q", "--quiet", dest="verbosity", action="store_const", const="quiet",
+                        help="Quiet mode (minimal output)")
+    parser.add_argument("-v", "--verbose", dest="verbosity", action="store_const", const="verbose",
+                        help="Verbose mode (detailed output)")
+    parser.set_defaults(verbosity=default.verbosity)
     parser.add_argument("--use-wandb", action="store_true", help="Enable Weights & Biases logging")
     parser.add_argument("--wandb-project", default=default.wandb_project, help="W&B project name (defaults to 'LLMQ')")
     parser.add_argument("--wandb-name", default=default.wandb_name, help="W&B run name")
@@ -373,8 +378,8 @@ def main():
     )
 
     # Log allocator stats
-    allocator_stats = trainer.get_allocator_info(0)
-    logger.log_allocator(allocator_stats)
+    for idx in range(config.gpus):
+        logger.log_allocator(trainer.get_allocator_info(idx))
 
     # preload first batch
     train_loader.load_batch(in_tokens, out_tokens)
@@ -427,10 +432,6 @@ def main():
         if config.log_gpu_util > 0 and step % config.log_gpu_util == 0:
             infos = trainer.get_gpu_info()
             for i, info in enumerate(infos):
-                print(f"GPU {i}:  power: {info.power // 1000:4}W  temp: {info.temperature:3}°C  "
-                      f"rx: {info.pcie_rx // 1024 // 1024:4}MiB/s  tx: {info.pcie_tx // 1024 // 1024:4}MiB/s")
-                if hasattr(info, 'clock'):
-                    print(f"         clock: {info.clock / 1000:.1f}GHz  fan: {info.fan:3}%")
                 logger.log_gpu_state(step, i, info)
 
         # Optimizer update

@@ -54,7 +54,7 @@ public:
     int batch_size() const { return B; }
     int seq_length() const { return T; }
 
-    std::vector<std::pair<std::string, std::size_t>> get_allocations(int gpu_id) const;
+    std::vector<std::pair<std::string, std::size_t>> get_allocations(int gpu_id);
 
 private:
     LLamaConfig mConfig;
@@ -80,7 +80,7 @@ private:
     std::atomic<int> mWorkDone = 0;
 
     std::function<void(sThreadContext& ctx)> fetch_work(sThreadContext& ctx);
-    void run_work(std::function<void(sThreadContext& ctx)> work);
+    void run_work(std::function<void(sThreadContext& ctx)> work, int idx=-1);
     void main_loop(NCCLCommunicator& comm);
 };
 
