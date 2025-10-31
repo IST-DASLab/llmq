@@ -337,8 +337,11 @@ NB_MODULE(_pyllmq, m) {
             new (t) TrainingRunLogger(file_name, 0, verbosity);
             if(!callback_obj.is_none()) {
                 auto cb = nb::cast<nb::callable>(callback_obj);
-                t->set_callback([cb = std::move(cb)](const std::string_view& msg) {
+                // set as an attribute on the python object to keep all ownership with python
+                nb::setattr(nb::cast(t), "_callback", cb);
+                t->set_callback([t](const std::string_view& msg) {
                     nb::gil_scoped_acquire gil;
+                    auto cb = nb::cast<nb::callable>(nb::getattr(nb::cast(t), "_callback"));
                     cb(nb::cast(std::string(msg)));
                 });
             }

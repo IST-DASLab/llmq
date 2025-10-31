@@ -414,7 +414,6 @@ std::vector<std::jthread> NCCLCommunicator::launch_threads_communicators(int ngp
             nvtxNameOsThread(pthread_self(), "worker");
             work(comm);
             bar->Barrier->arrive_and_wait();
-            printf("Worker %d finished\n", i);
         }
         );
     }

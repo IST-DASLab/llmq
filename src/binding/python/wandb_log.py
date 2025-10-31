@@ -5,6 +5,9 @@ class WandbLog:
     def __init__(self, run):
         self.run = run
 
+    def finish(self):
+        self.run.finish()
+
     def log_line(self, entry: dict):
         kind = entry["log"]
         del entry["log"]
