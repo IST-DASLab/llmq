@@ -142,6 +142,7 @@ TensorAllocator::~TensorAllocator() noexcept {
                 case EAllocationType::MANAGED:
                     CUDA_CHECK(cudaFree(ptr.Pointer));
                     break;
+                case EAllocationType::WRITE_CMB:
                 case EAllocationType::PINNED:
                     CUDA_CHECK(cudaFreeHost(ptr.Pointer));
                     break;
