@@ -216,19 +216,21 @@ TensorAllocator::AllocationMonitor::~AllocationMonitor() {
     mAllocator->set_context(mParent);
 }
 
-std::vector<std::pair<std::string, std::size_t>> TensorAllocator::get_allocation_segments() const {
-    std::size_t sum = 0;
-    std::vector<std::pair<std::string, std::size_t>> segments;
+std::vector<std::pair<std::string, sSegmentMemory>> TensorAllocator::get_allocation_segments() const {
+    long sum = 0;
+    std::vector<std::pair<std::string, sSegmentMemory>> segments;
     for (const auto& [name, amount]: m_Stats->ContextStats) {
-        segments.emplace_back(name, amount.ON_DEVICE);
+        segments.emplace_back(name, sSegmentMemory{amount.ON_DEVICE, amount.MANAGED, amount.PINNED + amount.WRITE_CMB, amount.ON_HOST});
         sum += amount.ON_DEVICE;
     }
-    std::size_t free;
-    std::size_t total;
-    std::size_t reserved = get_mem_reserved();
+    std::size_t free = 0;
+    std::size_t total = 0;
+    long reserved = get_mem_reserved();
     CUDA_CHECK(cudaMemGetInfo(&free, &total));
-    segments.emplace_back("Free", free);
-    segments.emplace_back("Reserved", reserved);
-    segments.emplace_back("Other", total - free - sum - reserved);
+    segments.emplace_back("Free", sSegmentMemory{(long)free, 0, 0, 0});
+    if(reserved > 0) {
+        segments.emplace_back("Reserved", sSegmentMemory{reserved, 0, 0, 0});
+    }
+    segments.emplace_back("Other", sSegmentMemory{(long)total - (long)free - sum - reserved, 0, 0, 0});
     return segments;
 }

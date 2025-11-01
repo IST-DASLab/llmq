@@ -229,8 +229,8 @@ int MultiGPUPyTrainer::world_size() const {
     return mContexts.at(0).Communicator->world_size();
 }
 
-std::vector<std::pair<std::string, std::size_t>> MultiGPUPyTrainer::get_allocations(int gpu_id) {
-    std::vector<std::pair<std::string, std::size_t>> result;
+std::vector<std::pair<std::string, sSegmentMemory>> MultiGPUPyTrainer::get_allocations(int gpu_id) {
+    std::vector<std::pair<std::string, sSegmentMemory>> result;
     run_work([&result](sThreadContext& ctx) {
         result = ctx.Model->get_allocator().get_allocation_segments();
     }, gpu_id);
