@@ -301,7 +301,7 @@ def main():
     }
 
     wandb_context = contextlib.nullcontext()
-    log_callback = lambda x: None
+    log_callback = None
 
     if config.use_wandb:
         wandb_logger = pyllmq.setup_wandb(

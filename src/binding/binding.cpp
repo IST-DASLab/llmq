@@ -332,7 +332,7 @@ NB_MODULE(_pyllmq, m) {
         .value("VERBOSE", TrainingRunLogger::EVerbosity::VERBOSE)
         ;
 
-    nb::class_<TrainingRunLogger>(m, "TrainingRunLogger")
+    nb::class_<TrainingRunLogger>(m, "TrainingRunLogger", nb::dynamic_attr())
         .def("__init__", [](TrainingRunLogger *t, const std::string& file_name, nb::object callback_obj, TrainingRunLogger::EVerbosity verbosity) {
             new (t) TrainingRunLogger(file_name, 0, verbosity);
             if(!callback_obj.is_none()) {
