@@ -272,14 +272,25 @@ using `uv build --wheel`.
 The [demo.py](scripts/demo.py) script provides an example of how to use the bindings. Running it with `uv run pyllmq-demo` will trigger the wheel build automatically.
 
 Pre-built wheels are available from [GitHub Releases](https://github.com/IST-DASLab/llmq/releases) for convenience.
-Download the latest `.whl` file and install it with `uv pip install 'pyllmq-0.2.0-cp312-abi3-linux_x86_64.whl[scripts]'`, or run example scripts directly: `uv run --with 'pyllmq-0.2.0-cp312-abi3-linux_x86_64.whl[scripts]' pyllmq-demo`, replacing the file name as appropriate. The `[scripts]` extra installes additional packages that aren't strictly required for pyllmq, but are used in the utility scripts, such as `datasets` and `matplotlib`.
-The wheels are built against CUDA 12.9 and support compute capabilities 89, 90, 100f, and 120f.
+Download the latest `.whl` file and install it with `uv pip install 'pyllmq-0.2.0-cp312-abi3-linux_x86_64.whl[scripts]'`, 
+or run example scripts directly: `uv run --with 'pyllmq-0.2.0+cu128-cp312-abi3-linux_x86_64.whl[scripts]' pyllmq-demo`, replacing the file name as appropriate. The `[scripts]` extra installs additional packages that aren't strictly required for pyllmq, but are used in the utility scripts, such as `datasets` and `matplotlib`.
+The wheels are built against CUDA 12.8 and 13.0 and support compute capabilities 89, 90, 100f, and 120f.
 
 By design, the bindings expose only coarse-grained operations; that is, the minimum unit
 of work is a full forward+backward pass across all GPUs. While this may be a bit inflexible,
 it allows benefiting from the full optimization of the C++ backend, and there are no GPU-CPU
 synchronizations until the `update` call.
 
+You can also use the fully-fledged training script in [scripts/train.py](scripts/train.py), which
+has mostly feature-parity with the C++ version. It is a bit less debuggable, 
+but does support directly logging to weights and biases, which can be very convenient. 
+The python version supports only multi-threaded mode, but not multi-process.
+
+Note that the pre-built wheel files declare dependencies on specific cuda version packages, but the
+`pyproject.toml` does no such declaration; during development, it is expected that you manage
+the cuda version yourself/use the system installation of cude, not a pip-provided one.
+The [wheel build-script](.github/workflows/wheel.yml) [modifies](.github/scripts/add_cuda_deps.py) the 
+toml file just before building the wheel.
 
 ## Code organization
 The [src](src) directory contains four major subdirectories:
