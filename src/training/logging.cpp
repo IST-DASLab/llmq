@@ -14,6 +14,7 @@
 #include "utilities/comm.h"
 #include "utilities/gpu_info.h"
 #include "utilities/utils.h"
+#include "utilities/allocator.h"
 #include <iostream>
 
 TrainingRunLogger::TrainingRunLogger(const std::string& file_name, int rank, EVerbosity verbosity) :
@@ -275,14 +276,15 @@ void TrainingRunLogger::log_line(std::string_view line) {
     mFirst = false;
 }
 
-void TrainingRunLogger::log_allocator(const std::vector<std::pair<std::string, std::size_t>>& stats) {
+void TrainingRunLogger::log_allocator(const std::vector<std::pair<std::string, sSegmentMemory>>& stats) {
     if (mRank != 0) return;
     std::string stat_str = "[";
     bool first = true;
     for (auto& [name, amount]: stats) {
         if (!first) stat_str += ", ";
         first = false;
-        stat_str += fmt::format("{{\"name\": \"{}\", \"amount\": {}}}", name, amount);
+        stat_str += fmt::format("{{\"name\": \"{}\", \"device\": {}, \"managed\": {}, \"pinned\": {}, \"pageable\": {}}}",
+                                name, amount.OnDevice, amount.Managed, amount.PinnedHost, amount.PageableHost);
     }
     stat_str += "]";
     std::string line = fmt::format(R"(  {{"log": "allocator", "time": "{}", "step": 0, "stats": {}}})", std::chrono::system_clock::now(), stat_str);
@@ -290,8 +292,9 @@ void TrainingRunLogger::log_allocator(const std::vector<std::pair<std::string, s
 
     if (mVerbosity >= 0) {
         printf("[Allocator State]\n");
+        printf(" %17s  Device | Managed | Pinned \n", "in MiB");
         for (auto& [name, amount]: stats) {
-            printf("  %16s: %5zu MiB\n", name.c_str(), amount / 1024 / 1024);
+            printf("  %16s: %6zu | %7zu | %6zu \n", name.c_str(), amount.OnDevice / 1024 / 1024, amount.Managed / 1024 / 1024, amount.PinnedHost / 1024 / 1024);
         }
     }
 }

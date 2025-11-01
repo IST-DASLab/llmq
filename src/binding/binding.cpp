@@ -285,7 +285,12 @@ NB_MODULE(_pyllmq, m) {
             auto alloc = trainer->get_allocations(gpu_id);
             nb::dict ret;
             for(const auto& [name, size] : alloc) {
-                ret[nb::cast(name)] = size;
+                nb::dict res;
+                res["device"] = size.OnDevice;
+                res["managed"] = size.Managed;
+                res["pinned"] = size.PinnedHost;
+                res["pageable"] = size.PageableHost;
+                ret[nb::cast(name)] = res;
             }
             return ret;
             }, nb::arg("gpu_id") = 0, "Get the current memory allocations for the given GPU")
@@ -393,12 +398,16 @@ NB_MODULE(_pyllmq, m) {
              nb::arg("step"), nb::arg("gpu_id"), nb::arg("gpu_util"),
              "Log GPU utilization state")
         .def("log_allocator", [](TrainingRunLogger* logger, const nb::dict& stats) {
-            std::vector<std::pair<std::string, std::size_t>> cpp_stats;
+            std::vector<std::pair<std::string, sSegmentMemory>> cpp_stats;
             cpp_stats.reserve(stats.size());
             for (auto item : stats) {
                 std::string key = nb::cast<std::string>(item.first);
-                std::size_t value = nb::cast<std::size_t>(item.second);
-                cpp_stats.emplace_back(key, value);
+                nb::dict value = nb::cast<nb::dict>(item.second);
+                long device = nb::cast<long>(value["device"]);
+                long managed = nb::cast<long>(value["managed"]);
+                long pinned = nb::cast<long>(value["pinned"]);
+                long pageable = nb::cast<long>(value["pageable"]);
+                cpp_stats.emplace_back(key, sSegmentMemory{device, managed, pinned, pageable});
             }
             logger->log_allocator(cpp_stats);
         }, nb::arg("stats"), "Log memory allocator statistics")

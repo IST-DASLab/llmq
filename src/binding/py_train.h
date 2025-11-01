@@ -12,6 +12,7 @@
 class DataLoader;
 class IGPUUtilTracker;
 struct GPUUtilInfo;
+struct sSegmentMemory;
 
 //! \brief A multi-GPU trainer wrapper to be used for python bindings
 //! \details When wrapping llm.q for python, the  main source of difficulty is handling
@@ -56,7 +57,7 @@ public:
     const LLamaConfig& config() const { return mConfig; }
     const LLamaOptions& options() const { return mOptions; }
 
-    std::vector<std::pair<std::string, std::size_t>> get_allocations(int gpu_id);
+    std::vector<std::pair<std::string, sSegmentMemory>> get_allocations(int gpu_id);
 
 private:
     LLamaConfig mConfig;

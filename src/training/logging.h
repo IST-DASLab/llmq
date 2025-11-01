@@ -12,6 +12,7 @@
 #include <functional>
 
 struct GPUUtilInfo;
+struct sSegmentMemory;
 class NCCLCommunicator;
 class DataLoader;
 
@@ -38,7 +39,7 @@ public:
     void log_step(int step, float epoch, int step_tokens, int duration_ms, float norm, float loss, float lr);
     void log_eval(int step, float epoch, int eval_tokens, int duration_ms, float loss);
     void log_gpu_state(int step, int gpu_id, const GPUUtilInfo& gpu_util);
-    void log_allocator(const std::vector<std::pair<std::string, std::size_t>>& stats);
+    void log_allocator(const std::vector<std::pair<std::string, sSegmentMemory>>& stats);
 
     void log_checkpoint(int step, std::string path, int duration_ms);
 private:

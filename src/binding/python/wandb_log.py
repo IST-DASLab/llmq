@@ -45,7 +45,7 @@ class WandbLog:
         elif kind == "allocator":
             import plotly.express as px
             names = [alloc["name"] for alloc in entry["stats"]]
-            amounts = [round(alloc["amount"] / 1024 / 1024, 1) for alloc in entry["stats"]]
+            amounts = [round(alloc["device"] / 1024 / 1024, 1) for alloc in entry["stats"]]
 
             fig = px.pie(
                 names=names,

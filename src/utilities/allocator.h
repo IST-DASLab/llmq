@@ -23,6 +23,13 @@ enum class EAllocationType : int {
     ON_HOST     // new[]
 };
 
+struct sSegmentMemory {
+    long OnDevice;
+    long Managed;
+    long PinnedHost;
+    long PageableHost;
+};
+
 class TensorAllocator {
 public:
     TensorAllocator();
@@ -60,7 +67,7 @@ public:
 
     [[nodiscard]] AllocationMonitor with_context(const std::string& ctx) { return AllocationMonitor(ctx, this); }
 
-    std::vector<std::pair<std::string, std::size_t>> get_allocation_segments() const;
+    std::vector<std::pair<std::string, sSegmentMemory>> get_allocation_segments() const;
 private:
 
     template<typename Container>
