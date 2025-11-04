@@ -25,7 +25,7 @@ LLamaModel::~LLamaModel() = default;
 void forward_qmm(Tensor& out, QuantizableTensor& inp, Tensor& weight, std::optional<Tensor> bias,
                  cublasLtHandle_t handle, Tensor workspace,
                  int B, int T, int C, int OC,
-                 const cudaDeviceProp& dp, bool reuse_inp_quant, bool inp_has_abs_max,
+                 const cudaDeviceProp& dp, bool reuse_inp_quant,
                  cudaStream_t stream) {
     if (weight.DType == inp.Value.DType) {
         matmul(out, weight, inp.Value, bias, nullptr, handle, workspace, OC, B*T, C, EMMTranspose::TN, false, stream);
@@ -35,9 +35,6 @@ void forward_qmm(Tensor& out, QuantizableTensor& inp, Tensor& weight, std::optio
         float* out_scale = out.Scales;
 
         if (!reuse_inp_quant) {
-            if(!inp_has_abs_max) {
-                abs_max(act_scale, inp.Value, B * T * C, dp, stream);
-            }
             quantize_with_abs_max(inp.Quant.value(), inp.Value, act_scale, B*T*C, dp, stream);
         }
 
@@ -182,16 +179,20 @@ void LLamaModel::_forward_block(int layer, sLLamaBlockWeights<Tensor>& weights)
     forward_qmm(acts.QKV, acts.LN1, weights.Attn_QKV_w, weights.Attn_QKV_b,
                 rs->CublasLtHandle, rs->Workspace,
                 B, T, C, Config.qkv_channels(),
-                rs->DeviceProp, false, true, main_stream);
+                rs->DeviceProp, false, main_stream);
     // 2) apply RoPE to q,k (potentially in place)
     rope_forward(acts.Rope, acts.QKV, rs->FreqCis, B, T, Hq, Hkv, Hs, main_stream);
     // 3) attention: att <- softmax(qk^T)v
     attention_forward_cudnn(acts.Att.Value, acts.LSE, acts.Rope, rs->Workspace, rs->CudnnHandle, B, T, Hq, Hkv, Hs, main_stream);
+    // quantize attention if necessary
+    if(acts.Att.Quant.has_value()) {
+        abs_max(acts.Att.Quant->Scales, acts.Att.Value, acts.Att.Value.nelem(), rs->DeviceProp, main_stream);
+    }
 
     forward_qmm(acts.AttO, acts.Att, weights.Attn_Out_w, std::nullopt,
                 rs->CublasLtHandle, rs->Workspace,
                 B, T, C, C,
-                rs->DeviceProp, false, false, main_stream);
+                rs->DeviceProp, false, main_stream);
 
     fused_residual_rmsnorm_forward(acts.ResidualAtt, acts.LN2.Value, acts.LN2_Rstd, residual, acts.AttO, weights.LN2_w,
                                    quant_abs_max_ptr(acts.LN2), Config.RmsNormEps, B * T, C, main_stream);
@@ -199,13 +200,13 @@ void LLamaModel::_forward_block(int layer, sLLamaBlockWeights<Tensor>& weights)
     forward_qmm(acts.MlpUp, acts.LN2, weights.MLP_Up_w, std::nullopt,
                 rs->CublasLtHandle, rs->Workspace,
                 B, T, C, 2 * D,
-                rs->DeviceProp, false, true, main_stream);
+                rs->DeviceProp, false, main_stream);
     swiglu_forward(acts.SwiGLu.Value, acts.MlpUp, quant_abs_max_ptr(acts.SwiGLu), B, T, D, main_stream);
 
     forward_qmm(acts.MlpDown, acts.SwiGLu, weights.MLP_Down_w, std::nullopt,
                 rs->CublasLtHandle, rs->Workspace,
                 B, T, D, C,
-                rs->DeviceProp, false, true, main_stream);
+                rs->DeviceProp, false, main_stream);
 }
 
 float LLamaModel::validate(Tensor inputs, Tensor targets, NCCLCommunicator& comm, int micro_step) {
@@ -245,7 +246,7 @@ void backward_qmm(Tensor& dinp, Tensor& dweight, std::optional<Tensor> dbias,
                   bool accumulate_gradient,
                   LLamaRunState& rs,
                   int B, int T, int C, int OC,
-                  bool reuse_inp, bool dout_has_absmax, cudaStream_t stream) {
+                  bool reuse_inp, cudaStream_t stream) {
     if (weight.DType == inp.Value.DType) {
         matmul(dinp, weight, dout.Value, std::nullopt, nullptr, rs.CublasLtHandle, rs.Workspace, C, B*T, OC, EMMTranspose::NN, false, stream);
         matmul(dweight, inp.Value, dout.Value, std::nullopt, nullptr, rs.CublasLtHandle, rs.Workspace, C, OC, B*T, EMMTranspose::NT, accumulate_gradient, stream);
@@ -260,9 +261,6 @@ void backward_qmm(Tensor& dinp, Tensor& dweight, std::optional<Tensor> dbias,
         float* dinp_scale = rs.MatmulScales.get<float>();
         float* dwgt_scale = dinp_scale + 1;
 
-        if (!dout_has_absmax) {
-            abs_max(dout_scale, dout.Value, B*T*OC, rs.DeviceProp, stream);
-        }
         quantize_with_abs_max(dout.Quant.value(), dout.Value, dout_scale, B*T*OC, rs.DeviceProp, stream);
         transpose(rs.GradientTranspose, dout.Quant.value(), B*T, OC, stream);
 
@@ -436,7 +434,7 @@ void LLamaModel::_recompute_block(int layer, sLLamaBlockWeights<Tensor>& weights
         forward_qmm(acts.QKV, acts.LN1, weights.Attn_QKV_w, weights.Attn_QKV_b,
                      rs->CublasLtHandle, rs->Workspace,
                      B, T, C, Config.qkv_channels(),
-                     rs->DeviceProp, !recompute_ln1, true, main_stream);
+                     rs->DeviceProp, !recompute_ln1, main_stream);
         rope_forward(acts.Rope, acts.QKV, rs->FreqCis, B, T, Hq, Hkv, Hs, main_stream);
     }
 
@@ -448,7 +446,7 @@ void LLamaModel::_recompute_block(int layer, sLLamaBlockWeights<Tensor>& weights
             forward_qmm(acts.AttO, acts.Att, weights.Attn_Out_w, std::nullopt,
                          rs->CublasLtHandle, rs->Workspace,
                          B, T, C, C,
-                         rs->DeviceProp, false, true, main_stream);
+                         rs->DeviceProp, false, main_stream);
         }
     }
 
@@ -468,7 +466,7 @@ void LLamaModel::_recompute_block(int layer, sLLamaBlockWeights<Tensor>& weights
         forward_qmm(acts.MlpUp, acts.LN2, weights.MLP_Up_w, std::nullopt,
                          rs->CublasLtHandle, rs->Workspace,
                          B, T, C, 2 * D,
-                         rs->DeviceProp, false, true, main_stream);
+                         rs->DeviceProp, false, main_stream);
     }
 
     if(recompute_swiglu) {
@@ -498,12 +496,12 @@ void LLamaModel::_backward_block(int layer, bool accumulate, sLLamaBlockWeights<
     // backward the 2nd matmul of MLP
     // note that _recompute_block guarantees that if SwiGLu is already quantized (if necessary)
     backward_qmm(d_acts.DSwiGLU, d_weights.MLP_Down_w, std::nullopt, d_acts.DResFFN, acts.SwiGLu, weights.MLP_Down_w, std::nullopt,
-                 accumulate, *rs, B, T, D, C, true, true, main_stream);
+                 accumulate, *rs, B, T, D, C, true, main_stream);
 
     swiglu_backward(d_acts.DMlpUp.Value, d_acts.DSwiGLU, acts.MlpUp, quant_abs_max_ptr(d_acts.DMlpUp), B, T, D, main_stream);
 
     backward_qmm(d_acts.DLN2, d_weights.MLP_Up_w, std::nullopt, d_acts.DMlpUp, acts.LN2, weights.MLP_Up_w, std::nullopt,
-                 accumulate, *rs, B, T, C, 2 * D, !rs->Options.RecomputeRMSNorm, true, main_stream);
+                 accumulate, *rs, B, T, C, 2 * D, !rs->Options.RecomputeRMSNorm, main_stream);
 
     // rmsnorm backward does += to the dresidual, so it correctly accumulates grad from the MLP block above
     rmsnorm_backward(d_acts.DResAtt.Value, d_weights.LN2_w, rs->RMSNormScratch, d_acts.DResFFN.Value, d_acts.DLN2,
@@ -511,13 +509,17 @@ void LLamaModel::_backward_block(int layer, bool accumulate, sLLamaBlockWeights<
 
     bool recompute_ln1 = rs->Options.RecomputeRMSNorm || rs->Options.RecomputeAtt;
     backward_qmm(d_acts.DAttY, d_weights.Attn_Out_w, std::nullopt, d_acts.DResAtt, acts.Att, weights.Attn_Out_w, std::nullopt,
-                 accumulate, *rs, B, T, C, C, false, true, main_stream);
+                 accumulate, *rs, B, T, C, C, false, main_stream);
 
     attention_backward_cudnn(d_acts.DRope, acts.LSE, acts.Att.Value, d_acts.DAttY, acts.Rope, rs->Workspace, rs->CudnnHandle, B, T, Hq, Hkv, Hs, main_stream);
     rope_backward(d_acts.DQKV.Value, d_acts.DRope, rs->FreqCis, B, T, Hq, Hkv, Hs, main_stream);
 
+    if (d_acts.DQKV.Quant.has_value()) {
+        abs_max(d_acts.DQKV.Quant->Scales, d_acts.DQKV.Value, d_acts.DQKV.Value.nelem(), rs->DeviceProp, main_stream);
+    }
+
     backward_qmm(d_acts.DLN1, d_weights.Attn_QKV_w, d_weights.Attn_QKV_b, d_acts.DQKV, acts.LN1, weights.Attn_QKV_w, rs->MatmulBiasScratch,
-                       accumulate, *rs, B, T, C, Config.qkv_channels(), !recompute_ln1, false, main_stream);
+                 accumulate, *rs, B, T, C, Config.qkv_channels(), !recompute_ln1, main_stream);
 
     if(layer > 0) {
         auto& prev_dacts = rs->DActs.at(layer - 1);
