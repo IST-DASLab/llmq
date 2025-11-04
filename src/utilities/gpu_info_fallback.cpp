@@ -60,3 +60,7 @@ std::string get_gpu_name() {
     CUDA_CHECK(cudaGetDeviceProperties(&prop, dev));
     return prop.name;
 }
+
+bool set_cpu_affinity() {
+    return false;
+}

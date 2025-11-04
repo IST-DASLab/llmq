@@ -245,3 +245,8 @@ std::string get_gpu_name() {
     NVML_CHECK(nvmlDeviceGetName(nvml_get_device(), name, 256));
     return name;
 }
+
+bool set_cpu_affinity() {
+    auto status = nvmlDeviceSetCpuAffinity(nvml_get_device());
+    return status == NVML_SUCCESS;
+}
