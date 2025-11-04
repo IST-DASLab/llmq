@@ -32,6 +32,9 @@ struct GPUUtilInfo {
 
 std::size_t get_mem_reserved();
 std::string get_gpu_name();
+//! Sets the CPU affinity of the calling thread to be optimal for the current device
+//! Returns true if successful
+bool set_cpu_affinity();
 
 class IGPUUtilTracker {
 public:

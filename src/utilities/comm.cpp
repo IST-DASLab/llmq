@@ -11,6 +11,7 @@
 #include <nccl.h>
 #include <fmt/core.h>
 
+#include "gpu_info.h"
 #include "kernels/kernels.h"
 #include "tensor.h"
 #include "utils.h"
@@ -410,6 +411,9 @@ std::vector<std::jthread> NCCLCommunicator::launch_threads_communicators(int ngp
     auto bar = std::make_shared<NCCLCommunicatorThreads::SharedState>(std::make_unique<std::barrier<>>(ngpus), std::vector<std::byte*>(ngpus));
     for(int i = 0; i < ngpus; ++i) {
         threads.emplace_back([i, ngpus, nccl_id, memcpy_allgather, memcpy_send_recv, work, bar]() {
+            if (!set_cpu_affinity()) {
+                fprintf(stderr, "Failed to set CPU affinity for rank %d\n", i);
+            }
             NCCLCommunicatorThreads comm(i, ngpus, memcpy_allgather, memcpy_send_recv, &nccl_id, bar);
             nvtxNameOsThread(pthread_self(), "worker");
             work(comm);
