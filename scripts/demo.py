@@ -7,7 +7,6 @@
 # Note: make sure pyllmq.cpython... is on the path, or run with uv
 import pyllmq
 import numpy as np
-import os
 import time
 from tqdm import tqdm
 from pathlib import Path

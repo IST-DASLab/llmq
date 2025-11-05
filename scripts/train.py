@@ -1,125 +1,19 @@
 #!/usr/bin/env -S uv run --script
 # /// script
 # requires-python = ">=3.12"
-# dependencies = ["pyllmq", "tqdm", "numpy", "wandb"]
+# dependencies = ["pyllmq", "numpy", "wandb"]
 # ///
 
 import pyllmq
 import numpy as np
 import argparse
-import contextlib
 import sys
 import time
 from pathlib import Path
-from typing import Optional, Tuple
-from dataclasses import dataclass, asdict
+from typing import Tuple
 
 
-@dataclass
-class TrainingConfig:
-    # Model configuration
-    model: str = "Qwen/Qwen2.5-0.5B"
-    from_scratch: bool = False
-    init_proj_to_zero: bool = False
-    model_dtype: str = "bfloat16"
-    matmul_dtype: Optional[str] = None
-
-    # Batch configuration
-    batch_size: int = 1
-    seq_len: int = 1024
-    grad_accumulation: int = 4
-
-    # Optimizer configuration
-    learning_rate: float = 1e-5
-    warmup_steps: int = -1
-    final_lr_fraction: float = 1.0
-    beta_1: float = 0.9
-    beta_2: float = 0.95
-    opt_m_dtype: str = "float32"
-    opt_v_dtype: str = "float32"
-    grad_clip: float = 1.0
-    weight_decay: float = 0.1
-
-    # Training steps
-    steps: int = -1
-
-    # Evaluation
-    eval_every: int = 100
-    eval_num_steps: int = 100
-
-    # Data files
-    train_file: str = "data/tiny-stories-qwen/train*.bin"
-    eval_file: str = "data/tiny-stories-qwen/eval.bin"
-
-    # Output and checkpointing
-    out_dir: str = "output"
-    checkpoint_dir: str = "ckpt"
-    log_file: str = "log.json"
-    ckpt_interval: int = 1000
-    ckpt_keep_n: int = -1
-    ckpt_major: int = -1
-    continue_from_checkpoint: bool = False
-    log_gpu_util: int = 25
-
-    # Multi-GPU
-    gpus: int = 1
-
-    # Memory optimization options
-    recompute_swiglu: bool = False
-    recompute_norm: bool = False
-    recompute_ffn: bool = False
-    recompute_qkv: bool = False
-    recompute_att: bool = False
-    recompute_block: bool = False
-
-    # Distributed training options
-    zero_level: int = 1
-    shard_weights: bool = False
-    shard_gradients: bool = False
-    offload_master: bool = False
-    offload_quants: bool = False
-    offload_opt_m: bool = False
-    offload_opt_v: bool = False
-    persistent_quants: bool = False
-
-    # Performance options
-    use_cuda_graphs: bool = True
-    memcpy_all_gather: bool = False
-    memcpy_send_recv: bool = False
-    all_to_all_reduce: bool = False
-    write_combined: bool = False
-
-    # Logging verbosity
-    verbosity: str = "default"
-
-    # Wandb integration
-    use_wandb: bool = False
-    wandb_project: str = ""
-    wandb_name: str = "llmq"
-
-
-class LRSchedule:
-    def __init__(self, base_lr: float, max_steps: int, warmup_steps: int, final_lr: float):
-        self.base_lr = base_lr
-        self.max_steps = max_steps
-        self.warmup_steps = warmup_steps if warmup_steps >= 0 else 0
-        self.final_lr = final_lr
-
-    def get_lr(self, step: int) -> float:
-        """Calculate learning rate for given step"""
-        if step < self.warmup_steps:
-            # Linear warmup
-            return self.base_lr * (step + 1) / self.warmup_steps
-        elif self.warmup_steps < self.max_steps:
-            # Cosine decay
-            progress = (step - self.warmup_steps) / (self.max_steps - self.warmup_steps)
-            cosine_decay = 0.5 * (1.0 + np.cos(np.pi * progress))
-            return self.final_lr + (self.base_lr - self.final_lr) * cosine_decay
-        else:
-            return self.final_lr
-
-
-def setup_options(config: TrainingConfig) -> pyllmq.LLamaOptions:
+def setup_options(config: pyllmq.TrainingConfig) -> pyllmq.LLamaOptions:
     """Configure LLamaOptions from training config"""
     options = pyllmq.LLamaOptions()
 
@@ -184,7 +78,7 @@ def run_evaluation(trainer: pyllmq.LLMQTrainer, eval_loader: pyllmq.DataLoader,
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Train LLaMa model")
-    default = TrainingConfig()
+    default = pyllmq.TrainingConfig()
 
     # Model configuration
     parser.add_argument("--model", default=default.model, help="Path to model directory or HuggingFace model name")
@@ -263,11 +157,11 @@ def parse_args():
     add_toggle("write-combined", False, "Use write-combined memory. May give faster PCIe transfers.")
 
     # Logging
-    parser.add_argument("-qq", "--silent", dest="verbosity", action="store_const", const="silent",
+    parser.add_argument("-qq", "--silent", dest="verbosity", action="store_const", const=pyllmq.LogVerbosity.SILENT,
                         help="Silent mode (no output)")
-    parser.add_argument("-q", "--quiet", dest="verbosity", action="store_const", const="quiet",
+    parser.add_argument("-q", "--quiet", dest="verbosity", action="store_const", const=pyllmq.LogVerbosity.QUIET,
                         help="Quiet mode (minimal output)")
-    parser.add_argument("-v", "--verbose", dest="verbosity", action="store_const", const="verbose",
+    parser.add_argument("-v", "--verbose", dest="verbosity", action="store_const", const=pyllmq.LogVerbosity.VERBOSE,
                         help="Verbose mode (detailed output)")
     parser.set_defaults(verbosity=default.verbosity)
     parser.add_argument("--use-wandb", action="store_true", help="Enable Weights & Biases logging")
@@ -276,7 +170,7 @@ def parse_args():
 
 
     args = parser.parse_args()
-    return TrainingConfig(**vars(args))
+    return pyllmq.TrainingConfig(**vars(args))
 
 
 def main():
@@ -292,37 +186,7 @@ def main():
     ckpt_dir.mkdir(parents=True, exist_ok=True)
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    # Logger setup
-    verbosity_map = {
-        "silent": pyllmq.LogVerbosity.SILENT,
-        "quiet": pyllmq.LogVerbosity.QUIET,
-        "default": pyllmq.LogVerbosity.DEFAULT,
-        "verbose": pyllmq.LogVerbosity.VERBOSE
-    }
-
-    wandb_context = contextlib.nullcontext()
-    log_callback = None
-
-    if config.use_wandb:
-        wandb_logger = pyllmq.setup_wandb(
-            project_name=config.wandb_project or "llmq",
-            config=asdict(config),
-            name=config.wandb_name,
-        )
-        log_callback = wandb_logger.make_callback()
-        wandb_context = wandb_logger.run
-
-    with wandb_context:
-        logger = pyllmq.TrainingRunLogger(
-            str(out_dir / config.log_file),
-            callback=log_callback,
-            verbosity=verbosity_map[config.verbosity]
-        )
-        logger.log_cmd(sys.argv)
-        log_options = asdict(config)
-        log_options["matmul_dtype"] = log_options["matmul_dtype"] or config.model_dtype
-        logger.log_options(log_options)
-
+    with pyllmq.training_logger_context(config) as logger:
         # Setup data loaders
         train_files = list(map(str, Path.glob(Path(), config.train_file)))
         eval_files = list(map(str, Path.glob(Path(), config.eval_file)))
@@ -375,7 +239,7 @@ def main():
             config.steps = steps_per_epoch
 
         # Setup learning rate schedule
-        lr_schedule = LRSchedule(
+        lr_schedule = pyllmq.CosineLRSchedule(
             config.learning_rate,
             config.steps,
             config.warmup_steps,
@@ -404,8 +268,8 @@ def main():
         print(f"\nTraining complete! Logs saved to {out_dir / config.log_file}")
 
 
-def run_training_loop(config: TrainingConfig, trainer: pyllmq.LLMQTrainer, eval_loader: pyllmq.DataLoader, train_loader: pyllmq.DataLoader,
-                      latest_step: int, logger: pyllmq.TrainingRunLogger, lr_schedule: LRSchedule):
+def run_training_loop(config: pyllmq.TrainingConfig, trainer: pyllmq.LLMQTrainer, eval_loader: pyllmq.DataLoader, train_loader: pyllmq.DataLoader,
+                      latest_step: int, logger: pyllmq.TrainingRunLogger, lr_schedule: pyllmq.CosineLRSchedule):
     # preload first batch
     in_tokens = np.empty((config.gpus * config.batch_size, config.seq_len), dtype=np.int32)
     out_tokens = np.empty((config.gpus * config.batch_size, config.seq_len), dtype=np.int32)
