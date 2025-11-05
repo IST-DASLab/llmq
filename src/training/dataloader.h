@@ -1,8 +1,9 @@
 // Copyright (c) 2025, IST Austria, developed by Erik Schultheis
+// SPDX-License-Identifier: Apache-2.0
 //
 
-#ifndef LLMQ_DATALOADER_H
-#define LLMQ_DATALOADER_H
+#ifndef LLMQ_TRAINING_DATALOADER_H
+#define LLMQ_TRAINING_DATALOADER_H
 
 #include <fstream>
 #include <string>
@@ -106,4 +107,4 @@ private:
     unsigned long mSeed;
 };
 
-#endif //LLMQ_DATALOADER_H
+#endif //LLMQ_TRAINING_DATALOADER_H

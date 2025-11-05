@@ -1,8 +1,9 @@
 // Copyright (c) 2025, IST Austria, developed by Erik Schultheis
+// SPDX-License-Identifier: Apache-2.0
 //
 
-#ifndef LLMQ_SRC_MODELS_UTILS_H
-#define LLMQ_SRC_MODELS_UTILS_H
+#ifndef LLMQ_SRC_UTILS_UTILS_H
+#define LLMQ_SRC_UTILS_UTILS_H
 
 #include <concepts>
 #include <cstdint>
@@ -94,4 +95,4 @@ cudaEvent_t create_named_event(const char* name);
 // ----------------------------------------------------------------------------
 bool iequals(std::string_view lhs, std::string_view rhs);
 
-#endif //LLMQ_SRC_MODELS_UTILS_H
+#endif //LLMQ_SRC_UTILS_UTILS_H

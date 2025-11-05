@@ -1,8 +1,9 @@
 // Copyright (c) 2025, IST Austria, developed by Erik Schultheis
+// SPDX-License-Identifier: Apache-2.0
 //
 
-#ifndef LLMQ_LOGGING_H
-#define LLMQ_LOGGING_H
+#ifndef LLMQ_TRAINING_LOGGING_H
+#define LLMQ_TRAINING_LOGGING_H
 
 #include <fstream>
 #include <string>
@@ -65,4 +66,4 @@ private:
     std::function<void(std::string_view)> mCallback;
 };
 
-#endif //LLMQ_LOGGING_H
+#endif //LLMQ_TRAINING_LOGGING_H

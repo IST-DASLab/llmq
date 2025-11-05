@@ -1,8 +1,9 @@
 // Copyright (c) 2025, IST Austria, developed by Erik Schultheis
+// SPDX-License-Identifier: Apache-2.0
 //
 
-#ifndef LLMQ_SRC_UTILITIES_MFU_H
-#define LLMQ_SRC_UTILITIES_MFU_H
+#ifndef LLMQ_SRC_UTILITIES_SOL_H
+#define LLMQ_SRC_UTILITIES_SOL_H
 
 #include <utility>
 #include <vector>
@@ -16,4 +17,4 @@ std::vector<std::pair<ETensorDType, long>> get_transformer_ops(long non_embeddin
 // peak speed
 long estimate_speed_of_light(const char* device, const std::vector<std::pair<ETensorDType, long>>& ops);
 
-#endif // LLMQ_SRC_UTILITIES_MFU_H
+#endif // LLMQ_SRC_UTILITIES_SOL_H

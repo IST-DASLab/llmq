@@ -1,3 +1,8 @@
+// Copyright (c) 2025, IST Austria, developed by Erik Schultheis
+// SPDX-License-Identifier: Apache-2.0
+//
+// Based on llm.c https://github.com/karpathy/llm.c
+
 #include "utilities/vec.cuh"
 #include "utilities/utils.h"
 #include "utilities/dtype.h"

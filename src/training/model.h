@@ -1,8 +1,9 @@
 // Copyright (c) 2025, IST Austria, developed by Erik Schultheis
+// SPDX-License-Identifier: Apache-2.0
 //
 
-#ifndef LLMQ_SRC_UTILITIES_MODEL_H
-#define LLMQ_SRC_UTILITIES_MODEL_H
+#ifndef LLMQ_SRC_TRAINING_MODEL_H
+#define LLMQ_SRC_TRAINING_MODEL_H
 
 #include <cstddef>
 #include <memory>
@@ -86,4 +87,4 @@ protected:
     ~IModel() = default;
 };
 
-#endif //LLMQ_SRC_UTILITIES_MODEL_H
+#endif //LLMQ_SRC_TRAINING_MODEL_H

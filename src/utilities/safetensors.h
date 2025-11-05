@@ -1,8 +1,9 @@
 // Copyright (c) 2025, IST Austria, developed by Erik Schultheis
+// SPDX-License-Identifier: Apache-2.0
 //
 
-#ifndef LLMQ_SRC_MODELS_SAFETENSORS_H
-#define LLMQ_SRC_MODELS_SAFETENSORS_H
+#ifndef LLMQ_SRC_UTILS_SAFETENSORS_H
+#define LLMQ_SRC_UTILS_SAFETENSORS_H
 
 #include <string>
 #include <unordered_map>
@@ -135,4 +136,4 @@ std::string get_hf_model_path(std::string model_name);
 //! Gets the path to the files of a specific HF model.
 std::string get_hf_model_files(std::string model_name, std::string revision = {});
 
-#endif //LLMQ_SRC_MODELS_SAFETENSORS_H
+#endif //LLMQ_SRC_UTILS_SAFETENSORS_H

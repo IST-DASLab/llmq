@@ -1,8 +1,9 @@
 // Copyright (c) 2025, IST Austria, developed by Erik Schultheis
+// SPDX-License-Identifier: Apache-2.0
 //
 
-#ifndef LLMQ_LLAMA_WEIGHTS_V2_H
-#define LLMQ_LLAMA_WEIGHTS_V2_H
+#ifndef LLMQ_LLAMA_WEIGHTS_H
+#define LLMQ_LLAMA_WEIGHTS_H
 
 #include <optional>
 #include <vector>
@@ -149,4 +150,4 @@ sLLamaWeights allocate_weights(const LLamaConfig& config, EAllocationType kind, 
 sLLamaBlockWeights<TensorShard> shard_block(const sLLamaBlockWeights<Tensor>& block, int shard_idx, int num_shards);
 sLLamaNonBlockWeights<TensorShard> shard_non_block(const sLLamaNonBlockWeights<Tensor>& block, int shard_idx, int num_shards);
 
-#endif //LLMQ_LLAMA_WEIGHTS_V2_H
+#endif //LLMQ_LLAMA_WEIGHTS_H

@@ -1,8 +1,9 @@
 // Copyright (c) 2025, IST Austria, developed by Erik Schultheis
+// SPDX-License-Identifier: Apache-2.0
 //
 
-#ifndef LLMQ_SRC_UTILITIES_SCHEDULE_H
-#define LLMQ_SRC_UTILITIES_SCHEDULE_H
+#ifndef LLMQ_SRC_TRAINING_SCHEDULE_H
+#define LLMQ_SRC_TRAINING_SCHEDULE_H
 
 #include <cmath>
 #include <numbers>
@@ -26,4 +27,4 @@ private:
     float mBaseRate;
 };
 
-#endif //LLMQ_SRC_UTILITIES_SCHEDULE_H
+#endif //LLMQ_SRC_TRAINING_SCHEDULE_H

@@ -1,7 +1,9 @@
 // Copyright (c) 2025, IST Austria, developed by Erik Schultheis
+// SPDX-License-Identifier: Apache-2.0
 //
 
-#pragma once
+#ifndef LLMQ_SRC_UTILS_VEC_CUH
+#define LLMQ_SRC_UTILS_VEC_CUH
 
 #include <cstring>
 #include <type_traits>
@@ -217,3 +219,5 @@ public:
 private:
     ElementType values[size];
 };
+
+#endif // LLMQ_SRC_UTILS_VEC_CUH

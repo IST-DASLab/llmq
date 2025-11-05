@@ -1,8 +1,9 @@
 // Copyright (c) 2025, IST Austria, developed by Erik Schultheis
+// SPDX-License-Identifier: Apache-2.0
 //
 
-#ifndef LLMQ_SRC_MODELS_TENSOR_H
-#define LLMQ_SRC_MODELS_TENSOR_H
+#ifndef LLMQ_SRC_UTILS_TENSOR_H
+#define LLMQ_SRC_UTILS_TENSOR_H
 
 #include <array>
 #include <cassert>
@@ -94,4 +95,4 @@ public:
 };
 
 TensorShard shard_view(const Tensor& src, int idx, int num);
-#endif //LLMQ_SRC_MODELS_TENSOR_H
+#endif //LLMQ_SRC_UTILS_TENSOR_H

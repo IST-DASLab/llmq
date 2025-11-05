@@ -1,8 +1,9 @@
 // Copyright (c) 2025, IST Austria, developed by Erik Schultheis
+// SPDX-License-Identifier: Apache-2.0
 //
 
-#ifndef LLMQ_LLAMA_CHECKPOINT_H
-#define LLMQ_LLAMA_CHECKPOINT_H
+#ifndef LLMQ_TRAINING_CHECKPOINT_H
+#define LLMQ_TRAINING_CHECKPOINT_H
 
 #include <string>
 #include <vector>
@@ -37,4 +38,4 @@ int find_latest_checkpoint(const std::string& checkpoint_directory);
 std::vector<std::string> clean_old_checkpoints(const std::string& checkpoint_directory, int n_to_keep, int major_every);
 
 
-#endif //LLMQ_LLAMA_CHECKPOINT_H
+#endif //LLMQ_TRAINING_CHECKPOINT_H

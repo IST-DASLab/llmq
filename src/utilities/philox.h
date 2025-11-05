@@ -1,5 +1,9 @@
 // Copyright (c) 2025, IST Austria, developed by Erik Schultheis
+// SPDX-License-Identifier: Apache-2.0
 //
+
+#ifndef LLMQ_SRC_UTILS_PHILOX_H
+#define LLMQ_SRC_UTILS_PHILOX_H
 
 #include <array>
 #include <cstdint>
@@ -56,3 +60,5 @@ public:
         return {R0, L0, R1, L1};
     }
 };
+
+#endif //LLMQ_SRC_UTILS_PHILOX_H

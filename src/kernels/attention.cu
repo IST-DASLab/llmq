@@ -1,4 +1,5 @@
 // Copyright (c) 2025, IST Austria, developed by Erik Schultheis
+// SPDX-License-Identifier: Apache-2.0
 //
 
 // This is a relatively simple baseline implementation of memory-efficient attention.

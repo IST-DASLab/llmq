@@ -1,4 +1,5 @@
 // Copyright (c) 2025, IST Austria, developed by Erik Schultheis
+// SPDX-License-Identifier: Apache-2.0
 //
 // This file implements a fallback path, to be used in cases in which cuFile is not available.
 //

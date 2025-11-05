@@ -1,8 +1,10 @@
 // Copyright (c) 2025, IST Austria, developed by Erik Schultheis
+// SPDX-License-Identifier: Apache-2.0
 //
 
-#ifndef LLMQ_SRC_MODELS_MODEL_H
-#define LLMQ_SRC_MODELS_MODEL_H
+
+#ifndef LLMQ_SRC_UTILS_TENSOR_CONTAINER_H
+#define LLMQ_SRC_UTILS_TENSOR_CONTAINER_H
 
 #include <functional>
 #include <string>
@@ -19,4 +21,4 @@ class ITensorContainer {
     ~ITensorContainer() = default;
 };
 
-#endif //LLMQ_SRC_MODELS_MODEL_H
+#endif //LLMQ_SRC_UTILS_TENSOR_CONTAINER_H

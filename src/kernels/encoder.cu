@@ -1,3 +1,8 @@
+// Copyright (c) 2025, IST Austria, developed by Erik Schultheis
+// SPDX-License-Identifier: Apache-2.0
+//
+// Based on llm.c https://github.com/karpathy/llm.c
+
 /*
 The GPT-2 Encoder, which combines two encodings: token and position
 In the forward pass, both encodings are added together

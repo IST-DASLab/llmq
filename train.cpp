@@ -1,5 +1,5 @@
 // Copyright (c) 2025, IST Austria, developed by Erik Schultheis
-// All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
 //
 
 
