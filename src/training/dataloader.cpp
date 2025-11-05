@@ -25,7 +25,7 @@ DataLoader::DataLoader(const std::string& file_pattern, int chunk_size, int rank
 DataLoader::DataLoader(const std::vector<std::string>& file_list, int chunk_size, int rank, int world_size, unsigned long seed) :
         mChunkSize(chunk_size), mSeed(seed), mRank(rank), mWorldSize(world_size), mChunkIndex(rank) {
     if (file_list.empty()) {
-        throw std::runtime_error("No token files provided");
+        throw std::runtime_error("Empty list of token files provided");
     }
 
     for(const auto& file_name: file_list) {
@@ -71,6 +71,11 @@ std::vector<std::string> DataLoader::match_files(const std::string& pattern) {
     }
 
     globfree(&glob_result);
+
+    if (files.empty()) {
+        throw std::runtime_error(fmt::format("No files found with pattern '{}'", pattern));
+    }
+
     return files;
 }
 
