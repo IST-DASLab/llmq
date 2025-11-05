@@ -148,7 +148,11 @@ forward_qmm(acts.QKV, acts.LN1, weights.Attn_QKV_w, weights.Attn_QKV_b,
 rope_forward(acts.Rope, acts.QKV, rs->FreqCis, B, T, Hq, Hkv, Hs, main_stream);
 // 3) attention: att <- softmax(qk^T)v
 attention_forward_cudnn(acts.Att.Value, acts.LSE, acts.Rope, rs->Workspace, rs->CudnnHandle, B, T, Hq, Hkv, Hs, main_stream);
-
+// quantize attention if necessary
+if(acts.Att.Quant.has_value()) {
+    abs_max(acts.Att.Quant->Scales, acts.Att.Value, acts.Att.Value.nelem(), rs->DeviceProp, main_stream);
+}
+    
 forward_qmm(acts.AttO, acts.Att, weights.Attn_Out_w, std::nullopt,
             rs->CublasLtHandle, rs->Workspace,
             B, T, C, C,
@@ -169,7 +173,7 @@ forward_qmm(acts.MlpDown, acts.SwiGLu, weights.MLP_Down_w, std::nullopt,
             rs->DeviceProp, false, true, main_stream);
 ```
 This is just a sequence of kernel calls, which can be this simple because the `acts` variable takes care of selecting the right pointers to load/store activations.
-You might think that there is still a problem with the first layer being handled differently, but  changing `residual` only affects which _pointer_ is passed to the cuda kernel, not the computation graph.
+You might think that there is still a problem with the first layer being handled differently, but changing `residual` only affects which _pointer_ is passed to the cuda kernel, not the computation graph.
 
 > There is a deliberate decision here in handling communication/weight gathering at the transformer-block level. While it would be possible to have individual gather calls for each parameter, this would result in a large number of additional kernel calls and event synchronizations. While there might be a latency advantage for the first layer (we can start computing as soon as the first parameter is available, instead of the whole layer), in subsequent layers there is no benefit: Either communication is faster than computation, and the next block can start immediately, or it is slower, in which case double-buffering still ensures that data is transferred at maximum bandwidth.
 > 
@@ -202,7 +206,7 @@ Let's take a look inside the `forward_qmm` function that we've used above.
 void forward_qmm(Tensor& out, QuantizableTensor& inp, Tensor& weight, std::optional<Tensor> bias,
                  cublasLtHandle_t handle, Tensor workspace,
                  int B, int T, int C, int OC,
-                 const cudaDeviceProp& dp, bool reuse_inp_quant, bool inp_has_abs_max,
+                 const cudaDeviceProp& dp, bool reuse_inp_quant,
                  cudaStream_t stream) {
     if (weight.DType == inp.Value.DType) {
         matmul(out, weight, inp.Value, bias, nullptr, handle, workspace, OC, B*T, C, EMMTranspose::TN, false, stream);
@@ -212,9 +216,6 @@ void forward_qmm(Tensor& out, QuantizableTensor& inp, Tensor& weight, std::optio
         float* out_scale = out.Scales;
 
         if (!reuse_inp_quant) {
-            if(!inp_has_abs_max) {
-                abs_max(act_scale, inp.Value, B * T * C, dp, stream);
-            }
             quantize_with_abs_max(inp.Quant.value(), inp.Value, act_scale, B*T*C, dp, stream);
         }
 
@@ -227,7 +228,7 @@ void forward_qmm(Tensor& out, QuantizableTensor& inp, Tensor& weight, std::optio
 There is the trivial code-path, when the matmul is not quantized (in the sense of not having any scale factors), identified by weights having the same dtype as unquantized inputs.
 If the weights are quantized, we need to ensure the input dtype matches. In the ideal case,
 a quantized version of the input is already available (`reuse_inp_quant`), otherwise, we need to quantize the input.
-In some scenarios (e.g., recomputation during the backward pass), we may not have the full quantization available but already know the abs-max. 
+We assume, however, that at least the abs-max has already been computed (usually, we fuse this into the previous op anyway).
 
 After both operands to the matmul are quantized, there is a slightly peculiar operation: `matmul_out_scale` launches a cuda kernel with exactly one thread. This kernel computes the scale factor for the output of the subsequent matmul. To avoid a CPU-GPU sync, this single calculation is done inside a cuda kernel.
 Finally, the actual matmul is launched.
