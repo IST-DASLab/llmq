@@ -109,21 +109,26 @@ jobs:
         run: modal deploy scripts/modal_test_app.py
 
   test-modal:
-    name: Test ${{ matrix.test_case.name }}
+    name: Test - ${{ matrix.recompute.name }} - ${{ matrix.dtype.name }}
     needs: deploy-modal
     runs-on: ubuntu-latest
     strategy:
+      fail-fast: false
       matrix:
-        test_case:
-          - name: "No recompute -- determinism test"
+        recompute:
+          - name: "Determinism test"
             args: ""
-          - name: "Full recompute"
+          - name: "Full Block"
             args: "--recompute-block"
-          - name: "Selective recompute"
+          - name: "Blockwise"
             args: "--recompute-att --recompute-ffn"
-          - name: "Just the non-linearities"
+          - name: "Non-linearities"
             args: "--recompute-swiglu --recompute-norm"
-
+        dtype:
+          - name: "BF16"
+            args: "--matmul-dtype=bf16"
+          - name: "FP8"
+            args: "--matmul-dtype=e4m3"
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -137,7 +142,7 @@ jobs:
         run: modal token set --token-id ${{ secrets.MODAL_TOKEN_ID }} --token-secret ${{ secrets.MODAL_TOKEN_SECRET }}
 
       - name: Run test on Modal
-        run: python3 scripts/modal_test_ci.py ${{ matrix.test_case.args }}
+        run: python3 scripts/modal_test_ci.py ${{ matrix.recompute.args }} ${{ matrix.dtype.args }}
 
   release:
     if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/heads/release-') || startsWith(github.ref, 'refs/tags/')
