@@ -3,14 +3,15 @@
 Deploy locally-built pyllmq wheel to Modal and run recomputation tests.
 
 Usage:
-    modal run modal_tests.py [-- test args...]
+    modal run modal_test_app.py [-- test args...]
 """
 import io
 import sys
 from pathlib import Path
 import modal
 
-if modal.is_local():
+
+def create_image(cuda_version: str = "12.8.1"):
     # Check where we can find some wheels
     wheelhouse_exists = Path("wheelhouse").exists() and list(Path("wheelhouse").glob("pyllmq*.whl"))
     dist_exists = Path("dist").exists() and list(Path("dist").glob("pyllmq*.whl"))
@@ -31,21 +32,24 @@ if modal.is_local():
     wheel_file = wheel_files[0]
     print(f"Using wheel: {wheel_file}")
 
-    def create_image(wheel_file: Path, cuda_version: str = "12.8.1"):
-        """Create Modal image with the wheel and dependencies."""
-        return (
-            modal.Image.from_registry(f"nvidia/cuda:{cuda_version}-cudnn-devel-ubuntu24.04", add_python="3.12")
-            .uv_pip_install("huggingface_hub", "transformers", "datasets", "numpy")
-            .run_commands("hf download Qwen/Qwen2.5-0.5B")
-            .add_local_file("scripts/tokenize_data.py", "/root/tokenize_data.py", copy=True)
-            .run_commands(
-                "uv run /root/tokenize_data.py --dataset tiny-shakespeare --model qwen --out-dir /root/data"
-            )
-            .add_local_file(str(wheel_file), f"/tmp/{wheel_file.name}", copy=True)
-            .pip_install(f"/tmp/{wheel_file.name}")
+    """Create Modal image with the wheel and dependencies."""
+    return (
+        modal.Image.from_registry(f"nvidia/cuda:{cuda_version}-cudnn-devel-ubuntu24.04", add_python="3.12")
+        .uv_pip_install("huggingface_hub", "transformers", "datasets", "numpy")
+        # install dependencies for pyllmq, so that rebuild steps are faster
+        .uv_pip_install("nvidia-cuda-runtime-cu12>=12.8", "nvidia-cudnn-cu12>=9.0", "nvidia-nccl-cu12>=2.0", "nvidia-cublas-cu12>=12.8")
+        .run_commands("hf download Qwen/Qwen2.5-0.5B")
+        .add_local_file("scripts/tokenize_data.py", "/root/tokenize_data.py", copy=True)
+        .run_commands(
+            "uv run /root/tokenize_data.py --dataset tiny-shakespeare --model qwen --out-dir /root/data"
         )
+        .add_local_file(str(wheel_file), f"/tmp/{wheel_file.name}", copy=True)
+        .pip_install(f"/tmp/{wheel_file.name}")
+    )
 
-    image = create_image(wheel_file)
+
+if modal.is_local():
+    image = create_image()
 else:
     image = modal.Image.debian_slim()
 
