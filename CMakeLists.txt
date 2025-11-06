@@ -12,10 +12,11 @@ set(CMAKE_CUDA_STANDARD 20)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-# As cuFile might not be supported everywhere (WSL; AMD), make it an optional depencendy
+# As cuFile might not be supported everywhere (WSL; AMD), make it an optional dependency
 # with a fallback implementation
 option(USE_CUFILE "Enable cuFile support for optimized file I/O" ON)
 option(USE_NVML "Enable nvml support for detailed GPU stats reporting" ON)
+option(USE_MPI "Enable MPI backend for multi-GPU support" ON)
 option(PYTHON_BINDING "Build python bindings" OFF)
 
 FetchContent_Declare(
@@ -97,11 +98,12 @@ target_include_directories(nvidia::nccl INTERFACE "${NCCL_INCLUDE_DIRS}")
 
 set(MULTI_GPU_DEPS "")
 set(MULTI_GPU_DEFS "")
-find_package(MPI)
-if (MPI_FOUND)
+if (USE_MPI)
+    find_package(MPI REQUIRED)
     list(APPEND MULTI_GPU_DEPS MPI::MPI_CXX)
     list(APPEND MULTI_GPU_DEFS USE_MPI=1)
 endif ()
+
 find_package(Threads)
 if (Threads_FOUND)
     list(APPEND MULTI_GPU_DEPS Threads::Threads)

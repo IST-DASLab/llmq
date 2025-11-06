@@ -47,6 +47,7 @@ cmake.build-type = "Release"
 
 [tool.scikit-build.cmake.define]
 PYTHON_BINDING = "ON"
+USE_MPI = "OFF"
 CMAKE_CUDA_ARCHITECTURES = {env="CUDAARCHS"}
 
 [tool.uv]
