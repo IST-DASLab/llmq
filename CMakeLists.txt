@@ -174,14 +174,11 @@ target_compile_options(llmq-common PUBLIC $<$<COMPILE_LANGUAGE:CUDA>:--expt-rela
 add_executable(train train.cpp)
 target_link_libraries(train PRIVATE llmq-common CLI11::CLI11)
 
-add_executable(recompute-test src/testing/recompute.cpp)
-target_link_libraries(recompute-test PRIVATE llmq-common CLI11::CLI11)
-
 add_executable(export-checkpoint export-checkpoint.cpp)
 target_link_libraries(export-checkpoint PRIVATE llmq-common CLI11::CLI11)
 
 if (NOT SKBUILD)
-    install(TARGETS llmq-common train recompute-test export-checkpoint
+    install(TARGETS llmq-common train export-checkpoint
             LIBRARY DESTINATION lib
             RUNTIME DESTINATION bin
     )

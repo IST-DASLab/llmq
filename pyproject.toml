@@ -52,6 +52,6 @@ CMAKE_CUDA_ARCHITECTURES = {env="CUDAARCHS"}
 [tool.uv]
 cache-keys = [
     { file = "pyproject.toml" },
-    { file = "src/**/*.{h,c,hpp,cpp,cu,cuh}" },
+    { file = "src/**/*.{h,c,hpp,cpp,cu,cuh,py}" },
     { file = "CMakeLists.txt" }
 ]
