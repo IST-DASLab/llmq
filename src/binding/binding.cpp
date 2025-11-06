@@ -30,6 +30,13 @@ static std::optional<ETensorDType> opt_dtype_from_str(const std::string& dtype_s
     return dtype_from_str(dtype_str);
 }
 
+static nb::object cast_opt_dtype(std::optional<ETensorDType> dtype) {
+    if (dtype.has_value()) {
+        return nb::cast(dtype_to_str(dtype.value()));
+    }
+    return nb::none();
+}
+
 template<typename NBArray, std::size_t NDims>
 static inline auto check_shape(const NBArray& arr, std::string_view name, std::array<int, NDims> expected) {
     if(arr.ndim() != expected.size()) {
@@ -220,9 +227,9 @@ NB_MODULE(_pyllmq, m) {
         .def_rw("shard_gradients", &LLamaOptions::ShardGradients)
         .def_rw("use_all_to_all_reduce", &LLamaOptions::UseAllToAllReduce)
         .def_rw("init_projections_to_zero", &LLamaOptions::InitProjectionsToZero)
-        .def_prop_rw("matmul_type", [](const LLamaOptions* opt){ return dtype_to_str(opt->MatmulType.value()); },
+        .def_prop_rw("matmul_type", [](const LLamaOptions* opt){ return cast_opt_dtype(opt->MatmulType); },
                      [](LLamaOptions* opt, const std::string& dtype_str){ opt->MatmulType = dtype_from_str(dtype_str); })
-        .def_prop_rw("master_dtype", [](const LLamaOptions* opt){ return dtype_to_str(opt->MasterDType.value()); },
+        .def_prop_rw("master_dtype", [](const LLamaOptions* opt){ return cast_opt_dtype(opt->MasterDType); },
                      [](LLamaOptions* opt, const std::string& dtype_str){ opt->MasterDType = dtype_from_str(dtype_str); })
         .def_prop_rw("momentum_type", [](const LLamaOptions* opt){ return dtype_to_str(opt->OptMomentumType); },
                      [](LLamaOptions* opt, const std::string& dtype_str){ opt->OptMomentumType = dtype_from_str(dtype_str); })
