@@ -420,6 +420,7 @@ void LLamaModel::_recompute_block(int layer, sLLamaBlockWeights<Tensor>& weights
     bool recompute_ln2 = opt.RecomputeRMSNorm || opt.RecomputeFFN || opt.RecomputeBlock;
     bool recompute_qkv = opt.RecomputeQKV || opt.RecomputeAtt || opt.RecomputeBlock;
     bool recompute_swiglu = opt.RecomputeSwiGLu || opt.RecomputeFFN || opt.RecomputeBlock;
+    bool recompute_att = opt.RecomputeAtt || opt.RecomputeBlock;
 
     // Attention block
     if(recompute_ln1) {
@@ -439,7 +440,7 @@ void LLamaModel::_recompute_block(int layer, sLLamaBlockWeights<Tensor>& weights
         rope_forward(acts.Rope, acts.QKV, rs->FreqCis, B, T, Hq, Hkv, Hs, main_stream);
     }
 
-    if (opt.RecomputeAtt) {
+    if (recompute_att) {
         attention_forward_cudnn(acts.Att.Value, acts.LSE, acts.Rope, rs->Workspace, rs->CudnnHandle, B, T, Hq, Hkv, Hs, main_stream);
         // AttO not needed in backward pass; but if we want to recompute the entire transformer block, we need its output
         // to recompute the FFN part
