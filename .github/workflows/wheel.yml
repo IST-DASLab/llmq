@@ -86,9 +86,33 @@ jobs:
           name: wheel-${{ matrix.wheel_tag }}
           path: wheelhouse/pyllmq*.whl
 
+  test-modal:
+    name: Test with Modal
+    needs: wheel
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Download wheel artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: wheel-cu128
+          path: wheelhouse/
+
+      - name: Install Modal
+        run: pip install modal
+
+      - name: Set Modal token
+        run: modal token set --token-id ${{ secrets.MODAL_TOKEN_ID }} --token-secret ${{ secrets.MODAL_TOKEN_SECRET }}
+
+      - name: Run tests in Modal
+        run: modal run scripts/modal_tests.py
+
   release:
     if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/heads/release-') || startsWith(github.ref, 'refs/tags/')
-    needs: wheel
+    needs: test-modal
     runs-on: ubuntu-latest
     permissions:
       contents: write
