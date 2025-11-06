@@ -76,7 +76,7 @@ jobs:
           cmake -B build -S . -DCMAKE_CUDA_ARCHITECTURES=80
 
       - name: CMake Build
-        run: cmake --build build --parallel --target recompute-test export-checkpoint train
+        run: cmake --build build --parallel --target export-checkpoint train
 
       - name: CMake Install to staging
         run: |
