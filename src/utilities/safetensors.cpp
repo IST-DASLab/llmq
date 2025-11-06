@@ -35,13 +35,12 @@ sSafeTensorsHeader read_safetensors_header(const std::string& file_name) {
     file.read(reinterpret_cast<char*>(&header_size), sizeof(header_size));
     if (!file) {
         // read error
-        throw std::runtime_error("Error opening file " + file_name);
+        throw std::runtime_error("Error opening safetensors file '" + file_name + "'");
     }
 
     std::vector<char> header(header_size, '\0');
     file.read(header.data(), (long)header_size);
     auto parsed = nlohmann::json::parse(header.begin(), header.end());
-
     return {header_size, std::move(parsed)};
 }
 
@@ -224,7 +223,7 @@ void SafeTensorWriter::prepare_metadata(NCCLCommunicator* comm) {
 
         mFileDescriptor = open(temp_name.c_str(), O_RDWR | O_CREAT, S_IRUSR | S_IWUSR | S_IRGRP);
         if (mFileDescriptor == -1)
-            throw std::system_error(errno, std::system_category(), "Error opening file " + temp_name);
+            throw std::system_error(errno, std::system_category(), "Error opening file '" + temp_name + "' for writing");
         mTotalSize = sizeof(header_size) + header_size + offset;
         if (ftruncate(mFileDescriptor, mTotalSize) < 0)
             throw std::system_error(errno, std::system_category(), "Error truncating file " + temp_name);
