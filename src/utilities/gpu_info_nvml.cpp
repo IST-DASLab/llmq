@@ -72,6 +72,8 @@ private:
     GPUUtilInfo mInfo;
     nvmlDevice_t mDevice;
 
+    void setup_tracking_thread();
+
     long long mLastTimestamp;       // µs
     std::size_t mLastPCIeRX;
     std::size_t mLastPCIeTX;
@@ -95,16 +97,34 @@ std::unique_ptr<IGPUUtilTracker> IGPUUtilTracker::create() {
 GPUUtilTrackerNVML::GPUUtilTrackerNVML() : mDevice(nvml_get_device()) {
     nvmlFieldValue_t fields[] = {{NVML_FI_DEV_PCIE_COUNT_RX_BYTES}, {NVML_FI_DEV_PCIE_COUNT_TX_BYTES}, {NVML_FI_DEV_TOTAL_ENERGY_CONSUMPTION, 0}};
     NVML_CHECK(nvmlDeviceGetFieldValues(mDevice, 3, fields));
-    NVML_CHECK(fields[0].nvmlReturn);
-    NVML_CHECK(fields[1].nvmlReturn);
-    NVML_CHECK(fields[2].nvmlReturn);
+    if(fields[0].nvmlReturn == NVML_ERROR_NOT_SUPPORTED || fields[1].nvmlReturn == NVML_ERROR_NOT_SUPPORTED || fields[2].nvmlReturn == NVML_ERROR_NOT_SUPPORTED) {
+        fprintf(stderr, "[NVML WARNING] PCIe counters not supported\n");
+    } else {
+        NVML_CHECK(fields[0].nvmlReturn);
+        NVML_CHECK(fields[1].nvmlReturn);
+        NVML_CHECK(fields[2].nvmlReturn);mLastPCIeRX = fields[0].value.uiVal;
+        mLastPCIeTX = fields[1].value.uiVal;
+        mLastEnergy = fields[2].value.ullVal;
 
-    mLastPCIeRX = fields[0].value.uiVal;
-    mLastPCIeTX = fields[1].value.uiVal;
-    mLastEnergy = fields[2].value.ullVal;
+        mLastTimestamp = std::chrono::steady_clock::now().time_since_epoch().count();
 
-    mLastTimestamp = std::chrono::steady_clock::now().time_since_epoch().count();
+        setup_tracking_thread();
+    }
 
+
+
+
+}
+
+GPUUtilTrackerNVML::~GPUUtilTrackerNVML() {
+    if(mThread.joinable()) {
+        mThread.request_stop();
+        mThread.join();
+    }
+    NVML_CHECK(nvmlShutdown());
+}
+
+void GPUUtilTrackerNVML::setup_tracking_thread() {
     // TODO should this be one thread for all devices?
     mThread = std::jthread([this](std::stop_token stop_token)
     {
@@ -149,12 +169,6 @@ GPUUtilTrackerNVML::GPUUtilTrackerNVML() : mDevice(nvml_get_device()) {
             }
         }
     });
-}
-
-GPUUtilTrackerNVML::~GPUUtilTrackerNVML() {
-    mThread.request_stop();
-    mThread.join();
-    NVML_CHECK(nvmlShutdown());
 }
 
 const GPUUtilInfo& GPUUtilTrackerNVML::update() {
@@ -213,23 +227,26 @@ const GPUUtilInfo& GPUUtilTrackerNVML::update() {
     mInfo.mem_total = mem_info.total;
     mInfo.mem_reserved = mem_info.reserved;
 
-    // query PCIe info
-    auto now = std::chrono::steady_clock::now().time_since_epoch();
-    auto interval = std::chrono::duration_cast<std::chrono::microseconds>(now - std::chrono::steady_clock::duration{mLastTimestamp}).count();
+    // query PCIe info, if available
+    if (mThread.joinable()) {
+        auto now = std::chrono::steady_clock::now().time_since_epoch();
+        auto interval = std::chrono::duration_cast<std::chrono::microseconds>(
+            now - std::chrono::steady_clock::duration{mLastTimestamp}).count();
 
-    std::size_t int_rx = mIntervalPCIeRX.exchange(0);
-    std::size_t int_tx = mIntervalPCIeTX.exchange(0);
-    std::size_t int_eg = mIntervalEnergy.exchange(0);
+        std::size_t int_rx = mIntervalPCIeRX.exchange(0);
+        std::size_t int_tx = mIntervalPCIeTX.exchange(0);
+        std::size_t int_eg = mIntervalEnergy.exchange(0);
 
-    mInfo.pcie_rx = (1'000'000ull * int_rx) / interval;
-    mInfo.pcie_tx = (1'000'000ull * int_tx) / interval;
-    // not using nvmlDeviceGetPowerUsage, because that is the past 1sec average, so it might not be representative
-    mInfo.power = (1'000'000ull * int_eg) / interval;
+        mInfo.pcie_rx = (1'000'000ull * int_rx) / interval;
+        mInfo.pcie_tx = (1'000'000ull * int_tx) / interval;
+        // not using nvmlDeviceGetPowerUsage, because that is the past 1sec average, so it might not be representative
+        mInfo.power = (1'000'000ull * int_eg) / interval;
 
-    mTotalPCIeRX += int_rx;
-    mTotalPCIeTX += int_tx;
-    mTotalEnergy += int_eg;
-    mLastTimestamp = now.count();
+        mTotalPCIeRX += int_rx;
+        mTotalPCIeTX += int_tx;
+        mTotalEnergy += int_eg;
+        mLastTimestamp = now.count();
+    }
 
     return mInfo;
 }
