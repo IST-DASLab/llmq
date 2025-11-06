@@ -68,16 +68,14 @@ jobs:
       # we cannot statically declare the cuda dependencies in pyproject.toml
       # so we have to patch them here
       - name: Add CUDA runtime dependencies
-        run: uv run --with tomlkit python3 .github/scripts/add_cuda_deps.py "${{ matrix.runtime_deps }}" "${{ matrix.wheel_tag }}"
+        run: uv run --no-project --with tomlkit python3 .github/scripts/add_cuda_deps.py "${{ matrix.runtime_deps }}" "${{ matrix.wheel_tag }}"
 
       - name: Build wheel
         run: uv build --wheel
 
       - name: Repair wheel with auditwheel
         run: |
-          uv venv
-          uv pip install auditwheel patchelf
-          uv run auditwheel repair dist/*.whl -w wheelhouse/ --exclude libcuda.so.1 --exclude libcudart.so.12  --exclude libcudart.so.13 --exclude libcudnn.so.9 --exclude libcufile.so.0 --exclude libnccl.so.2 --exclude libcublasLt.so.12 --exclude libcublasLt.so.13 --exclude libnvidia-ml.so.1
+          uv run --no-project --with auditwheel --with patchelf auditwheel repair dist/*.whl -w wheelhouse/ --exclude libcuda.so.1 --exclude libcudart.so.12  --exclude libcudart.so.13 --exclude libcudnn.so.9 --exclude libcufile.so.0 --exclude libnccl.so.2 --exclude libcublasLt.so.12 --exclude libcublasLt.so.13 --exclude libnvidia-ml.so.1
           rm dist/*-linux_*.whl  # Remove non-repaired wheel
 
       - name: Upload wheel
