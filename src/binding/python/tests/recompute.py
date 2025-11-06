@@ -77,29 +77,26 @@ class TestResult:
     baseline_norms: List[float]
     passed: bool
 
-    def print_comparison(self):
+    def print_comparison(self, *, file=None):
         """Print a formatted comparison of results."""
-        print("\nlosses:")
-        all_match = True
+        print("\nlosses:", file=file)
         for i, (loss, ref_loss) in enumerate(zip(self.losses, self.baseline_losses)):
             if ref_loss != loss:
-                print(f" \033[1;31m✗\033[0m step {i}: {loss:.10f} ≠ {ref_loss:.10f}")
-                all_match = False
+                print(f" \033[1;31m✗\033[0m step {i}: {loss:.10f} ≠ {ref_loss:.10f}", file=file)
             else:
-                print(f" \033[1;32m✓\033[0m step {i}: {loss:.10f} = {ref_loss:.10f}")
+                print(f" \033[1;32m✓\033[0m step {i}: {loss:.10f} = {ref_loss:.10f}", file=file)
 
-        print("\nnorms:")
+        print("\nnorms:", file=file)
         for i, (norm, ref_norm) in enumerate(zip(self.norms, self.baseline_norms)):
             if ref_norm != norm:
-                print(f" \033[1;31m✗\033[0m step {i}: {norm:.10f} ≠ {ref_norm:.10f}")
-                all_match = False
+                print(f" \033[1;31m✗\033[0m step {i}: {norm:.10f} ≠ {ref_norm:.10f}", file=file)
             else:
-                print(f" \033[1;32m✓\033[0m step {i}: {norm:.10f} = {ref_norm:.10f}")
+                print(f" \033[1;32m✓\033[0m step {i}: {norm:.10f} = {ref_norm:.10f}", file=file)
 
         if self.passed:
-            print("\n\033[1;32mPASS\033[0m")
+            print("\n\033[1;32mPASS\033[0m", file=file)
         else:
-            print("\n\033[1;31mFAIL\033[0m")
+            print("\n\033[1;31mFAIL\033[0m", file=file)
 
 
 class RecomputeTestRunner:

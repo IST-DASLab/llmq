@@ -5,7 +5,7 @@ Deploy locally-built pyllmq wheel to Modal and run recomputation tests.
 Usage:
     modal run modal_tests.py [-- test args...]
 """
-
+import io
 import sys
 from pathlib import Path
 import modal
@@ -70,13 +70,13 @@ def run_recompute_test(test_args: list[str]):
     # Run test
     runner = RecomputeTestRunner(config)
     result = runner.run_test()
+    report_buffer = io.StringIO()
+    result.print_comparison(file=report_buffer)
+    report = report_buffer.getvalue()
 
     return {
         "passed": result.passed,
-        "losses": result.losses,
-        "baseline_losses": result.baseline_losses,
-        "norms": result.norms,
-        "baseline_norms": result.baseline_norms,
+        "report": report,
     }
 
 
@@ -86,10 +86,8 @@ def main(*test_args: str):
     print(f"Launching Modal test with args: {test_args}")
     result = run_recompute_test.remote(list(test_args))
 
-    print(f"\nTest {'PASSED' if result['passed'] else 'FAILED'}")
-    print(f"Losses: {result['losses']}")
-    print(f"Baseline: {result['baseline_losses']}")
-    print(f"Norms: {result['norms']}")
-    print(f"Baseline norms: {result['baseline_norms']}")
+    # Print the comparison report
+    print("\n" + result["report"])
 
-    sys.exit(0 if result["passed"] else 1)
+    if not result["passed"]:
+        sys.exit(1)
