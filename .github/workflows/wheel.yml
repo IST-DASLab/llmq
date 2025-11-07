@@ -125,6 +125,10 @@ jobs:
             args: "--recompute-att --recompute-ffn"
           - name: "Non-linearities"
             args: "--recompute-swiglu --recompute-norm"
+          - name: "Offload Opt"
+            args: "--offload-opt-m --offload-opt-v --offload-master"
+          - name: "Persistent Quants"
+            args: "--persistent-quants"
         dtype:
           - name: "BF16"
             args: "--matmul-dtype=bf16"
