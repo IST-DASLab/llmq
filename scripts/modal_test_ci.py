@@ -13,14 +13,22 @@ if __name__ == "__main__":
     # Reference the already-deployed app
     app = modal.App.lookup("llmq-test", create_if_missing=False)
 
-    # Get the run_recompute_test function from the deployed app
-    run_recompute_test = modal.Function.from_name("llmq-test", "run_recompute_test")
+    test_name = sys.argv[1]
+
+    if test_name == "recompute":
+        # Get the run_recompute_test function from the deployed app
+        test_fn = modal.Function.from_name("llmq-test", "run_recompute_test")
+        test_args = sys.argv[2:]
+    elif test_name == "fixed":
+        test_fn = modal.Function.from_name("llmq-test", "run_fixed_result_test")
+        test_args = sys.argv[2]
+    else:
+        raise RuntimeError(f"Unknown test type {test_name}")
 
     # Get test arguments from command line
-    test_args = sys.argv[1:]
 
     print(f"Launching Modal test with args: {test_args}")
-    result = run_recompute_test.remote(test_args)
+    result = test_fn.remote(test_args)
 
     # Print the comparison report
     print("\n" + result["report"])

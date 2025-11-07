@@ -10,6 +10,10 @@ import sys
 from pathlib import Path
 import modal
 
+from dataclasses import asdict
+
+from modal.exception import NotFoundError
+
 
 def create_image(cuda_version: str = "12.8.1"):
     # Check where we can find some wheels
@@ -57,6 +61,17 @@ else:
 app = modal.App("llmq-test")
 
 
+def compare_and_create_report(result, expected):
+    from pyllmq.tests.run import compare_results
+    report_buffer = io.StringIO()
+    passed = compare_results(result, expected, file=report_buffer)
+    report = report_buffer.getvalue()
+    return {
+        "passed": passed,
+        "report": report,
+    }
+
+
 @app.function(
     gpu="L4",
     memory=8192,
@@ -65,29 +80,61 @@ app = modal.App("llmq-test")
 )
 def run_recompute_test(test_args: list[str]):
     """Run recomputation tests on Modal."""
-    from pyllmq.tests.recompute import parse_args, RecomputeTestRunner
+    from pyllmq.tests.run import parse_args, run_training, compare_results
+    from pyllmq.tests.recompute import disable_recompute
 
     # Parse test arguments into config
     config = parse_args(test_args)
     config.train_file = "/root/data/tiny-shakespeare-qwen/train.bin"
+    config.model = "Qwen/Qwen2.5-0.5B"
 
-    # Run test
-    runner = RecomputeTestRunner(config)
-    result = runner.run_test()
-    report_buffer = io.StringIO()
-    result.print_comparison(file=report_buffer)
-    report = report_buffer.getvalue()
+    test_run = run_training(config)
+    ref_run = run_training(disable_recompute(config))
+    return compare_and_create_report(test_run, ref_run)
 
-    return {
-        "passed": result.passed,
-        "report": report,
-    }
+
+def run_with_config(test_args: list[str]):
+    from pyllmq.tests.run import parse_args, run_training
+    config = parse_args(test_args)
+    config.train_file = "/root/data/tiny-shakespeare-qwen/train.bin"
+    config.model = "Qwen/Qwen2.5-0.5B"
+    result = run_training(config)
+    return result
+
+
+@app.function(
+    gpu="L4",
+    memory=8192,
+    timeout=300,
+    image=image,
+)
+def run_fixed_result_test(dtype: str = "bf16"):
+    from pyllmq.tests.run import RunResult
+
+    print(f"Launching Modal fixed result test with dtype: {dtype}")
+
+    """Run tests on Modal."""
+    result = run_with_config([f"--matmul-dtype={dtype}"])
+    if dtype == "bf16":
+        expected = {
+            "losses": [0.00041477414197288454, 0.000426679354859516, 0.00038303068140521646, 0.00040762106073088944, 0.00039523778832517564, 0.0003934493288397789, 0.0003761185216717422, 0.00038242590380832553, 0.000416210328694433, 0.0003596300375647843],
+            "norms": [4.374605655670166, 4.1427903175354, 4.455552577972412, 4.825006484985352, 4.004931449890137, 4.5711750984191895, 4.334568977355957, 4.510407447814941, 4.303880214691162, 3.6601479053497314]
+        }
+    elif dtype == "e4m3":
+        expected = {
+            "losses": [0.00041695008985698223, 0.0004286138282623142, 0.00038420871715061367, 0.00040690030436962843, 0.00039392223698087037, 0.000390367757063359, 0.00037420622538775206, 0.0003796245146077126, 0.00041323364712297916, 0.0003567277453839779],
+            "norms": [6.743967533111572, 6.483034610748291, 5.850259780883789, 6.4549784660339355, 5.411167621612549, 5.409686088562012, 5.586338520050049, 5.947042465209961, 5.416126728057861, 4.99021053314209]
+        }
+    else:
+        raise ValueError(f"Unknown dtype: {dtype}")
+
+    return compare_and_create_report(result, RunResult(**expected))
 
 
 @app.local_entrypoint()
-def main(*test_args: str):
-    """Run tests on Modal."""
-    print(f"Launching Modal test with args: {test_args}")
+def test_recompute(*test_args: str):
+    """Run recomputation tests on Modal."""
+    print(f"Launching Modal recomputation test with args: {test_args}")
     result = run_recompute_test.remote(list(test_args))
 
     # Print the comparison report
@@ -95,3 +142,19 @@ def main(*test_args: str):
 
     if not result["passed"]:
         sys.exit(1)
+
+
+@app.local_entrypoint()
+def test_fixed(dtype: str = "bf16"):
+    """Run fixed result tests on Modal."""
+    print(f"Launching Modal test with dtype: {dtype}")
+    result = run_fixed_result_test.remote(dtype)
+
+    # Print the comparison report
+    print("\n" + result["report"])
+
+    if not result["passed"]:
+        sys.exit(1)
+
+
+
