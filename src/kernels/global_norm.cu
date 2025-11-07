@@ -129,7 +129,6 @@ void global_norm_squared(float* out, const nv_bfloat16* values, size_t count, co
 }
 
 void global_norm_sqrt(float* out, float* out_cpu, float grad_clip, const cudaDeviceProp& dp, cudaStream_t stream) {
-    const int grid_size = get_max_num_block_sums(dp);
     global_norm_sqrt_kernel<<<1,  1, 0, stream>>>(out, out_cpu, grad_clip);
 }
 
