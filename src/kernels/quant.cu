@@ -50,13 +50,9 @@ __global__ void quantize_with_abs_max_kernel(nv_bfloat16* out, const float* in, 
         vec_t values = vec_t::load(in + i);
         bfv_t quants;
         for(int j = 0; j < vec_t::size; ++j) {
-            out[i] = (nv_bfloat16)values[i];
+            quants[j] = (nv_bfloat16)values[j];
         }
         quants.store(out + i);
-    }
-    int i = blockIdx.x * blockDim.x + threadIdx.x;
-    if (i < N) {
-        out[i] = (nv_bfloat16) in[i];
     }
 }
 
