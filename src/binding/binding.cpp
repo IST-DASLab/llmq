@@ -51,6 +51,25 @@ static inline auto check_shape(const NBArray& arr, std::string_view name, std::a
     }
 }
 
+nb::dlpack::dtype to_dlpack_dtype(ETensorDType dtype) {
+    switch (dtype) {
+    case ETensorDType::FP32:
+        return {static_cast<std::uint8_t>(nb::dlpack::dtype_code::Float), 32, 1};
+    case ETensorDType::BF16:
+        return {static_cast<std::uint8_t>(nb::dlpack::dtype_code::Bfloat), 16, 1};
+    case ETensorDType::INT8:
+        return {static_cast<std::uint8_t>(nb::dlpack::dtype_code::Int), 8, 1};
+    case ETensorDType::BYTE:
+        return {static_cast<std::uint8_t>(nb::dlpack::dtype_code::UInt), 8, 1};
+    case ETensorDType::FP16:
+        return {static_cast<std::uint8_t>(nb::dlpack::dtype_code::Float), 16, 1};
+    case ETensorDType::INT32:
+        return {static_cast<std::uint8_t>(nb::dlpack::dtype_code::Int), 32, 1};
+    case ETensorDType::FP8_E4M3:
+        return {static_cast<std::uint8_t>(nb::dlpack::dtype_code::UInt), 8, 1};  // ugh
+    }
+}
+
 #define CHECK_SHAPE(obj, ...) check_shape(obj, #obj, std::array{__VA_ARGS__})
 
 
@@ -272,6 +291,18 @@ NB_MODULE(_pyllmq, m) {
             return ret;
         }, nb::arg("learning_rate"), nb::arg("beta1"), nb::arg("beta2"), nb::arg("step"), nb::arg("weight_decay"), nb::arg("grad_clip"),
              "Run the optimizer step and return the loss and gradient norm. This function blocks until the optimizer step is complete.")
+        .def("get_gradients", [](MultiGPUPyTrainer* trainer, int gpu_id)
+        {
+            auto raw = trainer->get_gradients(gpu_id);
+            nb::dict ret;
+            for (const auto& [name, value] : raw) {
+                std::array<std::size_t, 6> shape;
+                std::copy_n(value.Sizes.begin(), value.Rank, shape.begin());
+                nb::ndarray<> view{value.Data, (size_t)value.Rank, shape.data(), ret, nullptr, to_dlpack_dtype(value.DType), nb::device::cuda::value, value.Device};
+                ret[nb::cast(name)] = view;
+            }
+            return ret;
+        }, "Return a dictionary with the model's gradient shards for the given GPU. This function is for debugging only: It is *blocking*!")
         .def("get_gpu_info", &MultiGPUPyTrainer::get_gpu_info)
         .def_prop_ro("world_size", &MultiGPUPyTrainer::world_size)
         .def_prop_ro("batch_size", &MultiGPUPyTrainer::batch_size)
