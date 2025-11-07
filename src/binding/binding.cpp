@@ -21,7 +21,7 @@
 
 namespace nb = nanobind;
 
-using TokenArray = nb::ndarray<std::int32_t, nb::shape<-1, -1>, nb::device::cpu>;
+using TokenArray = nb::ndarray<std::int32_t, nb::shape<-1, -1>, nb::c_contig, nb::device::cpu>;
 
 static std::optional<ETensorDType> opt_dtype_from_str(const std::string& dtype_str) {
     if (dtype_str.empty()) {
@@ -51,19 +51,7 @@ static inline auto check_shape(const NBArray& arr, std::string_view name, std::a
     }
 }
 
-template<typename NBArray>
-static inline auto check_contiguous(const NBArray& arr, std::string_view name) {
-    int stride = 1;
-    for(int dim = arr.ndim() - 1; dim >= 0; --dim) {
-        if(arr.stride(dim) != stride) {
-            throw std::runtime_error(fmt::format("Expected {} to be contiguous", name));
-        }
-        stride *= arr.shape(dim);
-    }
-}
-
 #define CHECK_SHAPE(obj, ...) check_shape(obj, #obj, std::array{__VA_ARGS__})
-#define CHECK_CONTIGUOUS(obj) check_contiguous(obj, #obj)
 
 
 NB_MODULE(_pyllmq, m) {
@@ -266,8 +254,6 @@ NB_MODULE(_pyllmq, m) {
         .def("step", [](MultiGPUPyTrainer* trainer, TokenArray inputs, TokenArray targets) {
             CHECK_SHAPE(inputs, trainer->batch_size() * trainer->world_size(), trainer->seq_length());
             CHECK_SHAPE(targets, trainer->batch_size() * trainer->world_size(), trainer->seq_length());
-            CHECK_CONTIGUOUS(inputs);
-            CHECK_CONTIGUOUS(targets);
 
             trainer->step(inputs.data(), targets.data());
         }, nb::arg("inputs"), nb::arg("targets"),
@@ -275,8 +261,6 @@ NB_MODULE(_pyllmq, m) {
         .def("validate", [](MultiGPUPyTrainer* trainer, TokenArray inputs, TokenArray targets) {
             CHECK_SHAPE(inputs, trainer->batch_size() * trainer->world_size(), trainer->seq_length());
             CHECK_SHAPE(targets, trainer->batch_size() * trainer->world_size(), trainer->seq_length());
-            CHECK_CONTIGUOUS(inputs);
-            CHECK_CONTIGUOUS(targets);
 
             return trainer->validate(inputs.data(), targets.data());
         }, nb::arg("inputs"), nb::arg("targets"), "Perform one step of forward and loss calculation with the given inputs and targets, and return the resulting loss.")
@@ -312,8 +296,6 @@ NB_MODULE(_pyllmq, m) {
             new (d) DataLoader(file_list, chunk_size, 0, 1, seed);
         }, nb::arg("file_list"), nb::arg("chunk_size"), nb::arg("seed") = 42)
         .def("load_batch", [](DataLoader* d, TokenArray inputs, TokenArray targets) {
-            CHECK_CONTIGUOUS(inputs);
-            CHECK_CONTIGUOUS(targets);
             Tensor inp_t{ETensorDType::INT32, {static_cast<long>(inputs.shape(0)), static_cast<long>(inputs.shape(1)), 1, 1, 1},
                         reinterpret_cast<std::byte*>(inputs.data())};
             Tensor tgt_t{ETensorDType::INT32, {static_cast<long>(targets.shape(0)), static_cast<long>(targets.shape(1)), 1, 1, 1},
