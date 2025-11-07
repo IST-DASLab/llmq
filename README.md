@@ -1,4 +1,6 @@
 # LLM.Q
+[![Build Wheels](https://github.com/IST-DASLab/llmq/actions/workflows/wheel.yml/badge.svg)](https://github.com/IST-DASLab/llmq/actions/workflows/wheel.yml)
+
 Quantized LLM training in pure CUDA/C++.
 
 ## Overview
@@ -449,11 +451,51 @@ The run marked with * uses additional arguments `--shard-weights --memcpy-all-ga
 Command used: `./build/train --model=./Qwen2.5-0.5B --train-file=tiny-shakespeare-qwen-train.bin --eval-file=tiny-shakespeare-qwen-eval.bin --model-dtype=bf16 --opt-m-dtype=bf16 --opt-v-dtype=bf16 --matmul-dtype=e4m3 --grad-accumulation=8 --steps=1000 --learning-rate=1e-5 --gpus=1 --batch-size=8`
 
 ## Testing
-### Bit-perfect recomputation
-The CMake target `recompute-test` produces an executable that accepts a subset of the training arguments. It runs ten training
-steps, then resets the data loader and runs the same steps again, but this time with all recomputation options disabled.
-The resulting losses and gradient norms should be bitwise identical to the first run.
-Example: `./recompute-test --matmul-dtype=e4m3 --recompute-ffn` validates that, when running in fp8 mode, the ffn block is recomputed bitwise identical to the first run.
+Testing is handled through the python bindings.
+At this point, we have two types of tests:
+- recomputation
+- fixed reference
+
+
+### Recomputation tests
+Recomputation tests are responsible for verifying that the various `--recompute-*` flags produce the same results as the
+reference implementation without recomputation. To that end, the same
+training script is run twice with different recomputation settings,
+and the resulting losses and gradient norms are compared.
+
+There are two ways to run the recomputation tests. First, you can run them
+remotely on [Modal](https://modal.com/). In order for this to be successful,
+modal needs to be able to install the library as a wheel file.
+```bash
+uv build --wheel
+uv run --with auditwheel --with patchelf auditwheel repair dist/*.whl -w wheelhouse/ --exclude libcuda.so.1 --exclude libcudart.so.12  --exclude libcudart.so.13 --exclude libcudnn.so.9 --exclude libcufile.so.0 --exclude libnccl.so.2 --exclude libcublasLt.so.12 --exclude libcublasLt.so.13 --exclude libnvidia-ml.so.1
+```
+(The second command is there to shrink the size of the wheel, and make it so it does not use the libraries from your local development system.)
+
+Then you can run
+```bash
+modal run scripts/modal_test_app.py::test_recompute --recompute-swiglu 
+```
+
+If you have a GPU locally, you can instead run the test script directly:
+```
+uv run python src/bindings/python/tests/recompute.py --recompute-swiglu
+```
+In this case, `uv run` will take care of building the wheel.
+
+### Fixed reference tests
+Fixed reference tests are designed to catch unintended changes in the model's
+computations. As outputs inevitably vary depending on GPU and CUDA version,
+these tests are only available to run on modal, where they will always pick
+an L4 GPU.
+After following the same setup as above, you can run them as
+```bash
+modal run scripts/modal_test_app.py::test_fixed --dtype bf16
+modal run scripts/modal_test_app.py::test_fixed --dtype e4m3
+```
+
+### CI tests:
+To facilitate CI testing, there is an additional script [modal_test_ci](scripts/modal_test_ci.py). This script assumes that the modal app has already been deployed, and provides a convenient interface to run the tests in that case.
 
 ## Acknowledgements
 This implementation wouldn't have been possible without Andrej Karpathy's [llm.c](https://github.com/karpathy/llm.c).
