@@ -178,7 +178,7 @@ def run_training(config: RunConfig) -> RunResult:
 
         # Store results
         norms.append(result['norm'])
-        losses.append(result['loss'] / (config.batch_size * config.seq_len * config.grad_accum))
+        losses.append(result['loss'])
 
     return RunResult(losses=losses, norms=norms)
 
