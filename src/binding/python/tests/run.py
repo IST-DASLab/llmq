@@ -44,6 +44,13 @@ class RunConfig:
     recompute_block: bool = False
     use_cuda_graphs: bool = False
 
+    # offloading
+    offload_master: bool = False
+    offload_quants: bool = False
+    offload_opt_m: bool = False
+    offload_opt_v: bool = False
+    persistent_quants: bool = False
+
     # Test settings
     seed: int = 0x83b45442
 
@@ -101,6 +108,12 @@ def _create_options(config: RunConfig) -> pyllmq.LLamaOptions:
     options.use_cuda_graphs = config.use_cuda_graphs
     options.momentum_type = config.opt_m_dtype
     options.variance_type = config.opt_v_dtype
+
+    options.offload_opt_m = config.offload_opt_m
+    options.offload_opt_v = config.offload_opt_v
+    options.offload_quants = config.offload_quants
+    options.offload_master = config.offload_master
+    options.persistent_quants = config.persistent_quants
 
     if config.matmul_dtype:
         options.matmul_type = config.matmul_dtype
@@ -202,6 +215,12 @@ def parse_args(args: list = None) -> RunConfig:
                         help="Recompute entire transformer block")
     parser.add_argument("--use-cuda-graphs", action="store_true",
                         help="Enable CUDA graphs")
+
+    parser.add_argument("--offload-master", action="store_true", help="Offload master weights to CPU")
+    parser.add_argument("--offload-quants", action="store_true", help="Offload quantized weights")
+    parser.add_argument("--offload-opt-m", action="store_true", help="Offload first-order momentum")
+    parser.add_argument("--offload-opt-v", action="store_true", help="Offload second-order momentum")
+    parser.add_argument("--persistent-quants", action="store_true", help="Keep quantized weights")
 
     # Optional parameters
     parser.add_argument("--batch-size", "--batch", type=int, default=RunConfig.batch_size,
