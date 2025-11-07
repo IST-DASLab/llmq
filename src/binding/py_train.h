@@ -62,6 +62,7 @@ public:
     const LLamaOptions& options() const { return mOptions; }
 
     std::vector<std::pair<std::string, sSegmentMemory>> get_allocations(int gpu_id);
+    std::vector<std::pair<std::string, Tensor>> get_gradients(int gpu_id);
 
 private:
     LLamaConfig mConfig;

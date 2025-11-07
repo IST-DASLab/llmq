@@ -13,6 +13,7 @@
 #include "training/dataloader.h"
 #include "utilities/comm.h"
 #include "kernels/kernels.h"
+#include "models/llama_gradients.h"
 
 MultiGPUPyTrainer::MultiGPUPyTrainer(int ngpus, LLamaConfig config, LLamaOptions options, int batch_size, int seq_len, int grad_accum, bool memcpy_all_gather, bool memcpy_send_recv) :
     mConfig(config), mOptions(options), B(batch_size), T(seq_len), mGradAccumulation(grad_accum)
@@ -241,3 +242,30 @@ std::vector<std::pair<std::string, sSegmentMemory>> MultiGPUPyTrainer::get_alloc
     return result;
 }
 
+std::vector<std::pair<std::string, Tensor>> MultiGPUPyTrainer::get_gradients(int gpu_id) {
+    std::vector<std::pair<std::string, Tensor>> result;
+    run_work([&result](sThreadContext& ctx) {
+        const auto& config = ctx.Model->config();
+        auto& grads = ctx.Model->grads();
+        CUDA_CHECK(cudaDeviceSynchronize());
+        result.emplace_back("model.embed_tokens.weight", grads.get_embeddings_shard(nullptr));
+        if (!config.TiedWordEmbeddings) {
+            result.emplace_back("lm_head.weight", grads.get_lmhead_shard(nullptr));
+        }
+        result.emplace_back("model.norm.weight", grads.get_lnf_w_shard(nullptr));
+        for (int l = 0; l < config.NumLayers; l++) {
+            std::string prefix = "model.layers." + std::to_string(l);
+            auto& block = grads.get_block_shard(l, nullptr);
+            result.emplace_back(prefix + ".self_attn.qkv.weight", block.Attn_QKV_w);
+            if (block.Attn_QKV_b)
+                result.emplace_back(prefix + ".self_attn.qkv.bias", block.Attn_QKV_b.value());
+            result.emplace_back(prefix + ".self_attn.o_proj.weight", block.Attn_Out_w);
+            result.emplace_back(prefix + ".mlp.up.weight", block.MLP_Up_w);
+            result.emplace_back(prefix + ".mlp.down_proj.weight", block.MLP_Down_w);
+            result.emplace_back(prefix + ".input_layernorm.weight", block.LN1_w);
+            result.emplace_back(prefix + ".post_attention_layernorm.weight", block.LN2_w);
+        }
+        CUDA_CHECK(cudaDeviceSynchronize());
+    }, gpu_id);
+    return result;
+}
