@@ -60,9 +60,9 @@ void SafeTensorEntry::read_raw(Tensor& target, std::ptrdiff_t offset,
                                              offset, elements, nelem));
 
     // Check if target has enough space (in bytes)
-    if (target.bytes() != elements * get_dtype_size(mDType))
+    if (target.bytes() != elements * get_dtype_size(target.DType))
         throw std::runtime_error(fmt::format("Target tensor size mismatch for `{}`: has {} bytes, needs {} elements of {} bytes",
-                                                 mName, target.bytes(), elements, get_dtype_size(mDType)));
+                                                 mName, target.bytes(), elements, get_dtype_size(target.DType)));
 
     std::ptrdiff_t start = mDataBegin + offset * get_dtype_size(mDType);
     std::ptrdiff_t end = start + elements * get_dtype_size(mDType);
