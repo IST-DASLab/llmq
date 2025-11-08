@@ -1,4 +1,5 @@
 import argparse
+import math
 from dataclasses import dataclass, asdict
 from typing import Optional, List
 import pyllmq
@@ -62,7 +63,7 @@ class RunResult:
     norms: List[float]
 
 
-def compare_results(result: RunResult, expected: RunResult, *, file=None):
+def compare_results(result: RunResult, expected: RunResult, *, file=None, atol=0, rtol=0.0):
     passed = True
     if len(result.losses) != len(expected.losses):
         print("losses have different lengths", file=file)
@@ -72,21 +73,26 @@ def compare_results(result: RunResult, expected: RunResult, *, file=None):
         print("norms have different lengths", file=file)
         passed = False
 
+
     print("\nlosses:", file=file)
     for i, (loss, ref_loss) in enumerate(zip(result.losses, expected.losses)):
-        if ref_loss != loss:
+        if loss == ref_loss:
+            print(f" \033[1;32m✓\033[0m step {i}: {loss:.10f} = {ref_loss:.10f}", file=file)
+        elif math.isclose(ref_loss, loss, abs_tol=atol, rel_tol=rtol):
+            print(f" \033[1;32m✓\033[0m step {i}: {loss:.10f} ≈ {ref_loss:.10f}", file=file)
+        else:
             passed = False
             print(f" \033[1;31m✗\033[0m step {i}: {loss:.10f} ≠ {ref_loss:.10f}", file=file)
-        else:
-            print(f" \033[1;32m✓\033[0m step {i}: {loss:.10f} = {ref_loss:.10f}", file=file)
 
     print("\nnorms:", file=file)
     for i, (norm, ref_norm) in enumerate(zip(result.norms, expected.norms)):
-        if ref_norm != norm:
-            passed = False
-            print(f" \033[1;31m✗\033[0m step {i}: {norm:.10f} ≠ {ref_norm:.10f}", file=file)
+        if norm == ref_norm:
+            print(f" \033[1;32m✓\033[0m step {i}: {norm:13.10f} = {ref_norm:13.10f}", file=file)
+        elif math.isclose(ref_norm, norm, abs_tol=atol, rel_tol=rtol):
+            print(f" \033[1;32m✓\033[0m step {i}: {norm:13.10f} ≈ {ref_norm:13.10f}", file=file)
         else:
-            print(f" \033[1;32m✓\033[0m step {i}: {norm:.10f} = {ref_norm:.10f}", file=file)
+            passed = False
+            print(f" \033[1;31m✗\033[0m step {i}: {norm:13.10f} ≠ {ref_norm:13.10f}", file=file)
 
     if passed:
         print("\n\033[1;32mPASS\033[0m", file=file)
