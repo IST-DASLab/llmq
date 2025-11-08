@@ -166,10 +166,14 @@ jobs:
             args: "fixed bf16"
           - name: "LLMQ FP8"
             args: "fixed e4m3"
-          - name: "Torch ga=1"
+          - name: "Torch BF16 ga=1"
             args: "torch-step --grad-accum 1"
-          - name: "Torch ga=4"
+          - name: "Torch BF16 ga=4"
             args: "torch-step --grad-accum 4"
+          - name: "Torch FP32"
+            args: "torch-step --grad-accum 2 --model-dtype fp32 --matmul-dtype fp32"
+          - name: "Torch AMP"
+            args: "torch-step --grad-accum 2 --model-dtype fp32 --matmul-dtype bf16"
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
