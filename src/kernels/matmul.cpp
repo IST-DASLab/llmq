@@ -163,7 +163,7 @@ void matmul_cublaslt(floatO* d, const floatX* a, const floatX* b, const floatB* 
         // work reliably
         // TODO figure out what's going on with cublas
         alpha = &one;
-        beta = &zero;
+        beta = accumulate ? &one : &zero;
     }
 
     // call the matmul
