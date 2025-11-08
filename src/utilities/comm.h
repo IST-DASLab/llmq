@@ -26,6 +26,13 @@ typedef struct CUevent_st* cudaEvent_t;
 typedef struct CUstream_st* cudaStream_t;
 class NCCLCommunicator;
 
+class CommunicatorThreadsPack {
+public:
+    virtual ~CommunicatorThreadsPack() = default;
+    virtual void join() = 0;
+    virtual bool has_exception() const = 0;
+};
+
 
 class NCCLCommunicator {
 public:
@@ -79,7 +86,7 @@ public:
 
     static std::unique_ptr<NCCLCommunicator> make_mpi_communicator();
     static void run_threads_communicators(int ngpus, bool memcpy_allgather, bool memcpy_send_recv, std::function<void(NCCLCommunicator& comm)> work);
-    static  std::vector<std::jthread> launch_threads_communicators(int ngpus, bool memcpy_allgather, bool memcpy_send_recv, std::function<void(NCCLCommunicator& comm)> work);
+    static std::unique_ptr<CommunicatorThreadsPack> launch_threads_communicators(int ngpus, bool memcpy_allgather, bool memcpy_send_recv, std::function<void(NCCLCommunicator& comm)> work);
 protected:
     void terminate_nccl();
 

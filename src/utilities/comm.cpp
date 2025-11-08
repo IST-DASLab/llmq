@@ -346,6 +346,8 @@ public:
     struct SharedState {
         std::unique_ptr<std::barrier<>> Barrier;
         std::vector<std::byte*> Buffer;     // one pointer per thread
+        std::vector<std::exception_ptr> Exceptions;
+        std::mutex Mutex;
     };
 
     NCCLCommunicatorThreads(int rank, int world, bool memcpy_allgather, bool memcpy_send_recv, const void* nccl_id, std::shared_ptr<SharedState> state);
@@ -397,32 +399,94 @@ NCCLCommunicatorThreads::~NCCLCommunicatorThreads() {
     }
 }
 
-void NCCLCommunicator::run_threads_communicators(int ngpus, bool memcpy_allgather, bool memcpy_send_recv, std::function<void(NCCLCommunicator& comm)> work) {
-    std::vector<std::jthread> threads = launch_threads_communicators(ngpus, memcpy_allgather, memcpy_send_recv, std::move(work));
-    for(auto& t: threads) {
-        t.join();
+class ThreadsPackImp : public CommunicatorThreadsPack {
+public:
+    ThreadsPackImp(std::vector<std::jthread> threads, std::shared_ptr<NCCLCommunicatorThreads::SharedState> state) :
+        mThreads(std::move(threads)), mState(std::move(state)){
+
     }
+
+    ~ThreadsPackImp() override {
+        join_impl();
+    }
+
+    void join() override {
+        join_impl();
+    }
+
+    bool has_exception() const override {
+        std::lock_guard<std::mutex> lock(mState->Mutex);
+        for(int t = 0; t < mThreads.size(); ++t) {
+            if (auto error = mState->Exceptions[t]; error) {
+                return true;
+            }
+        }
+        return false;
+    }
+private:
+    void join_impl() {
+        // if any worker thread has already crashed, raise that exception in the main thread
+        check_exceptions();
+
+        for(auto& t: mThreads) {
+            if(t.joinable()) {
+                t.join();
+            }
+        }
+
+        // ok, now that everyone has terminated, check again for proper exit
+        check_exceptions();
+    }
+
+    void check_exceptions() {
+        std::lock_guard<std::mutex> lock(mState->Mutex);
+        for(int t = 0; t < mThreads.size(); ++t) {
+            if(auto error = mState->Exceptions[t]; error) {
+                fprintf(stderr, "Thread %d exited with uncaught exception\n", t);
+                fflush(stderr);
+                // reset the exception and rethrow it
+                mState->Exceptions[t] = nullptr;
+                std::rethrow_exception(error);
+            }
+        }
+    }
+
+    std::vector<std::jthread> mThreads;
+    std::shared_ptr<NCCLCommunicatorThreads::SharedState> mState;
+};
+
+void NCCLCommunicator::run_threads_communicators(int ngpus, bool memcpy_allgather, bool memcpy_send_recv, std::function<void(NCCLCommunicator& comm)> work) {
+    auto threads = launch_threads_communicators(ngpus, memcpy_allgather, memcpy_send_recv, std::move(work));
+    threads->join();
 }
 
-std::vector<std::jthread> NCCLCommunicator::launch_threads_communicators(int ngpus, bool memcpy_allgather, bool memcpy_send_recv, std::function<void(NCCLCommunicator& comm)> work) {
+std::unique_ptr<CommunicatorThreadsPack> NCCLCommunicator::launch_threads_communicators(
+            int ngpus, bool memcpy_allgather, bool memcpy_send_recv, std::function<void(NCCLCommunicator& comm)> work)
+{
     std::vector<std::jthread> threads;
     ncclUniqueId nccl_id;
     ncclCheck(ncclGetUniqueId(&nccl_id));
     threads.reserve(ngpus);
     auto bar = std::make_shared<NCCLCommunicatorThreads::SharedState>(std::make_unique<std::barrier<>>(ngpus), std::vector<std::byte*>(ngpus));
+    bar->Exceptions.resize(ngpus);
     for(int i = 0; i < ngpus; ++i) {
         threads.emplace_back([i, ngpus, nccl_id, memcpy_allgather, memcpy_send_recv, work, bar]() {
-            if (!set_cpu_affinity()) {
-                fprintf(stderr, "Failed to set CPU affinity for rank %d\n", i);
+            try {
+                if (!set_cpu_affinity()) {
+                    fprintf(stderr, "WARNING: Failed to set CPU affinity for rank %d\n", i);
+                }
+                NCCLCommunicatorThreads comm(i, ngpus, memcpy_allgather, memcpy_send_recv, &nccl_id, bar);
+                nvtxNameOsThread(pthread_self(), "worker");
+                work(comm);
+                bar->Barrier->arrive_and_wait();
+            } catch(...) {
+                std::lock_guard<std::mutex> lock(bar->Mutex);
+                bar->Exceptions[i] = std::current_exception();
             }
-            NCCLCommunicatorThreads comm(i, ngpus, memcpy_allgather, memcpy_send_recv, &nccl_id, bar);
-            nvtxNameOsThread(pthread_self(), "worker");
-            work(comm);
-            bar->Barrier->arrive_and_wait();
         }
         );
     }
-    return threads;
+    return std::make_unique<ThreadsPackImp>(std::move(threads), std::move(bar));
 }
 
 void NCCLCommunicator::schedule_destructive_all_to_all(const Tensor& tensor) {

@@ -17,6 +17,7 @@ class DataLoader;
 class IGPUUtilTracker;
 struct GPUUtilInfo;
 struct sSegmentMemory;
+class CommunicatorThreadsPack;
 
 //! \brief A multi-GPU trainer wrapper to be used for python bindings
 //! \details When wrapping llm.q for python, the  main source of difficulty is handling
@@ -74,7 +75,7 @@ private:
     int mEvalStep = 0;
     int mGradAccumulation = 1;
 
-    std::vector<std::jthread> mThreads;
+    std::unique_ptr<CommunicatorThreadsPack> mThreads;
     struct sThreadContext {
         NCCLCommunicator* Communicator;
         std::unique_ptr<LLamaModel> Model;
