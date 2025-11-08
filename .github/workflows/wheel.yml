@@ -154,17 +154,21 @@ jobs:
     # These tests run a few steps and compare the resulting losses and norms against a known, fixed reference
     # A failure in these tests doesn't necessarily mean that the code is broken, but it indicates that
     # the changes need to be *carefully* reviewed, and tested end-to-end, before the reference is updated.
-    name: Test fixed - ${{ matrix.dtype.name }}
+    name: Test fixed - ${{ matrix.config.name }}
     needs: deploy-modal
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        dtype:
-          - name: "BF16"
-            args: "bf16"
-          - name: "FP8"
-            args: "e4m3"
+        config:
+          - name: "LLMQ BF16"
+            args: "fixed bf16"
+          - name: "LlMQ FP8"
+            args: "fixed e4m3"
+          - name: "Torch ga=1"
+            args: "torch-step --grad-accum 1"
+          - name: "Torch ga=4"
+            args: "torch-step --grad-accum 4"
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -176,7 +180,7 @@ jobs:
         run: modal token set --token-id ${{ secrets.MODAL_TOKEN_ID }} --token-secret ${{ secrets.MODAL_TOKEN_SECRET }}
 
       - name: Run test on Modal
-        run: python3 scripts/modal_test_ci.py fixed ${{ matrix.dtype.args }}
+        run: python3 scripts/modal_test_ci.py ${{ matrix.config.args }}
 
   release:
     if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/heads/release-') || startsWith(github.ref, 'refs/tags/')
