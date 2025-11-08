@@ -179,7 +179,8 @@ NB_MODULE(_pyllmq, m) {
             bool recompute_ffn, bool recompute_qkv, bool recompute_att, bool recompute_block,
             bool use_cuda_graphs,
             bool offload_master, bool offload_quants, bool offload_opt_m, bool offload_opt_v,
-            bool use_write_combined, bool shard_weights, bool persistent_quants, bool shard_gradients, bool use_all_to_all_reduce, bool init_projections_to_zero,
+            bool use_write_combined, bool shard_weights, bool persistent_quants, bool shard_gradients, bool use_all_to_all_reduce,
+            bool init_projections_to_zero, int lmhead_chunks,
             const std::string matmul_type, const std::string master_dtype, const std::string momentum_type, const std::string variance_type) {
             new (t) LLamaOptions{
                 .RecomputeSwiGLu = recompute_swiglu,
@@ -188,6 +189,7 @@ NB_MODULE(_pyllmq, m) {
                 .RecomputeQKV = recompute_qkv,
                 .RecomputeAtt = recompute_att,
                 .RecomputeBlock = recompute_block,
+                .LMHeadChunks = lmhead_chunks,
                 .UseCudaGraphs = use_cuda_graphs,
                 .OffloadMaster = offload_master,
                 .OffloadQuants = offload_quants,
@@ -213,9 +215,9 @@ NB_MODULE(_pyllmq, m) {
              nb::arg("offload_opt_v") = false,    nb::arg("use_write_combined") = false,
              nb::arg("shard_weights") = false,    nb::arg("persistent_quants") = false,
              nb::arg("shard_gradients") = false,  nb::arg("use_all_to_all_reduce") = false,
-             nb::arg("init_projections_to_zero") = false, nb::arg("matmul_type") = "",
-             nb::arg("master_dtype") = "",        nb::arg("momentum_type") = "fp32",
-             nb::arg("variance_type") = "fp32"
+             nb::arg("init_projections_to_zero") = false, nb::arg("lmhead_chunks") = 1,
+             nb::arg("matmul_type") = "",         nb::arg("master_dtype") = "",
+             nb::arg("momentum_type") = "fp32",   nb::arg("variance_type") = "fp32"
                  )
         .def_rw("recompute_swiglu", &LLamaOptions::RecomputeSwiGLu)
         .def_rw("recompute_rms_norm", &LLamaOptions::RecomputeRMSNorm)
@@ -223,6 +225,7 @@ NB_MODULE(_pyllmq, m) {
         .def_rw("recompute_qkv", &LLamaOptions::RecomputeQKV)
         .def_rw("recompute_att", &LLamaOptions::RecomputeAtt)
         .def_rw("recompute_block", &LLamaOptions::RecomputeBlock)
+        .def_rw("lmhead_chunks", &LLamaOptions::LMHeadChunks)
         .def_rw("use_cuda_graphs", &LLamaOptions::UseCudaGraphs)
         .def_rw("offload_master", &LLamaOptions::OffloadMaster)
         .def_rw("offload_quants", &LLamaOptions::OffloadQuants)

@@ -160,6 +160,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
+      max-parallel: 4
       matrix:
         config:
           - name: "LLMQ BF16"
@@ -167,13 +168,15 @@ jobs:
           - name: "LLMQ FP8"
             args: "fixed e4m3"
           - name: "Torch BF16 ga=1"
-            args: "torch-step --grad-accum 1"
+            args: "torch-step --grad-accum 1 --model-dtype bf16 --matmul-dtype bf16"
           - name: "Torch BF16 ga=4"
-            args: "torch-step --grad-accum 4"
+            args: "torch-step --grad-accum 4 --model-dtype bf16 --matmul-dtype bf16"
           - name: "Torch FP32"
             args: "torch-step --grad-accum 2 --model-dtype fp32 --matmul-dtype fp32"
           - name: "Torch AMP"
             args: "torch-step --grad-accum 2 --model-dtype fp32 --matmul-dtype bf16"
+          - name: "Torch Chunking"
+            args: "torch-step --grad-accum 4 --model-dtype bf16 --matmul-dtype bf16 --lmhead-chunks 4"
     steps:
       - name: Checkout code
         uses: actions/checkout@v4

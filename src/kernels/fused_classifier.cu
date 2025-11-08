@@ -114,7 +114,7 @@ template <class floatX, bool WriteDLogits = true, bool WriteProbs = false>
 __global__ void __launch_bounds__(1024, 1)
     fused_classifier_kernel5(floatX* logits, float* losses, floatX* probs,
                              const float dloss, const int* targets,
-                             int B, int T, int V, int P, std::bool_constant<WriteDLogits>) {
+                             int BT, int V, int P, std::bool_constant<WriteDLogits>) {
     using x128 = GenericVector<floatX, 16/sizeof(floatX)>;
     // note: idx is small enough that it easily fits into 32 bit;
     // by making it a long here, we ensure that any offsets calculated with it (e.g., idx * P)
@@ -184,28 +184,27 @@ __global__ void __launch_bounds__(1024, 1)
 template <typename Type>
 void fused_classifier_imp(Type* logits, float* losses,
                       const float dloss, const int* targets,
-                      int B, int T, int V, int P, bool write_dlogits, cudaStream_t stream) {
+                      int BT, int V, int P, bool write_dlogits, cudaStream_t stream) {
     NVTX_RANGE_FN();
     const int block_size = 1024;
-    const int N = B * T;
-    const int grid_size = N;
+    const int grid_size = BT;
     if(write_dlogits) {
-        fused_classifier_kernel5<<<grid_size, block_size, 0, stream>>>(logits, losses, (Type*) NULL, dloss, targets, B,
-                                                                       T, V, P, std::bool_constant<true>());
+        fused_classifier_kernel5<<<grid_size, block_size, 0, stream>>>(logits, losses, (Type*) NULL, dloss, targets,
+                                                                       BT, V, P, std::bool_constant<true>());
     } else {
-        fused_classifier_kernel5<<<grid_size, block_size, 0, stream>>>(logits, losses, (Type*) NULL, dloss, targets, B,
-                                                                       T, V, P, std::bool_constant<false>());
+        fused_classifier_kernel5<<<grid_size, block_size, 0, stream>>>(logits, losses, (Type*) NULL, dloss, targets,
+                                                                       BT, V, P, std::bool_constant<false>());
     }
     CUDA_CHECK(cudaGetLastError());
 }
 
 void fused_classifier(float* logits, float* losses,
                       const float dloss, const int* targets,
-                      int B, int T, int V, int P, bool write_dlogits, cudaStream_t stream) {
-    fused_classifier_imp(logits, losses, dloss, targets, B, T, V, P, write_dlogits, stream);
+                      int BT, int V, int P, bool write_dlogits, cudaStream_t stream) {
+    fused_classifier_imp(logits, losses, dloss, targets, BT, V, P, write_dlogits, stream);
 }
 void fused_classifier(nv_bfloat16* logits, float* losses,
                       const float dloss, const int* targets,
-                      int B, int T, int V, int P, bool write_dlogits, cudaStream_t stream) {
-    fused_classifier_imp(logits, losses, dloss, targets, B, T, V, P, write_dlogits, stream);
+                      int BT, int V, int P, bool write_dlogits, cudaStream_t stream) {
+    fused_classifier_imp(logits, losses, dloss, targets, BT, V, P, write_dlogits, stream);
 }

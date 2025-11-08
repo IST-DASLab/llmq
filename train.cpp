@@ -99,6 +99,7 @@ void TrainingRunner::load_training_config(int argc, const char** argv) {
     app.add_option("--model-dtype", ModelDType, "Which dtype to use for model");
     app.add_option("--batch,--batch-size", B, "micro-batch size");
     app.add_option("--seq-len,--seq-length", T, "sequence length");
+    app.add_option("--lmhead-chunks", Options.LMHeadChunks, "Run the LM-Head in chunks to avoid materializing the large logit tensor.");
 
     // optimizer
     app.add_option("--lr,--learning-rate", LearningRate, "Base learning rate");
