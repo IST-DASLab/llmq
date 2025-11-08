@@ -18,11 +18,13 @@ class NCCLCommunicator;
 //! \details Provides access to the different underlying tensor containers.
 class IModel {
 public:
-    //! \brief Runs the forward pass
+    //! \brief Runs the forward pass until just before the logit calculation
     //! \details This function is asynchronous. You need to wait on `run_state.ForwardDone`
     //! before accessing any of the results (or run subsequent work on `run_state.MainStream`).
     //! However, it is guaranteed that `inputs` have been copied to the GPU-side buffer
     //! before this function returns.
+    //! Note: We do not calculate the logits here, so that we have more freedom to optimize
+    //! this large matmul, e.g., calculating it in chunks, by including it in the backward pass.
     virtual void forward(Tensor inputs, NCCLCommunicator& comm, int micro_step) = 0;
 
     //! \brief Runs the forward pass and calculates the loss w.r.t. `targets`.

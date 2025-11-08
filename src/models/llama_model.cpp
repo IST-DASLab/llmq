@@ -139,11 +139,6 @@ void LLamaModel::forward(Tensor inputs, NCCLCommunicator& comm, int micro_step) 
         Parameters->release_lnf(main_stream);
     }
 
-    Parameters->gather_head(comm);
-    matmul(rs->Output, Parameters->get_head(main_stream), rs->LNF,
-           std::nullopt, nullptr, rs->CublasLtHandle, rs->Workspace, V, B*T, C, EMMTranspose::TN, false, main_stream);
-    Parameters->release_head(main_stream);
-
     // do not return before inputs can be accessed again.
     CUDA_CHECK(cudaEventSynchronize(rs->TransferDone));
     CUDA_CHECK(cudaEventRecord(rs->ForwardDone, main_stream));
@@ -222,6 +217,7 @@ float LLamaModel::validate(Tensor inputs, Tensor targets, NCCLCommunicator& comm
     const size_t Vp = Config.VocabSize;
     long B = inputs.Sizes[0];
     long T = inputs.Sizes[1];
+    long C = Config.HiddenSize;
 
     cudaStream_t main_stream = rs->MainStream;
 
@@ -237,6 +233,12 @@ float LLamaModel::validate(Tensor inputs, Tensor targets, NCCLCommunicator& comm
     } else {
         CUDA_CHECK(cudaMemcpy(rs->Targets.Data, targets.Data, targets.bytes(), cudaMemcpyDeviceToDevice));
     }
+
+    Parameters->gather_head(comm);
+    matmul(rs->Output, Parameters->get_head(main_stream), rs->LNF,
+           std::nullopt, nullptr, rs->CublasLtHandle, rs->Workspace, V, B*T, C, EMMTranspose::TN, false, main_stream);
+    Parameters->release_head(main_stream);
+
     fused_classifier(rs->Output, rs->Losses, d_loss, rs->Targets, B, T, V, Vp, false, main_stream);
     // reduce all the losses within the current GPU (across all microsteps)
     _reduce_loss(*rs, comm, B, T);
@@ -337,6 +339,11 @@ void LLamaModel::backward(Tensor inputs, Tensor targets, NCCLCommunicator& comm,
     } else {
         Grads->start_micro_step(main_stream, micro_step, grad_accum_steps);
     }
+
+    Parameters->gather_head(comm);
+    matmul(rs->Output, Parameters->get_head(main_stream), rs->LNF,
+           std::nullopt, nullptr, rs->CublasLtHandle, rs->Workspace, V, B*T, C, EMMTranspose::TN, false, main_stream);
+    Parameters->release_head(main_stream);
 
     // accumulate the losses inside rs->losses, and kick off the backward pass inside the fused classifier
     fused_classifier(rs->Output, rs->Losses, d_loss, rs->Targets, B, T, V, Vp, true, main_stream);
