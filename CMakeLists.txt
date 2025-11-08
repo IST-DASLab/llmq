@@ -193,9 +193,18 @@ if (PYTHON_BINDING)
     nanobind_add_module(_pyllmq STABLE_ABI src/binding/binding.cpp src/binding/py_train.cpp)
     target_link_libraries(_pyllmq PUBLIC llmq-common Python::Module fmt::fmt-header-only)
 
+    # make sure we pick up cuda libraries from within the current python env, if available
+    set(RPATH_LIST
+        "$ORIGIN"
+        "$ORIGIN/../nvidia/nccl/lib"
+        "$ORIGIN/../nvidia/cudnn/lib"
+        "$ORIGIN/../nvidia/cuda_runtime/lib"
+        "$ORIGIN/../nvidia/cublas/lib"
+    )
+    list(JOIN RPATH_LIST ":" WHEEL_RPATH)
 
-    set_target_properties(_pyllmq PROPERTIES
-            INSTALL_RPATH "$ORIGIN"
+    set_target_properties(_pyllmq llmq-common PROPERTIES
+            INSTALL_RPATH "${WHEEL_RPATH}"
             BUILD_WITH_INSTALL_RPATH OFF
             INSTALL_RPATH_USE_LINK_PATH FALSE
     )
