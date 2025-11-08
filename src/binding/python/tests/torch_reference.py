@@ -108,6 +108,7 @@ def compare_single_step(config, file=None):
     total = 0
     avg_cosing_similarity = 0
     avg_rel_norm_error = 0
+    print(f"   {'tensor':40} {'cos':5}  {'norm':5}", file=file)
     for (kt, vt), (kl, vl) in zip(torch_grads, llmq_grads):
         assert kt == kl, (kl, kt)
         vt = vt.flatten()
@@ -132,6 +133,7 @@ def compare_single_step(config, file=None):
     avg_cosing_similarity /= total
     avg_rel_norm_error /= total
 
+    print("", file=file)
     if passed > 95 * total // 100 and avg_cosing_similarity > 0.99 and avg_rel_norm_error < 0.01:
         print(f"\033[1;32mPASS\033[0m {passed} / {total}  cos {avg_cosing_similarity:.3f} norm {100*avg_rel_norm_error:5.2f}", file=file)
         return True
