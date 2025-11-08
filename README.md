@@ -452,9 +452,10 @@ Command used: `./build/train --model=./Qwen2.5-0.5B --train-file=tiny-shakespear
 
 ## Testing
 Testing is handled through the python bindings.
-At this point, we have two types of tests:
+At this point, we have three types of tests:
 - recomputation
 - fixed reference
+- python reference
 
 
 ### Recomputation tests
@@ -478,7 +479,7 @@ modal run scripts/modal_test_app.py::test_recompute --recompute-swiglu
 ```
 
 If you have a GPU locally, you can instead run the test script directly:
-```
+```bash
 uv run python src/bindings/python/tests/recompute.py --recompute-swiglu
 ```
 In this case, `uv run` will take care of building the wheel.
@@ -492,6 +493,20 @@ After following the same setup as above, you can run them as
 ```bash
 modal run scripts/modal_test_app.py::test_fixed --dtype bf16
 modal run scripts/modal_test_app.py::test_fixed --dtype e4m3
+```
+Note that at this point, our FP32 attention backward pass is non-deterministic, so we cannot
+expect it to succeed in bitwise reproduction tests.
+
+### Python reference tests
+These tests compare, with some tolerance based on cosine similarity and norms of the gradients, that our implementation produces results that are close to torch/transformers.
+
+You can run these tests locally
+```bash
+uv run python src/binding/python/tests/torch_reference.py --seq-len 512 --grad-accum 4 --model-dtype bf16 --matmul-dtype e4m3
+```
+or using modal
+```bash
+modal run scripts/modal_test_app.py::test_torch_step --grad-accum 2 --model-dtype fp32 --matmul-dtype fp32
 ```
 
 ### CI tests:
