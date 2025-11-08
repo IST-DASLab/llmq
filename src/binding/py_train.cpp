@@ -42,9 +42,7 @@ MultiGPUPyTrainer::~MultiGPUPyTrainer() {
     }
 
     std::this_thread::sleep_for(std::chrono::milliseconds(100));
-    for(auto& t : mThreads) {
-        t.join();
-    }
+    mThreads->join();
 }
 
 void MultiGPUPyTrainer::import_weights(std::string path) {
@@ -192,6 +190,10 @@ void MultiGPUPyTrainer::run_work(std::function<void(sThreadContext & ctx)> work,
     }
 
     while(mWorkDone.load() < mContexts.size()) {
+        if(mThreads->has_exception()) {
+            stop();
+            mThreads->join(); // will throw, ending the loop
+        }
         std::this_thread::yield();
     }
 }
