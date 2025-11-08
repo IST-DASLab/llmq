@@ -12,6 +12,8 @@ class RunConfig:
     # Training hyperparameters
     batch_size: int = 2
     seq_len: int = 1024
+    grad_accum: int = 4
+    lmhead_chunks: int = 1
     max_steps: int = 10
 
     # Optimizer settings
@@ -19,7 +21,6 @@ class RunConfig:
     beta_2: float = 0.95
     grad_clip: float = 1.0
     weight_decay: float = 0.1
-    grad_accum: int = 4
     learning_rate: float = 1e-5
 
     # Model settings
@@ -114,6 +115,7 @@ def _create_options(config: RunConfig) -> pyllmq.LLamaOptions:
     options.use_cuda_graphs = config.use_cuda_graphs
     options.momentum_type = config.opt_m_dtype
     options.variance_type = config.opt_v_dtype
+    options.lmhead_chunks = config.lmhead_chunks
 
     options.offload_opt_m = config.offload_opt_m
     options.offload_opt_v = config.offload_opt_v
@@ -205,6 +207,8 @@ def parse_args(args: list = None) -> RunConfig:
                         help="Tokens for training")
     parser.add_argument("--grad-accumulation", type=int, default=RunConfig.grad_accum,
                         help="Number of micro-batches per optimizer step")
+    parser.add_argument("--lmhead-chunks", type=int, default=RunConfig.lmhead_chunks,
+                        help="Number of chunks for the lm-head")
 
     # Recomputation options
     parser.add_argument("--recompute-swiglu", action="store_true",

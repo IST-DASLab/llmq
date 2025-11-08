@@ -23,6 +23,7 @@ class TrainingConfig:
     batch_size: int = 1
     seq_len: int = 1024
     grad_accumulation: int = 4
+    lmhead_chunks: int = 1
 
     # Optimizer configuration
     learning_rate: float = 1e-5

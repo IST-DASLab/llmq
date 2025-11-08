@@ -24,6 +24,8 @@ def setup_options(config: pyllmq.TrainingConfig) -> pyllmq.LLamaOptions:
     options.recompute_qkv = config.recompute_qkv or config.recompute_att or config.recompute_block
     options.recompute_att = config.recompute_att or config.recompute_block
 
+    options.lmhead_chunks = config.lmhead_chunks
+
     # Optimizer dtype
     options.momentum_type = config.opt_m_dtype
     options.variance_type = config.opt_v_dtype
@@ -91,6 +93,7 @@ def parse_args():
     parser.add_argument("--batch-size", "--batch", type=int, default=default.batch_size, help="Micro-batch size")
     parser.add_argument("--seq-len", "--seq-length", type=int, default=default.seq_len, help="Sequence length")
     parser.add_argument("--grad-accumulation", type=int, default=default.grad_accumulation, help="Gradient accumulation steps")
+    parser.add_argument("--lmhead-chunks", type=int, default=default.lmhead_chunks, help="Run LM-head in smaller chunks")
 
     # Optimizer
     parser.add_argument("--learning-rate", "--lr", type=float, default=default.learning_rate, help="Learning rate")

@@ -213,7 +213,9 @@ LLamaRunState allocate_run_state(LLamaConfig config, LLamaOptions options, int B
     Tensor losses = alloc->allocate(ETensorDType::FP32, "losses", {B, T});
     Tensor encoded = alloc->allocate(config.DType, "encoded", {B, T, C});
     Tensor freq_cis = builder.generate_frequencies();
-    Tensor output = alloc->allocate(config.DType, "output", {B, T, V});
+    // We're chunking the logit computation, so we can allocate a much smaller tensor.
+    int out_size = div_exact(B*T, options.LMHeadChunks);
+    Tensor output = alloc->allocate(config.DType, "output", {out_size, V});
     Tensor lnf = alloc->allocate(config.DType, "lnf", {B, T, C});
     Tensor lnf_rstd = alloc->allocate(ETensorDType::FP32, "lnf_rstd", {B, T});
     Tensor d_lnf = alloc->allocate(config.DType, "d_lnf", {B, T, C});

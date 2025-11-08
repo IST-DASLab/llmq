@@ -145,13 +145,13 @@ void attention_backward_cudnn(Tensor& dqkv, const Tensor& stats,
 
 void fused_classifier(float* logits, float* losses,
                       float dloss, const int* targets,
-                          int B, int T, int V, int P, bool write_dlogits, cudaStream_t stream);
+                      int BT, int V, int P, bool write_dlogits, cudaStream_t stream);
 void fused_classifier(nv_bfloat16* logits, float* losses,
                       float dloss, const int* targets,
-                          int B, int T, int V, int P, bool write_dlogits, cudaStream_t stream);
+                      int BT, int V, int P, bool write_dlogits, cudaStream_t stream);
 void fused_classifier(Tensor& logits, Tensor& losses,
                       float dloss, const Tensor& targets,
-                      int B, int T, int V, int P, bool write_dlogits, cudaStream_t stream);
+                      int BT, int V, int P, bool write_dlogits, cudaStream_t stream);
 
 int get_max_num_block_sums(const cudaDeviceProp& dp);
 void global_norm_squared(float* out, const float* values, size_t count, const cudaDeviceProp& dp, cudaStream_t stream);
