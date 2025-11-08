@@ -30,15 +30,19 @@ void forward_qmm(Tensor& out, QuantizableTensor& inp, Tensor& weight, std::optio
                  cudaStream_t stream) {
     if (weight.DType == inp.Value.DType) {
         matmul(out, weight, inp.Value, bias, nullptr, handle, workspace, OC, B*T, C, EMMTranspose::TN, false, stream);
+        return;
+   }
+    float* act_scale = inp.Quant->Scales;
+    float* wgt_scale = weight.Scales;
+    float* out_scale = out.Scales;
+
+    if (!reuse_inp_quant) {
+        quantize_with_abs_max(inp.Quant.value(), inp.Value, act_scale, B*T*C, dp, stream);
+    }
+
+    if (weight.DType == ETensorDType::BF16) {
+        matmul(out, weight, inp.Quant.value(), bias, nullptr, handle, workspace, OC, B*T, C, EMMTranspose::TN, false, stream);
     } else {
-        float* act_scale = inp.Quant->Scales;
-        float* wgt_scale = weight.Scales;
-        float* out_scale = out.Scales;
-
-        if (!reuse_inp_quant) {
-            quantize_with_abs_max(inp.Quant.value(), inp.Value, act_scale, B*T*C, dp, stream);
-        }
-
         float scale = weight.DType == ETensorDType::FP8_E4M3 ? 448.f : std::numeric_limits<std::int8_t>::max();
         matmul_out_scale(out_scale, act_scale, wgt_scale, 1.f / scale / scale, stream);
         matmul(out, weight, inp.Quant.value(), bias, out_scale, handle, workspace, OC, B*T, C, EMMTranspose::TN, false, stream);
@@ -251,6 +255,18 @@ void backward_qmm(Tensor& dinp, Tensor& dweight, std::optional<Tensor> dbias,
     if (weight.DType == inp.Value.DType) {
         matmul(dinp, weight, dout.Value, std::nullopt, nullptr, rs.CublasLtHandle, rs.Workspace, C, B*T, OC, EMMTranspose::NN, false, stream);
         matmul(dweight, inp.Value, dout.Value, std::nullopt, nullptr, rs.CublasLtHandle, rs.Workspace, C, OC, B*T, EMMTranspose::NT, accumulate_gradient, stream);
+
+        if (dbias.has_value()) {
+            backward_bias(dbias.value(), dout.Value, nullptr, bias_buffer.value(), B, T, OC, rs.DeviceProp, stream);
+        }
+    } else if (weight.DType == ETensorDType::BF16) {
+        quantize_with_abs_max(dout.Quant.value(), dout.Value, nullptr, B*T*OC, rs.DeviceProp, stream);
+        if(!reuse_inp) {
+            quantize_with_abs_max(inp.Quant.value(), inp.Value, nullptr, B*T*C, rs.DeviceProp, stream);
+        }
+
+        matmul(dinp, weight, dout.Quant.value(), std::nullopt, nullptr, rs.CublasLtHandle, rs.Workspace, C, B*T, OC, EMMTranspose::NN, false, stream);
+        matmul(dweight, inp.Quant.value(), dout.Quant.value(), std::nullopt, nullptr, rs.CublasLtHandle, rs.Workspace, C, OC, B*T, EMMTranspose::NT, accumulate_gradient, stream);
 
         if (dbias.has_value()) {
             backward_bias(dbias.value(), dout.Value, nullptr, bias_buffer.value(), B, T, OC, rs.DeviceProp, stream);
@@ -576,6 +592,7 @@ void LLamaModel::_calculate_gradient_norm(NCCLCommunicator& comm, float grad_cli
     };
 
     norm_squared(Grads->get_embeddings_shard(main_stream));
+
     if(!Config.TiedWordEmbeddings) {
         norm_squared(Grads->get_lmhead_shard(main_stream));
     }
