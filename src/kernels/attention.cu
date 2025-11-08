@@ -144,7 +144,7 @@ __global__ void __launch_bounds__(512) attention_forward_gpu_kernel(
         for (int j = 0; j < vec_t::size; ++j) {
             cv[j] = (scalar_t)res[j];
         }
-        cv.store(out + ((b * Hq + t) * Hq + h) * E + e);
+        cv.store(out + ((b * T + t) * Hq + h) * E + e);
     }
 }
 
