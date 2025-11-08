@@ -1,17 +1,40 @@
 [project]
 name = "pyllmq"
-version = "0.2.1"
-description = "Add your description here"
+version = "0.2.3"
+description = "Python wrappers for LLMQ. LLM pretraining written in CUDA."
 readme = "README.md"
+requires-python = ">=3.12"
+license = "Apache-2.0"
+license-files = ["LICENSE"]
 authors = [
     { name = "Erik Schultheis", email = "erik.schultheis@ist.ac.at" }
 ]
-requires-python = ">=3.12"
+maintainers = [
+    { name = "Erik Schultheis", email = "erik.schultheis@ist.ac.at" }
+]
+keywords = ["machine learning", "large language model"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+
+    "Environment :: GPU :: NVIDIA CUDA :: 12",
+    "Environment :: GPU :: NVIDIA CUDA :: 13",
+
+    "Operating System :: POSIX :: Linux",
+
+    "Programming Language :: C++",
+    "Programming Language :: Python :: 3",
+
+    "Intended Audience :: Developers",
+    "Intended Audience :: Information Technology",
+    "Intended Audience :: Science/Research",
+
+    "Topic :: Scientific/Engineering :: Artificial Intelligence"
+]
+
 dependencies = [
     "numpy>=2.3.2",
     "tqdm>=4.67.1",
 ]
-
 [project.optional-dependencies]
 scripts = [
     "accelerate>=1.10.0",
@@ -26,6 +49,10 @@ scripts = [
     "pandas>=2.3.1",
     "plotly[express]>=6.3.0",
 ]
+
+[project.urls]
+Repository = "https://github.com/IST-DASLab/llmq"
+Issues = "https://github.com/IST-DASLab/llmq/issues"
 
 [project.scripts]
 pyllmq-demo = "pyllmq.scripts.demo:main"
@@ -56,4 +83,11 @@ cache-keys = [
     { file = "pyproject.toml" },
     { file = "src/**/*.{h,c,hpp,cpp,cu,cuh,py}" },
     { file = "CMakeLists.txt" }
+]
+
+[dependency-groups]
+dev = [
+    "auditwheel>=6.5.0",
+    "patchelf>=0.17.2.4",
+    "twine>=6.2.0",
 ]
