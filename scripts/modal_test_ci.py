@@ -22,6 +22,9 @@ if __name__ == "__main__":
     elif test_name == "fixed":
         test_fn = modal.Function.from_name("llmq-test", "run_fixed_result_test")
         test_args = sys.argv[2]
+    elif test_name == "torch-step":
+        test_fn = modal.Function.from_name("llmq-test", "run_torch_compare_step")
+        test_args = sys.argv[2:]
     else:
         raise RuntimeError(f"Unknown test type {test_name}")
 

@@ -10,10 +10,6 @@ import sys
 from pathlib import Path
 import modal
 
-from dataclasses import asdict
-
-from modal.exception import NotFoundError
-
 
 def create_image(cuda_version: str = "12.8.1"):
     # Check where we can find some wheels
@@ -39,9 +35,9 @@ def create_image(cuda_version: str = "12.8.1"):
     """Create Modal image with the wheel and dependencies."""
     return (
         modal.Image.from_registry(f"nvidia/cuda:{cuda_version}-cudnn-devel-ubuntu24.04", add_python="3.12")
-        .uv_pip_install("huggingface_hub", "transformers", "datasets", "numpy")
         # install dependencies for pyllmq, so that rebuild steps are faster
-        .uv_pip_install("nvidia-cuda-runtime-cu12>=12.8", "nvidia-cudnn-cu12>=9.0", "nvidia-nccl-cu12>=2.0", "nvidia-cublas-cu12>=12.8")
+        .uv_pip_install("huggingface_hub", "transformers", "datasets", "numpy", "torch", "accelerate",
+                        "nvidia-cuda-runtime-cu12>=12.8", "nvidia-cudnn-cu12>=9.0", "nvidia-nccl-cu12>=2.0", "nvidia-cublas-cu12>=12.8")
         .run_commands("hf download Qwen/Qwen2.5-0.5B")
         .add_local_file("scripts/tokenize_data.py", "/root/tokenize_data.py", copy=True)
         .run_commands(
@@ -111,7 +107,7 @@ def run_with_config(test_args: list[str]):
 def run_fixed_result_test(dtype: str = "bf16"):
     from pyllmq.tests.run import RunResult
 
-    print(f"Launching Modal fixed result test with dtype: {dtype}")
+    print(f"Launching Modal fixed_result test with dtype: {dtype}")
 
     """Run tests on Modal."""
     result = run_with_config([f"--matmul-dtype={dtype}"])
@@ -131,9 +127,30 @@ def run_fixed_result_test(dtype: str = "bf16"):
     return compare_and_create_report(result, RunResult(**expected))
 
 
+@app.function(
+    gpu="L4",
+    memory=8192,
+    timeout=300,
+    image=image,
+)
+def run_torch_compare_step(test_args: list):
+    from pyllmq.tests.torch_reference import compare_single_step
+    from pyllmq.tests.run import parse_args
+
+    config = parse_args(test_args)
+    config.train_file = "/root/data/tiny-shakespeare-qwen/train.bin"
+    config.model = "Qwen/Qwen2.5-0.5B"
+    report_buffer = io.StringIO()
+    passed = compare_single_step(config, file=report_buffer)
+    report = report_buffer.getvalue()
+    return {
+        "passed": passed,
+        "report": report,
+    }
+
+
 @app.local_entrypoint()
 def test_recompute(*test_args: str):
-    """Run recomputation tests on Modal."""
     print(f"Launching Modal recomputation test with args: {test_args}")
     result = run_recompute_test.remote(list(test_args))
 
@@ -145,8 +162,16 @@ def test_recompute(*test_args: str):
 
 
 @app.local_entrypoint()
+def test_torch_step(*test_args: str):
+    print(f"Launching Modal torch_compare_step test with args: {test_args}")
+    result = run_torch_compare_step.remote(list(test_args))
+    print("\n" + result["report"])
+    if not result["passed"]:
+        sys.exit(1)
+
+
+@app.local_entrypoint()
 def test_fixed(dtype: str = "bf16"):
-    """Run fixed result tests on Modal."""
     print(f"Launching Modal test with dtype: {dtype}")
     result = run_fixed_result_test.remote(dtype)
 

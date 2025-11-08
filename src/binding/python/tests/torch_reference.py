@@ -76,7 +76,7 @@ def llmq_grad_one_step(config: RunConfig):
     return {k: torch.from_dlpack(v).cpu().to(torch.float32).numpy() for k, v in trainer.get_gradients(0).items()}
 
 
-def compare_single_step(config):
+def compare_single_step(config, file=None):
     config.max_steps = 1
 
     torch_grads = torch_grad_one_step(config)
@@ -127,16 +127,16 @@ def compare_single_step(config):
         avg_cosing_similarity += cosine_similarity
         avg_rel_norm_error += rel_norm_error
 
-        print(f" {verdict} {short_k:40} {cosine_similarity:5.3f}  {100*np.abs(nt - nl) / max(nt, nl):5.2f}")
+        print(f" {verdict} {short_k:40} {cosine_similarity:5.3f}  {100*np.abs(nt - nl) / max(nt, nl):5.2f}", file=file)
 
     avg_cosing_similarity /= total
     avg_rel_norm_error /= total
 
     if passed > 95 * total // 100 and avg_cosing_similarity > 0.99 and avg_rel_norm_error < 0.01:
-        print(f"\033[1;32mPASS\033[0m {passed} / {total}  cos {avg_cosing_similarity:.3f} norm {100*avg_rel_norm_error:5.2f}")
+        print(f"\033[1;32mPASS\033[0m {passed} / {total}  cos {avg_cosing_similarity:.3f} norm {100*avg_rel_norm_error:5.2f}", file=file)
         return True
     else:
-        print(f"\033[1;31mFAIL\033[0m {passed} / {total}  cos {avg_cosing_similarity:.3f} norm {100*avg_rel_norm_error:5.2f}")
+        print(f"\033[1;31mFAIL\033[0m {passed} / {total}  cos {avg_cosing_similarity:.3f} norm {100*avg_rel_norm_error:5.2f}", file=file)
         return False
 
 def run_compare_single_step():
