@@ -234,13 +234,25 @@ float LLamaModel::validate(Tensor inputs, Tensor targets, NCCLCommunicator& comm
         CUDA_CHECK(cudaMemcpy(rs->Targets.Data, targets.Data, targets.bytes(), cudaMemcpyDeviceToDevice));
     }
 
-    Parameters->gather_head(comm);
-    matmul(rs->Output, Parameters->get_head(main_stream), rs->LNF,
-           std::nullopt, nullptr, rs->CublasLtHandle, rs->Workspace, V, B*T, C, EMMTranspose::TN, false, main_stream);
-    Parameters->release_head(main_stream);
 
-    fused_classifier(rs->Output, rs->Losses, d_loss, rs->Targets, B*T, V, Vp, false, main_stream);
-    // reduce all the losses within the current GPU (across all microsteps)
+    long nano_batches = Options.LMHeadChunks;
+    int nano_batch_size = div_exact(B * T, nano_batches);
+    Parameters->gather_head(comm);
+    for(int nano_step = 0; nano_step < nano_batches; nano_step++) {
+        Tensor lnf_slice = rs->LNF;
+        lnf_slice.Data += nano_step * nano_batch_size * C * get_dtype_size(lnf_slice.DType);
+        Tensor tgt = rs->Targets;
+        tgt.Data += nano_step *  nano_batch_size * get_dtype_size(tgt.DType);
+        Tensor losses = rs->Losses;
+        losses.Data += nano_step * nano_batch_size * get_dtype_size(losses.DType);
+
+        matmul(rs->Output, Parameters->get_head(main_stream), lnf_slice,
+               std::nullopt, nullptr, rs->CublasLtHandle, rs->Workspace, V, nano_batch_size, C, EMMTranspose::TN, false, main_stream);
+
+        // accumulate the losses inside rs->losses, and kick off the backward pass inside the fused classifier
+        fused_classifier(rs->Output, losses, d_loss, tgt, nano_batch_size, V, Vp, true, main_stream);
+    }
+    Parameters->release_head(main_stream);
     _reduce_loss(*rs, comm, B, T);
 
     CUDA_CHECK(cudaDeviceSynchronize());
