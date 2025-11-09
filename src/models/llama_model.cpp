@@ -709,7 +709,7 @@ void LLamaModel::update(NCCLCommunicator& comm, float learning_rate, float beta_
         run_update(bw.MLP_Up_w, bg.MLP_Up_w, bm.MLP_Up_w, bv.MLP_Up_w, weight_decay);
         run_update(bw.MLP_Down_w, bg.MLP_Down_w, bm.MLP_Down_w, bv.MLP_Down_w, weight_decay);
 
-        Parameters->release_master_block(i, main_stream, rs->SideStream);
+        Parameters->release_master_block(i, main_stream, rs->SideStream, *rs);
 
         CUDA_CHECK(cudaEventRecord(rs->LayerUpdateDone[i], main_stream));
     }

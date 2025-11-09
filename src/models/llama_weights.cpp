@@ -304,7 +304,7 @@ sLLamaBlockWeights<TensorShard>& LLamaWeightsManager::get_master_block(int layer
     return buf;
 }
 
-void LLamaWeightsManager::release_master_block(int layer_idx, cudaStream_t stream, cudaStream_t  put_stream) {
+void LLamaWeightsManager::release_master_block(int layer_idx, cudaStream_t stream, cudaStream_t put_stream, LLamaRunState& run_state) {
     if(!mOffloadMaster) return;
 
     int buffer = layer_idx % 2;
@@ -318,6 +318,25 @@ void LLamaWeightsManager::release_master_block(int layer_idx, cudaStream_t strea
             CUDA_CHECK(cudaMemcpyAsync(dst.Data, src.Data, dst.bytes(), cudaMemcpyDeviceToHost, put_stream));
         }
     };
+
+    auto& src = mMasterDeviceDoubleBuffer.at(buffer);
+    auto& qnt = lookup_block_quants(layer_idx);
+
+    bool convert_any = false;
+    if (qnt.LayerIdx == layer_idx) {
+        NvtxRange q_rng("quantize");
+        convert_dtype_for_gather(src.LN1_w, qnt.Block.LN1_w, convert_any, run_state);
+        convert_dtype_for_gather(src.LN2_w, qnt.Block.LN2_w, convert_any, run_state);
+        convert_dtype_for_gather(src.Attn_QKV_w, qnt.Block.Attn_QKV_w, convert_any, run_state);
+        convert_dtype_for_gather(src.Attn_Out_w, qnt.Block.Attn_Out_w, convert_any, run_state);
+        convert_dtype_for_gather(src.MLP_Up_w, qnt.Block.MLP_Up_w, convert_any, run_state);
+        convert_dtype_for_gather(src.MLP_Down_w, qnt.Block.MLP_Down_w, convert_any, run_state);
+        if (src.Attn_QKV_b.has_value()) {
+            convert_dtype_for_gather(src.Attn_QKV_b.value(), qnt.Block.Attn_QKV_b.value(), convert_any, run_state);
+        }
+        // indicate that this is alrady the version for the next step
+        qnt.Version = mVersion + 1;
+    }
 
     CUDA_CHECK(cudaEventRecord(stat.DoneEvent, stream));
     CUDA_CHECK(cudaStreamWaitEvent(put_stream, stat.DoneEvent, 0));
