@@ -690,7 +690,8 @@ void LLamaModel::update(NCCLCommunicator& comm, float learning_rate, float beta_
 
     for(int i = 0; i < Config.NumLayers; i++) {
         NvtxRange layer_range("Layer", i);
-        auto& bw = Parameters->get_master_block(i);
+        Parameters->gather_master_block(i, comm.stream());
+        auto& bw = Parameters->get_master_block(i, main_stream);
         auto& bg = Grads->get_block_shard(i, main_stream);
         auto& bm = opt_m.Blocks[i];
         auto& bv = opt_v.Blocks[i];
@@ -707,6 +708,8 @@ void LLamaModel::update(NCCLCommunicator& comm, float learning_rate, float beta_
 
         run_update(bw.MLP_Up_w, bg.MLP_Up_w, bm.MLP_Up_w, bv.MLP_Up_w, weight_decay);
         run_update(bw.MLP_Down_w, bg.MLP_Down_w, bm.MLP_Down_w, bv.MLP_Down_w, weight_decay);
+
+        Parameters->release_master_block(i, main_stream, rs->SideStream);
 
         CUDA_CHECK(cudaEventRecord(rs->LayerUpdateDone[i], main_stream));
     }
