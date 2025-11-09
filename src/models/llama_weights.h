@@ -71,7 +71,7 @@ public:
 
     void gather_master_block(int layer_idx, cudaStream_t fetch_stream);
     sLLamaBlockWeights<TensorShard>& get_master_block(int layer_idx, cudaStream_t stream);
-    void release_master_block(int layer_idx, cudaStream_t stream, cudaStream_t put_stream);
+    void release_master_block(int layer_idx, cudaStream_t stream, cudaStream_t put_stream, LLamaRunState& run_state);
 
     // Weights that will be used during FWD/BWD
     void gather_embeddings(NCCLCommunicator& comm);
