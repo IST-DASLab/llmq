@@ -69,7 +69,9 @@ public:
     TensorShard& get_master_lmhead();
     TensorShard& get_master_lnf_w();
 
-    sLLamaBlockWeights<TensorShard>& get_master_block(int layer_idx);
+    void gather_master_block(int layer_idx, cudaStream_t fetch_stream);
+    sLLamaBlockWeights<TensorShard>& get_master_block(int layer_idx, cudaStream_t stream);
+    void release_master_block(int layer_idx, cudaStream_t stream, cudaStream_t put_stream);
 
     // Weights that will be used during FWD/BWD
     void gather_embeddings(NCCLCommunicator& comm);
@@ -93,6 +95,7 @@ public:
 protected:
     LLamaWeightsManager(const LLamaConfig& config, const LLamaOptions& options, int rank, int world);
     void setup_scales(TensorAllocator& alloc);
+    void setup_master_buffers(const LLamaConfig& config, TensorAllocator& alloc);
 
     struct sGatherData {
         int LayerIdx = -1;
@@ -120,6 +123,9 @@ protected:
 
     Tensor mAbsMaxes;
 
+    std::array<sLLamaBlockWeights<TensorShard>, 2> mMasterDeviceDoubleBuffer;
+    std::array<sGatherData, 2> mMasterDeviceBufferStatus;
+
     bool is_in_cache(sGatherData& data, int expected) const;
     void update_get_status(sGatherData& data, int expected, cudaStream_t stream) const;
     void release_status(sGatherData& data, int expected, cudaStream_t stream);
@@ -136,6 +142,8 @@ protected:
 
     ETensorDType mMasterDType;
     ETensorDType mWorkMatDType;
+
+    bool mOffloadMaster;
 };
 
 sLLamaNonBlockWeights<Tensor> allocate_non_block_full(LLamaConfig config, ETensorDType dtype, EAllocationType kind, TensorAllocator& alloc);
@@ -149,5 +157,9 @@ sLLamaWeights allocate_weights(const LLamaConfig& config, EAllocationType kind, 
 
 sLLamaBlockWeights<TensorShard> shard_block(const sLLamaBlockWeights<Tensor>& block, int shard_idx, int num_shards);
 sLLamaNonBlockWeights<TensorShard> shard_non_block(const sLLamaNonBlockWeights<Tensor>& block, int shard_idx, int num_shards);
+
+std::size_t bytes_for_block(const LLamaConfig& config, ETensorDType matrix_dtype, ETensorDType other_dtype, int num_shards);
+std::size_t bytes_for_block_matrices(const LLamaConfig& config, ETensorDType dtype, int num_shards);
+std::size_t bytes_for_block_non_matrix(const LLamaConfig& config, ETensorDType dtype, int num_shards);
 
 #endif //LLMQ_LLAMA_WEIGHTS_H
