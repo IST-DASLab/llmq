@@ -690,7 +690,7 @@ void LLamaModel::update(NCCLCommunicator& comm, float learning_rate, float beta_
 
     for(int i = 0; i < Config.NumLayers; i++) {
         NvtxRange layer_range("Layer", i);
-        Parameters->gather_master_block(i, comm.stream());
+        Parameters->fetch_master_block(i, comm.stream());
         auto& bw = Parameters->get_master_block(i, main_stream);
         auto& bg = Grads->get_block_shard(i, main_stream);
         auto& bm = opt_m.Blocks[i];

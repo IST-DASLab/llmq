@@ -69,8 +69,33 @@ public:
     TensorShard& get_master_lmhead();
     TensorShard& get_master_lnf_w();
 
-    void gather_master_block(int layer_idx, cudaStream_t fetch_stream);
+    // In case non-offloaded weights, these functions are trivial no-ops and returns.
+    // If master weights are offloaded, then gather initiates the memcpy from host to
+    // device buffer (waiting if the buffer is still busy), get returns the buffer,
+    // with stream waiting on it being copied. Finally, release copies the buffer back
+    // to host using yet another stream (so we get efficient bidirectional communication).
+
+    //! Fetches the master weights from host in case of offloading. Does nothing otherwise.
+    //! \param layer_idx The layer for which master weights are requested
+    //! \param fetch_stream The stream on which to enqueue the H2D memcpy.
+    void fetch_master_block(int layer_idx, cudaStream_t fetch_stream);
+
+    //! Gets the master weights for the given block, making sure stream is blocked in case
+    //! they are being fetched from the host.
+    //! \param layer_idx The layer for which master weights are requested
+    //! \param stream The stream which to block until the preceding gather_master_block has completed.
     sLLamaBlockWeights<TensorShard>& get_master_block(int layer_idx, cudaStream_t stream);
+
+    //! Indicate that the optimizer has finished updating the master weight.
+    //! If they are not offloaded, this function does nothing.
+    //! Otherwise, if we use quantization and a quant buffer for this layer is available,
+    //! quantize the weights while they are still on the device.
+    //! Then copy these weights back to host using put_stream, and signal that the buffer can
+    //! be reused.
+    //! \param layer_idx The layer for which master weights are updated
+    //! \param stream The compute stream. Waits on this stream before the master weight is considered updated.
+    //! \param put_stream The stream on which to enqueue the H2D memcpy.
+    //! \param run_state The run state, needed to run `convert_dtype_for_gather`.
     void release_master_block(int layer_idx, cudaStream_t stream, cudaStream_t put_stream, LLamaRunState& run_state);
 
     // Weights that will be used during FWD/BWD
