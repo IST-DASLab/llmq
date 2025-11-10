@@ -20,6 +20,9 @@ struct Tensor;
 enum class ETensorDType: int;
 
 enum class EMMTranspose { TT, TN, NT, NN };
+enum class EMatmulBackend {CuBLAS, Custom};
+
+EMatmulBackend& get_matmul_backend();
 
 void encoder_forward(float* out, const int* inp, const float* wte, const float* wpe, int B, int T, int C, int V, cudaStream_t stream);
 void encoder_forward(nv_bfloat16* out, const int* inp, const nv_bfloat16* wte, const nv_bfloat16* wpe, int B, int T, int C, int V, cudaStream_t stream);

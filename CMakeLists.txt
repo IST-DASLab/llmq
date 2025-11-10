@@ -178,6 +178,7 @@ add_library(llmq-common SHARED
         src/kernels/random.cu
         src/kernels/fill.cu
         src/kernels/convert.cu
+        src/kernels/gemm_mma.cu
 )
 
 target_link_libraries(llmq-common PRIVATE ${CUFILE_LIBS} cudnn_frontend ${CUDNN_LIBRARY} nvidia::nccl fmt::fmt-header-only)
@@ -193,6 +194,9 @@ target_link_libraries(train PRIVATE llmq-common CLI11::CLI11 fmt::fmt-header-onl
 
 add_executable(export-checkpoint export-checkpoint.cpp)
 target_link_libraries(export-checkpoint PRIVATE llmq-common CLI11::CLI11)
+
+add_executable(gemm-test src/testing/kernels/gemm.cpp)
+target_link_libraries(gemm-test PUBLIC llmq-common CUDA::cublas)
 
 if (NOT SKBUILD)
     install(TARGETS llmq-common train export-checkpoint

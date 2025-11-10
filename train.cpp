@@ -93,6 +93,7 @@ struct TrainingRunner {
     int NGPUs = 0;
     bool MemcpyAllGather = false;
     bool MemcpySendRecv = false;
+    bool UseCustomMatmul = false;
 
     LLamaOptions Options;
 
@@ -199,11 +200,17 @@ void TrainingRunner::load_training_config(int argc, const char** argv) {
     app.add_flag("--memcpy-send-recv", MemcpySendRecv, "Use memcpy to perform send/receive (all-to-all). Currently only supported by the threads backend.");
     app.add_flag("--all-to-all-reduce", Options.UseAllToAllReduce, "Uses an all-to-all-based reduce algorithm. Combine with --memcpy-send-recv.");
     app.add_flag("--write-combined", Options.UseWriteCombined, "Uses write-combined memory for offloaded tensors.");
+    app.add_flag("--custom-matmul", UseCustomMatmul, "Use a self-written matmul instead of cublas. This is *not* going to be faster, this"
+                                                     "option is mostly for the purists who want to minimize the dependencies.\n");
 
     try {
         app.parse(argc, argv);
     } catch (const CLI::ParseError& e) {
         std::exit(app.exit(e));
+    }
+
+    if( UseCustomMatmul ) {
+        get_matmul_backend() = EMatmulBackend::Custom;
     }
 
     if (!std::filesystem::exists(ModelRootPath)) {
