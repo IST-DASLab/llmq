@@ -12,6 +12,11 @@
 
 cublasComputeType_t cublas_compute = CUBLAS_COMPUTE_32F;
 
+EMatmulBackend& get_matmul_backend() {
+    static EMatmulBackend backend = EMatmulBackend::CuBLAS;
+    return backend;
+}
+
 // ----------------------------------------------------------------------------
 // Error checking
 
@@ -151,40 +156,60 @@ void matmul_cublaslt(FloatC* d, const FloatA* a, const FloatB* b, const FloatBia
     CUDA_CHECK(cudaGetLastError());
 }
 
+// custom matmuls
+void gemm_mma_tn(nv_bfloat16* out, const __nv_fp8_e4m3* a, const __nv_fp8_e4m3* b, int m, int n, int k, const float* scale, bool accumulate, cudaStream_t stream);
+void gemm_mma_tn(nv_bfloat16* out, const nv_bfloat16* a, const nv_bfloat16* b, int m, int n, int k, const float* scale, bool accumulate, cudaStream_t stream);
+
+
+template<class floatO, class floatX, class floatB>
+void matmul_dispatch(floatO* d, const floatX* a, const floatX* b, const floatB* bias,
+                     std::byte* workspace, std::size_t workspace_size,
+                     int m, int n, int k, cudaStream_t stream, cublasLtHandle_t handle,
+                     const float* scale, EMMTranspose mode, bool accumulate)
+{
+    if(get_matmul_backend() == EMatmulBackend::CuBLAS || bias != nullptr || mode != EMMTranspose::TN) {
+        matmul_cublaslt(d, a, b, bias, workspace, workspace_size, m, n, k, stream, handle, scale, mode, accumulate);
+    } else if constexpr (std::is_same_v<floatO, nv_bfloat16>){
+        gemm_mma_tn(d, a, b, m, n, k, scale, accumulate, stream);
+    } else {
+        matmul_cublaslt(d, a, b, bias, workspace, workspace_size, m, n, k, stream, handle, scale, mode, accumulate);
+    }
+}
+
 void matmul(float* c, const float* a, const float* b, const float* bias, const float* scale_a, const float* scale_b,
             cublasLtHandle_t handle, std::byte* workspace, std::size_t workspace_size,
             int M, int N, int K, EMMTranspose mode, bool accumulate, cudaStream_t stream) {
-    matmul_cublaslt(c, a, b, bias, workspace, workspace_size, M, N, K, stream, handle, scale_a, scale_b, mode, accumulate);
+    matmul_dispatch(c, a, b, bias, workspace, workspace_size, M, N, K, stream, handle, scale_a, scale_b, mode, accumulate);
 }
 
 void matmul(float* c, const nv_bfloat16* a, const nv_bfloat16* b, const float* bias, const float* scale_a, const float* scale_b,
             cublasLtHandle_t handle, std::byte* workspace, std::size_t workspace_size,
             int M, int N, int K, EMMTranspose mode, bool accumulate, cudaStream_t stream) {
-    matmul_cublaslt(c, a, b, bias, workspace, workspace_size, M, N, K, stream, handle, scale_a, scale_b, mode, accumulate);
+    matmul_dispatch(c, a, b, bias, workspace, workspace_size, M, N, K, stream, handle, scale_a, scale_b, mode, accumulate);
 }
 
 void matmul(float* c, const __nv_fp8_e4m3* a, const __nv_fp8_e4m3* b, const float* bias, const float* scale_a, const float* scale_b,
             cublasLtHandle_t handle, std::byte* workspace, std::size_t workspace_size,
             int M, int N, int K, EMMTranspose mode, bool accumulate, cudaStream_t stream) {
-    matmul_cublaslt(c, a, b, bias, workspace, workspace_size, M, N, K, stream, handle, scale_a, scale_b, mode, accumulate);
+    matmul_dispatch(c, a, b, bias, workspace, workspace_size, M, N, K, stream, handle, scale_a, scale_b, mode, accumulate);
 }
 
 void matmul(float* c, const __nv_fp8_e4m3* a, const __nv_fp8_e4m3* b, const nv_bfloat16* bias, const float* scale_a, const float* scale_b,
             cublasLtHandle_t handle, std::byte* workspace, std::size_t workspace_size,
             int M, int N, int K, EMMTranspose mode, bool accumulate, cudaStream_t stream) {
-    matmul_cublaslt(c, a, b, bias, workspace, workspace_size, M, N, K, stream, handle, scale_a, scale_b, mode, accumulate);
+    matmul_dispatch(c, a, b, bias, workspace, workspace_size, M, N, K, stream, handle, scale_a, scale_b, mode, accumulate);
 }
 
 void matmul(nv_bfloat16* c, const nv_bfloat16* a, const nv_bfloat16* b, const nv_bfloat16* bias, const float* scale_a, const float* scale_b,
             cublasLtHandle_t handle, std::byte* workspace, std::size_t workspace_size,
             int M, int N, int K, EMMTranspose mode, bool accumulate, cudaStream_t stream) {
-    matmul_cublaslt(c, a, b, bias, workspace, workspace_size, M, N, K, stream, handle, scale_a, scale_b, mode, accumulate);
+    matmul_dispatch(c, a, b, bias, workspace, workspace_size, M, N, K, stream, handle, scale_a, scale_b, mode, accumulate);
 }
 
 void matmul(nv_bfloat16* c, const __nv_fp8_e4m3* a, const __nv_fp8_e4m3* b, const nv_bfloat16* bias, const float* scale_a, const float* scale_b,
             cublasLtHandle_t handle, std::byte* workspace, std::size_t workspace_size,
             int M, int N, int K, EMMTranspose mode, bool accumulate, cudaStream_t stream) {
-    matmul_cublaslt(c, a, b, bias, workspace, workspace_size, M, N, K, stream, handle, scale_a, scale_b, mode, accumulate);
+    matmul_dispatch(c, a, b, bias, workspace, workspace_size, M, N, K, stream, handle, scale_a, scale_b, mode, accumulate);
 }
 
 void matmul(nv_bfloat16* c, const __nv_fp8_e4m3* a, const __nv_fp8_e5m2* b, const nv_bfloat16* bias, const float* scale_a, const float* scale_b,
