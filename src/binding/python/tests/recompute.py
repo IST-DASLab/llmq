@@ -29,6 +29,9 @@ def disable_recompute(config: RunConfig):
     baseline_config.recompute_att = False
     baseline_config.recompute_block = False
     baseline_config.use_cuda_graphs = False
+    baseline_config.offload_master = False
+    baseline_config.offload_opt_v = False
+    baseline_config.offload_opt_m = False
     return baseline_config
 
 
