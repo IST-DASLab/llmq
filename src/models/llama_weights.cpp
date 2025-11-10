@@ -257,7 +257,7 @@ TensorShard& LLamaWeightsManager::get_master_lnf_w() {
     return mMaster.NonBlocks.LNF_w;
 }
 
-void LLamaWeightsManager::gather_master_block(int layer_idx, cudaStream_t fetch_stream) {
+void LLamaWeightsManager::fetch_master_block(int layer_idx, cudaStream_t fetch_stream) {
     if(!mOffloadMaster) return;
 
     int buffer = layer_idx % 2;
