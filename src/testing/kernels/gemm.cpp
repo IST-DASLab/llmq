@@ -127,7 +127,7 @@ void run_test(int m, int n, int k, float scale = 1.f, bool accumulate = false, b
         if (far_count == 0 && approx_count == 0) {
             printf("PASS\n");
         } else if(far_count < m * n / 100 && approx_count < m * n / 10) {
-            printf("CLOSE %d%%\n", 100 - (approx_count + far_count) * 100 / (m * n));
+            printf("CLOSE %d%%  [%d+%d]\n", 100 - (approx_count + far_count) * 100 / (m * n), far_count, approx_count);
         } else {
             printf("FAIL\n");
         }
