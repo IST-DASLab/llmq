@@ -18,10 +18,12 @@ using int_c = std::integral_constant<int, V>;
 template<typename T>
 std::type_identity<T> type_v = {};
 
-template<typename AType, typename BType, typename AccType>
+template<typename AType, typename BType, typename BiasType, typename AccType>
 __global__ __launch_bounds__(32*2*2, 2) void gemm_mma_tn_kernel(nv_bfloat16* __restrict__ out,
                                                                 const AType* __restrict__ a, const BType* __restrict__ b,
-                                                                int m, int n, int k, const float* scale, bool accumulate,
+                                                                int m, int n, int k, const float* __restrict__ scale,
+                                                                const BiasType* __restrict__ bias,
+                                                                bool accumulate,
                                                                 std::type_identity<AccType> acc_type) {
     static_assert(sizeof(AType) == sizeof(BType), "index calculations assume sz(AType) == sz(BType)");
     // Note: you cannot change these numbers without breaking the kernel.
@@ -154,7 +156,7 @@ __global__ __launch_bounds__(32*2*2, 2) void gemm_mma_tn_kernel(nv_bfloat16* __r
     loop_fraction(int_c<2>{}, false_v, ks + 5 * TK);
     loop_fraction(int_c<3>{}, false_v, ks + 6 * TK);
 
-    if(scale != nullptr) {
+    if(scale != nullptr && *scale != 1.f) {
         for (auto ii = 0; ii < WI; ++ii) {
             for (int jj = 0; jj < WJ; ++jj) {
                 acc[ii][jj].v[0] *= *scale;
@@ -186,6 +188,13 @@ __global__ __launch_bounds__(32*2*2, 2) void gemm_mma_tn_kernel(nv_bfloat16* __r
                     old[l] += upd[l];
                 }
                 old.store(out + ((i + ii) * TI + r) * n + (j + jj) * TJ + 8 * c);
+            } else if (bias != nullptr) {
+                auto old = GenericVector<BiasType, 8>::load(bias + (j + jj) * TJ + 8 * c);
+                auto upd = GenericVector<nv_bfloat16, 8>::load(out_shared + (c + 2 * r) * 8);
+                for(int l = 0; l < 8; ++l) {
+                    old[l] += (nv_bfloat16)upd[l];
+                }
+                old.store(out + ((i + ii) * TI + r) * n + (j + jj) * TJ + 8 * c);
             } else {
                 uint4 load = reinterpret_cast<uint4*>(out_shared)[c + 2 * r];
                 *reinterpret_cast<uint4*>(out + ((i + ii) * TI + r) * n + (j + jj) * TJ + 8 * c) = load;
@@ -194,8 +203,9 @@ __global__ __launch_bounds__(32*2*2, 2) void gemm_mma_tn_kernel(nv_bfloat16* __r
     }
 }
 
-template<class AType, class BType, class AccType>
-void gemm_mma_tn_launcher(nv_bfloat16* out, const AType* a, const BType* b, int m, int n, int k, const float* scale, bool accumulate, std::type_identity<AccType>, cudaStream_t stream) {
+template<class AType, class BType, class BiasType, class AccType>
+void gemm_mma_tn_launcher(nv_bfloat16* out, const AType* a, const BType* b, int m, int n, int k, const float* scale, const BiasType* bias,
+                          bool accumulate, std::type_identity<AccType>, cudaStream_t stream) {
     // our kernel is row-major, so to match cublas, we need to transpose everything => swapped a<->b, m<->n
     dim3 grid{(unsigned)n / 128, (unsigned)m / 128, 1};
     if( n > m ) {
@@ -204,15 +214,15 @@ void gemm_mma_tn_launcher(nv_bfloat16* out, const AType* a, const BType* b, int 
         grid = {(unsigned)n / 128, (unsigned)m / 128, 1};
     }
     dim3 block{32, 2, 2};
-    gemm_mma_tn_kernel<<<grid, block, 0, stream>>>(out, b, a, n, m, k, scale, accumulate, type_v<AccType>);
+    gemm_mma_tn_kernel<<<grid, block, 0, stream>>>(out, b, a, n, m, k, scale, bias, accumulate, type_v<AccType>);
 }
 
-void gemm_mma_tn(nv_bfloat16* out, const __nv_fp8_e4m3* a, const __nv_fp8_e4m3* b, int m, int n, int k, const float* scale, bool accumulate, cudaStream_t stream) {
-    gemm_mma_tn_launcher(out, a, b, m, n, k, scale, accumulate, type_v<float>, stream);
+void gemm_mma_tn(nv_bfloat16* out, const __nv_fp8_e4m3* a, const __nv_fp8_e4m3* b, int m, int n, int k, const float* scale, const nv_bfloat16* bias, bool accumulate, cudaStream_t stream) {
+    gemm_mma_tn_launcher(out, a, b, m, n, k, scale, bias, accumulate, type_v<float>, stream);
     assert(cudaGetLastError() == cudaSuccess);
 }
 
-void gemm_mma_tn(nv_bfloat16* out, const nv_bfloat16* a, const nv_bfloat16* b, int m, int n, int k, const float* scale, bool accumulate, cudaStream_t stream) {
-    gemm_mma_tn_launcher(out, a, b, m, n, k, scale, accumulate, type_v<float>, stream);
+void gemm_mma_tn(nv_bfloat16* out, const nv_bfloat16* a, const nv_bfloat16* b, int m, int n, int k, const float* scale, const nv_bfloat16* bias, bool accumulate, cudaStream_t stream) {
+    gemm_mma_tn_launcher(out, a, b, m, n, k, scale, bias, accumulate, type_v<float>, stream);
     assert(cudaGetLastError() == cudaSuccess);
 }
