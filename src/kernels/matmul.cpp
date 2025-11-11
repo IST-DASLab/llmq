@@ -167,6 +167,12 @@ void matmul_dispatch(floatO* d, const floatX* a, const floatX* b, const floatB* 
                      int m, int n, int k, cudaStream_t stream, cublasLtHandle_t handle,
                      const float* scale, EMMTranspose mode, bool accumulate)
 {
+    static bool warning = false;
+    if(get_matmul_backend() == EMatmulBackend::Custom && mode != EMMTranspose::TN && !warning) {
+        fprintf(stderr, "WARNING: Custom matmuls are not supported for non-TN mode! Falling back to cublas.\n");
+        warning = true;
+    }
+
     if(get_matmul_backend() == EMatmulBackend::CuBLAS || mode != EMMTranspose::TN) {
         matmul_cublaslt(d, a, b, bias, workspace, workspace_size, m, n, k, stream, handle, scale, mode, accumulate);
     } else if constexpr (std::is_same_v<floatO, nv_bfloat16> && std::is_same_v<floatB, nv_bfloat16>){
