@@ -156,9 +156,14 @@ __global__ __launch_bounds__(32*2*2, 2) void gemm_mma_tn_kernel(nv_bfloat16* __r
     loop_fraction(int_c<2>{}, false_v, ks + 5 * TK);
     loop_fraction(int_c<3>{}, false_v, ks + 6 * TK);
 
-    if(scale != nullptr && *scale != 1.f) {
-        for (auto ii = 0; ii < WI; ++ii) {
-            for (int jj = 0; jj < WJ; ++jj) {
+    // note: loop_fraction ends with __syncthreads, so no need to sync here
+    nv_bfloat16* out_shared = reinterpret_cast<nv_bfloat16*>(input_tiles) + (threadIdx.y + 2 * threadIdx.z) * TJ * TI;
+
+    for(int ii = 0; ii < WI; ii++) {
+        for (int jj = 0; jj < WJ; jj++) {
+
+            // interleave scaling and output writing
+            if(scale != nullptr && *scale != 1.f) {
                 acc[ii][jj].v[0] *= *scale;
                 acc[ii][jj].v[1] *= *scale;
                 acc[ii][jj].v[2] *= *scale;
@@ -168,14 +173,7 @@ __global__ __launch_bounds__(32*2*2, 2) void gemm_mma_tn_kernel(nv_bfloat16* __r
                 acc[ii][jj].v[6] *= *scale;
                 acc[ii][jj].v[7] *= *scale;
             }
-        }
-    }
 
-    // note: loop_fraction ends with __syncthreads, so no need to sync here
-    nv_bfloat16* out_shared = reinterpret_cast<nv_bfloat16*>(input_tiles) + (threadIdx.y + 2 * threadIdx.z) * TJ * TI;
-
-    for(int ii = 0; ii < WI; ii++) {
-        for (int jj = 0; jj < WJ; jj++) {
             store_fragment_row_major_sync(acc[ii][jj], out_shared, TJ);
             __syncwarp();
             int c = threadIdx.x % 2;
