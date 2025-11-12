@@ -205,6 +205,14 @@ void LLamaWeightsManager::setup_scales(TensorAllocator& alloc) {
     }
 }
 
+
+std::pair<float*, float*> LLamaWeightsManager::get_scales_for_block(int layer_idx) {
+    float* abs_maxes = mAbsMaxes.get<float>();
+    float* begin = abs_maxes + 3 + layer_idx * 7;
+    return {begin + 0, begin + 7};
+}
+
+
 void LLamaWeightsManager::setup_master_buffers(const LLamaConfig& config, TensorAllocator& alloc) {
     if (mOffloadMaster) {
         for(int i = 0; i < 2; ++i) {
@@ -788,14 +796,14 @@ void LLamaWeightsManager::synchronize_absmax(NCCLCommunicator& comm) {
         if (layer.Attn_QKV_b.has_value()) {
             abs_max(layer.Attn_QKV_b.value().Scales, layer.Attn_QKV_b.value(), layer.Attn_QKV_b.value().nelem(), dp, nullptr);
         }
-        comm.reduce_abs_max(layer.LN1_w.Scales);
-        comm.reduce_abs_max(layer.LN2_w.Scales);
-        comm.reduce_abs_max(layer.Attn_QKV_w.Scales);
-        comm.reduce_abs_max(layer.Attn_Out_w.Scales);
-        comm.reduce_abs_max(layer.MLP_Up_w.Scales);
-        comm.reduce_abs_max(layer.MLP_Down_w.Scales);
+        comm.reduce_max(layer.LN1_w.Scales);
+        comm.reduce_max(layer.LN2_w.Scales);
+        comm.reduce_max(layer.Attn_QKV_w.Scales);
+        comm.reduce_max(layer.Attn_Out_w.Scales);
+        comm.reduce_max(layer.MLP_Up_w.Scales);
+        comm.reduce_max(layer.MLP_Down_w.Scales);
         if (layer.Attn_QKV_b.has_value()) {
-            comm.reduce_abs_max(layer.Attn_QKV_b.value().Scales);
+            comm.reduce_max(layer.Attn_QKV_b.value().Scales);
         }
         comm.wait_on_comms(nullptr);
     }
