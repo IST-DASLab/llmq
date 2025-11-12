@@ -681,11 +681,12 @@ void LLamaModel::update(NCCLCommunicator& comm, float learning_rate, float beta_
     auto run_update = [&](Tensor& val, Tensor& grad, Tensor& m, Tensor& v, float wd){
         adamw_update(val, grad, m, v, grad.nelem(),
                      learning_rate, beta_1, beta_2, t, epsilon, wd, grad_scale, val.Scales, rng(), main_stream);
-        comm.reduce_abs_max(val.Scales);
     };
 
     run_update(Parameters->get_master_embeddings(), Grads->get_embeddings_shard(main_stream), opt_m.NonBlocks.Embeddings, opt_v.NonBlocks.Embeddings, weight_decay);
+    comm.reduce_max(Parameters->get_master_embeddings().Scales);
     run_update(Parameters->get_master_lnf_w(), Grads->get_lnf_w_shard(main_stream), opt_m.NonBlocks.LNF_w, opt_v.NonBlocks.LNF_w, 0.f);
+    comm.reduce_max(Parameters->get_master_lnf_w().Scales);
     CUDA_CHECK(cudaEventRecord(rs->OptEmbeddingsDone, main_stream));
 
     for(int i = 0; i < Config.NumLayers; i++) {
@@ -708,7 +709,8 @@ void LLamaModel::update(NCCLCommunicator& comm, float learning_rate, float beta_
 
         run_update(bw.MLP_Up_w, bg.MLP_Up_w, bm.MLP_Up_w, bv.MLP_Up_w, weight_decay);
         run_update(bw.MLP_Down_w, bg.MLP_Down_w, bm.MLP_Down_w, bv.MLP_Down_w, weight_decay);
-
+        auto scales = Parameters->get_scales_for_block(i);
+        comm.reduce_max(scales.first, scales.second - scales.first);
         Parameters->release_master_block(i, main_stream, rs->SideStream, *rs);
 
         CUDA_CHECK(cudaEventRecord(rs->LayerUpdateDone[i], main_stream));
@@ -716,6 +718,7 @@ void LLamaModel::update(NCCLCommunicator& comm, float learning_rate, float beta_
 
     if(!Config.TiedWordEmbeddings) {
         run_update(Parameters->get_master_lmhead(), Grads->get_lmhead_shard(main_stream), opt_m.NonBlocks.LMHead, opt_v.NonBlocks.LMHead, weight_decay);
+        comm.reduce_max(Parameters->get_master_lmhead().Scales);
     }
     comm.wait_on_comms(main_stream);
     CUDA_CHECK(cudaEventRecord(rs->OptimizerDone, main_stream));

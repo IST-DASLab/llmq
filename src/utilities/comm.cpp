@@ -192,8 +192,8 @@ void NCCLCommunicator::reduce_loss(float* loss, cudaStream_t stream) {
     ncclCheck(ncclAllReduce(loss, loss, 1, ncclFloat, ncclAvg, mNcclComm, stream));
 }
 
-void NCCLCommunicator::reduce_abs_max(float* abs_max) {
-    ncclCheck(ncclAllReduce(abs_max, abs_max, 1, ncclFloat, ncclMax, mNcclComm, mCommsStream));
+void NCCLCommunicator::reduce_max(float* values, int n) {
+    ncclCheck(ncclAllReduce(values, values, n, ncclFloat, ncclMax, mNcclComm, mCommsStream));
 }
 
 void NCCLCommunicator::reduce_norm(float* norm_squared, cudaStream_t stream) {

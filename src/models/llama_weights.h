@@ -63,6 +63,7 @@ public:
 
     void invalidate();
     void reset_scales(cudaStream_t stream);
+    std::pair<float*, float*> get_scales_for_block(int layer_idx);
 
     // Weight shards that get updated by the optimizer
     TensorShard& get_master_embeddings();
