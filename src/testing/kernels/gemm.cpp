@@ -92,17 +92,16 @@ void run_test(int m, int n, int k, float scale = 1.f, bool accumulate = false, b
     matmul(c, a, b, use_bias ? bias : nullptr, scale_ptr, handle, workspace, workspace_size, m, n, k , EMMTranspose::TN, accumulate, nullptr);
     CUDA_CHECK(cudaDeviceSynchronize());
 
-
-    cudaMemPrefetchAsync(a_float, m*k * sizeof(float), cudaMemLocation{cudaMemLocationTypeDevice, 0}, 0);
-    cudaMemPrefetchAsync(b_float, n*k * sizeof(float), cudaMemLocation{cudaMemLocationTypeDevice, 0}, 0);
-    cudaMemPrefetchAsync(c_float, m*n * sizeof(float), cudaMemLocation{cudaMemLocationTypeDevice, 0}, 0);
-    cudaMemPrefetchAsync(bias_float, m * sizeof(float), cudaMemLocation{cudaMemLocationTypeDevice, 0}, 0);
-    get_matmul_backend() = EMatmulBackend::CuBLAS;
-    CUDA_CHECK(cudaDeviceSynchronize());
-    matmul(c_float, a_float, b_float,  use_bias ? bias_float : nullptr, scale_ptr, handle, workspace, workspace_size, m, n, k , EMMTranspose::TN, accumulate, nullptr);
-    CUDA_CHECK(cudaDeviceSynchronize());
-
     if(check) {
+        cudaMemPrefetchAsync(a_float, m*k * sizeof(float), cudaMemLocation{cudaMemLocationTypeDevice, 0}, 0);
+        cudaMemPrefetchAsync(b_float, n*k * sizeof(float), cudaMemLocation{cudaMemLocationTypeDevice, 0}, 0);
+        cudaMemPrefetchAsync(c_float, m*n * sizeof(float), cudaMemLocation{cudaMemLocationTypeDevice, 0}, 0);
+        cudaMemPrefetchAsync(bias_float, m * sizeof(float), cudaMemLocation{cudaMemLocationTypeDevice, 0}, 0);
+        get_matmul_backend() = EMatmulBackend::CuBLAS;
+        CUDA_CHECK(cudaDeviceSynchronize());
+        matmul(c_float, a_float, b_float,  use_bias ? bias_float : nullptr, scale_ptr, handle, workspace, workspace_size, m, n, k , EMMTranspose::TN, accumulate, nullptr);
+        CUDA_CHECK(cudaDeviceSynchronize());
+
         double r_tol = 1e-2;
         bool equal = true;
         int approx_count = 0;
@@ -152,18 +151,20 @@ int main() {
     int k = 1664;
 
     // larger shape for benchmarking
-    if (false) {
+    if (true) {
         m = 2*4864;
         n = 1024*8;
         k = 896;
     }
 
+    std::swap(m, n);
+
     run_test<nv_bfloat16, nv_bfloat16, nv_bfloat16>(m, n, k, 1.f, false);
     run_test<__nv_fp8_e4m3, __nv_fp8_e4m3, nv_bfloat16>(m, n, k, 4.0/k, false);
-
+/*
     run_test<nv_bfloat16, nv_bfloat16, nv_bfloat16>(m, n, k, 1.f, true);
     run_test<__nv_fp8_e4m3, __nv_fp8_e4m3, nv_bfloat16>(m, n, k, 4.0/k, true);
 
     run_test<nv_bfloat16, nv_bfloat16, nv_bfloat16>(m, n, k, 1.f, false, true);
-    run_test<__nv_fp8_e4m3, __nv_fp8_e4m3, nv_bfloat16>(m, n, k, 4.0/k, false, true);
+    run_test<__nv_fp8_e4m3, __nv_fp8_e4m3, nv_bfloat16>(m, n, k, 4.0/k, false, true);*/
 }

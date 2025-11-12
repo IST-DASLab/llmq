@@ -89,17 +89,16 @@ __global__ __launch_bounds__(32*2*2, 2) void gemm_mma_tn_kernel(nv_bfloat16* __r
     static_assert(WI * BI % NW == 0, "WI * BI must be divisible by the number of warps per block");
     static_assert(WJ * BJ % NW == 0, "WI * BI must be divisible by the number of warps per block");
 
+    m16_n16_k32_a_fragment<AType> a_frag[WI];
+    m16_n16_k32_b_fragment<BType> b_frag[WI];
+
     auto loop_fraction = [&](auto stage_c, auto load_next_c, int ks) {
-        constexpr int load_stage = decltype(stage_c)::value;
-        constexpr int store_stage = (load_stage + 3) % DEPTH;
+        constexpr int stage = decltype(stage_c)::value;
+        constexpr int load_stage = (stage + 1) % DEPTH;
+        constexpr int store_stage = (stage + 3) % DEPTH;
         constexpr bool load_next = decltype(load_next_c)::value;
 
-        m16_n16_k32_a_fragment<AType> a_frag[WI];
-        ptx_ldmatrix(a_frag[0].v, as_load_ptr + 0 * ROW_OFFSET + PIPE_OFFSET * load_stage);
-        ptx_ldmatrix(a_frag[1].v, as_load_ptr + 1 * ROW_OFFSET + PIPE_OFFSET * load_stage);
-        ptx_ldmatrix(a_frag[2].v, as_load_ptr + 2 * ROW_OFFSET + PIPE_OFFSET * load_stage);
-        ptx_ldmatrix(a_frag[3].v, as_load_ptr + 3 * ROW_OFFSET + PIPE_OFFSET * load_stage);
-
+        // only load more inputs if we're not winding down the pipeline
         if constexpr(load_next) {
             __pipeline_memcpy_async(s_ptr + store_stage * PIPE_OFFSET + 0 * ROW_OFFSET, g_ptr + 0 * TI * stride + ks, 16);
             __pipeline_memcpy_async(s_ptr + store_stage * PIPE_OFFSET + 2 * ROW_OFFSET, g_ptr + 2 * TI * stride + ks, 16);
@@ -108,14 +107,24 @@ __global__ __launch_bounds__(32*2*2, 2) void gemm_mma_tn_kernel(nv_bfloat16* __r
         }
         __pipeline_commit();
         for(int jj = 0; jj < WJ; jj++) {
-            m16_n16_k32_b_fragment<BType> b_frag;
-            ptx_ldmatrix(b_frag.v, bs_load_ptr + jj * ROW_OFFSET + PIPE_OFFSET * load_stage);
             for(int ii = 0; ii < WI; ii++) {
-                mma_m16_n16_k32_sync(acc[ii][jj], a_frag[ii], b_frag, acc[ii][jj]);
+                mma_m16_n16_k32_sync(acc[ii][jj], a_frag[ii], b_frag[jj], acc[ii][jj]);
             }
         }
         __pipeline_wait_prior(2);
         __syncthreads();
+
+        // only load more registers if this is not the last step
+        if constexpr(load_next || stage != 3) {
+            ptx_ldmatrix(a_frag[0].v, as_load_ptr + 0 * ROW_OFFSET + PIPE_OFFSET * load_stage);
+            ptx_ldmatrix(a_frag[1].v, as_load_ptr + 1 * ROW_OFFSET + PIPE_OFFSET * load_stage);
+            ptx_ldmatrix(a_frag[2].v, as_load_ptr + 2 * ROW_OFFSET + PIPE_OFFSET * load_stage);
+            ptx_ldmatrix(a_frag[3].v, as_load_ptr + 3 * ROW_OFFSET + PIPE_OFFSET * load_stage);
+            ptx_ldmatrix(b_frag[0].v, bs_load_ptr + 0 * ROW_OFFSET + PIPE_OFFSET * load_stage);
+            ptx_ldmatrix(b_frag[1].v, bs_load_ptr + 1 * ROW_OFFSET + PIPE_OFFSET * load_stage);
+            ptx_ldmatrix(b_frag[2].v, bs_load_ptr + 2 * ROW_OFFSET + PIPE_OFFSET * load_stage);
+            ptx_ldmatrix(b_frag[3].v, bs_load_ptr + 3 * ROW_OFFSET + PIPE_OFFSET * load_stage);
+        }
     };
 
     auto ldg_sts = [&](auto stage_c, int ks) {
@@ -140,6 +149,15 @@ __global__ __launch_bounds__(32*2*2, 2) void gemm_mma_tn_kernel(nv_bfloat16* __r
     __pipeline_wait_prior(2);
     __syncthreads();
 
+    ptx_ldmatrix(a_frag[0].v, as_load_ptr + 0 * ROW_OFFSET);
+    ptx_ldmatrix(a_frag[1].v, as_load_ptr + 1 * ROW_OFFSET);
+    ptx_ldmatrix(a_frag[2].v, as_load_ptr + 2 * ROW_OFFSET);
+    ptx_ldmatrix(a_frag[3].v, as_load_ptr + 3 * ROW_OFFSET);
+    ptx_ldmatrix(b_frag[0].v, bs_load_ptr + 0 * ROW_OFFSET);
+    ptx_ldmatrix(b_frag[1].v, bs_load_ptr + 1 * ROW_OFFSET);
+    ptx_ldmatrix(b_frag[2].v, bs_load_ptr + 2 * ROW_OFFSET);
+    ptx_ldmatrix(b_frag[3].v, bs_load_ptr + 3 * ROW_OFFSET);
+
     int ks = 0;
     while (ks + 6 * TK < stride) {
         loop_fraction(int_c<0>{}, true_v, ks + 3 * TK);
@@ -159,7 +177,12 @@ __global__ __launch_bounds__(32*2*2, 2) void gemm_mma_tn_kernel(nv_bfloat16* __r
     // note: loop_fraction ends with __syncthreads, so no need to sync here
     nv_bfloat16* out_shared = reinterpret_cast<nv_bfloat16*>(input_tiles) + (threadIdx.y + 2 * threadIdx.z) * TJ * TI;
 
+    // on 40xx, for some reason, these loops don't get unrolled, and then
+    // all the accumulators end up in local memory and we get terrible
+    // performance.
+    #pragma unroll
     for(int ii = 0; ii < WI; ii++) {
+        #pragma unroll
         for (int jj = 0; jj < WJ; jj++) {
 
             // interleave scaling and output writing
