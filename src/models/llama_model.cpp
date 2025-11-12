@@ -710,7 +710,13 @@ void LLamaModel::update(NCCLCommunicator& comm, float learning_rate, float beta_
         run_update(bw.MLP_Up_w, bg.MLP_Up_w, bm.MLP_Up_w, bv.MLP_Up_w, weight_decay);
         run_update(bw.MLP_Down_w, bg.MLP_Down_w, bm.MLP_Down_w, bv.MLP_Down_w, weight_decay);
         auto scales = Parameters->get_scales_for_block(i);
-        comm.reduce_max(scales.first, scales.second - scales.first);
+        // yes, we run this on main stream. Yes, this isn't nice because it prevents kernels from running in parallel.
+        // the communication is tiny, though, so it doesn't matter, and this setup guarantees that the abs-maxes are
+        // ready once we try to quantize on the main stream (which happens in `release_master_block`), so in that case
+        // we'd have to wait anyway.
+        // TODO there's probably a way to schedule this so that we can avoid this idle time. If it turns out to actually
+        //      matter (e.g., for small models), we can investigate more.
+        comm.reduce_max(scales.first, scales.second - scales.first, main_stream);
         Parameters->release_master_block(i, main_stream, rs->SideStream, *rs);
 
         CUDA_CHECK(cudaEventRecord(rs->LayerUpdateDone[i], main_stream));

@@ -53,7 +53,7 @@ public:
     void reduce_loss(float* loss, cudaStream_t stream);
     void reduce_norm(float* norm_squared, cudaStream_t stream);
 
-    void reduce_max(float* values, int n = 1);
+    void reduce_max(float* values, int n = 1, cudaStream_t stream=nullptr);
 
     void wait_on_comms(cudaStream_t compute_stream);
 

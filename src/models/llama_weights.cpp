@@ -330,6 +330,10 @@ void LLamaWeightsManager::release_master_block(int layer_idx, cudaStream_t strea
     auto& src = mMasterDeviceDoubleBuffer.at(buffer);
     auto& qnt = lookup_block_quants(layer_idx);
 
+    // put stream can start as soon as the new master weights are ready
+    CUDA_CHECK(cudaEventRecord(stat.DoneEvent, stream));
+    CUDA_CHECK(cudaStreamWaitEvent(put_stream, stat.DoneEvent, 0));
+
     bool convert_any = false;
     if (qnt.LayerIdx == layer_idx) {
         NvtxRange q_rng("quantize");
@@ -342,12 +346,11 @@ void LLamaWeightsManager::release_master_block(int layer_idx, cudaStream_t strea
         if (src.Attn_QKV_b.has_value()) {
             convert_dtype_for_gather(src.Attn_QKV_b.value(), qnt.Block.Attn_QKV_b.value(), convert_any, run_state);
         }
-        // indicate that this is alrady the version for the next step
+        // indicate that this is already the version for the next step
         qnt.Version = mVersion + 1;
     }
-
     CUDA_CHECK(cudaEventRecord(stat.DoneEvent, stream));
-    CUDA_CHECK(cudaStreamWaitEvent(put_stream, stat.DoneEvent, 0));
+
     send(ref.LN1_w, buf.LN1_w);
     send(ref.LN2_w, buf.LN2_w);
     send(ref.Attn_QKV_w, buf.Attn_QKV_w);
