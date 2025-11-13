@@ -55,6 +55,7 @@ template<class T>
 struct sLLamaBlockWeights;
 class LLamaWeightsManager;
 class LLamaGradsManager;
+class LLamaOptimizerStateManager;
 struct LLamaRunState;
 struct sLLamaWeights;
 class NCCLCommunicator;
@@ -113,8 +114,7 @@ private:
     LLamaOptions Options;
     std::shared_ptr<TensorAllocator> Allocator;
     std::unique_ptr<LLamaWeightsManager> Parameters;
-    std::unique_ptr<sLLamaWeights> OptM;
-    std::unique_ptr<sLLamaWeights> OptV;
+    std::unique_ptr<LLamaOptimizerStateManager> OptimizerState;
     std::unique_ptr<LLamaGradsManager> Grads;
     std::unique_ptr<LLamaRunState> RunState;
 
