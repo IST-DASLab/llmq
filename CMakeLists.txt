@@ -144,6 +144,7 @@ add_library(llmq-common SHARED
         src/models/llama_weights.cpp
         src/models/llama_gradients.cpp
         src/models/llama_config.cpp
+        src/models/llama_optimizer.cpp
 
         src/kernels/kernels.cpp
         src/kernels/encoder.cu

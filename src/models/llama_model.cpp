@@ -9,6 +9,7 @@
 
 #include "kernels/kernels.h"
 #include "llama_gradients.h"
+#include "llama_optimizer.h"
 #include "llama_run_state.h"
 #include "llama_weights.h"
 #include "utilities/comm.h"
@@ -662,12 +663,9 @@ void LLamaModel::update(NCCLCommunicator& comm, float learning_rate, float beta_
     auto& rs = RunState;
     cudaStream_t main_stream = rs->MainStream;
 
-    if(!OptM || !OptV) {
+    if(!OptimizerState) {
         throw std::logic_error("LLamaModel::update() but no optimizer available");
     }
-
-    auto& opt_m = *OptM;
-    auto& opt_v = *OptV;
 
     auto& rng = OptimizerRNG;
 
@@ -683,19 +681,22 @@ void LLamaModel::update(NCCLCommunicator& comm, float learning_rate, float beta_
                      learning_rate, beta_1, beta_2, t, epsilon, wd, grad_scale, val.Scales, rng(), main_stream);
     };
 
-    run_update(Parameters->get_master_embeddings(), Grads->get_embeddings_shard(main_stream), opt_m.NonBlocks.Embeddings, opt_v.NonBlocks.Embeddings, weight_decay);
+    run_update(Parameters->get_master_embeddings(), Grads->get_embeddings_shard(main_stream),
+               OptimizerState->non_block_m().Embeddings, OptimizerState->non_block_v().Embeddings, weight_decay);
     comm.reduce_max(Parameters->get_master_embeddings().Scales);
-    run_update(Parameters->get_master_lnf_w(), Grads->get_lnf_w_shard(main_stream), opt_m.NonBlocks.LNF_w, opt_v.NonBlocks.LNF_w, 0.f);
+    run_update(Parameters->get_master_lnf_w(), Grads->get_lnf_w_shard(main_stream),
+               OptimizerState->non_block_m().LNF_w, OptimizerState->non_block_v().LNF_w, 0.f);
     comm.reduce_max(Parameters->get_master_lnf_w().Scales);
     CUDA_CHECK(cudaEventRecord(rs->OptEmbeddingsDone, main_stream));
 
     for(int i = 0; i < Config.NumLayers; i++) {
         NvtxRange layer_range("Layer", i);
         Parameters->fetch_master_block(i, comm.stream());
+        OptimizerState->fetch_block(i, comm.stream());
         auto& bw = Parameters->get_master_block(i, main_stream);
         auto& bg = Grads->get_block_shard(i, main_stream);
-        auto& bm = opt_m.Blocks[i];
-        auto& bv = opt_v.Blocks[i];
+        auto& bm = OptimizerState->get_block_m(i, main_stream);
+        auto& bv = OptimizerState->get_block_v(i, main_stream);
         run_update(bw.LN1_w, bg.LN1_w, bm.LN1_w, bv.LN1_w, 0.f);
         run_update(bw.LN2_w, bg.LN2_w, bm.LN2_w, bv.LN2_w, 0.f);
 
@@ -718,36 +719,18 @@ void LLamaModel::update(NCCLCommunicator& comm, float learning_rate, float beta_
         //      matter (e.g., for small models), we can investigate more.
         comm.reduce_max(scales.first, scales.second - scales.first, main_stream);
         Parameters->release_master_block(i, main_stream, rs->SideStream, *rs);
+        OptimizerState->store_block(i, main_stream, rs->SideStream);
 
         CUDA_CHECK(cudaEventRecord(rs->LayerUpdateDone[i], main_stream));
     }
 
     if(!Config.TiedWordEmbeddings) {
-        run_update(Parameters->get_master_lmhead(), Grads->get_lmhead_shard(main_stream), opt_m.NonBlocks.LMHead, opt_v.NonBlocks.LMHead, weight_decay);
+        run_update(Parameters->get_master_lmhead(), Grads->get_lmhead_shard(main_stream),
+                   OptimizerState->non_block_m().LMHead, OptimizerState->non_block_v().LMHead, weight_decay);
         comm.reduce_max(Parameters->get_master_lmhead().Scales);
     }
     comm.wait_on_comms(main_stream);
     CUDA_CHECK(cudaEventRecord(rs->OptimizerDone, main_stream));
-}
-
-void zero_opt_buffer(sLLamaWeights& weights, cudaStream_t stream) {
-    // here's the first disadvantage of having individual buffers: We need to make a ton of memset calls
-    fill_zero(weights.NonBlocks.Embeddings, stream);
-    fill_zero(weights.NonBlocks.LNF_w, stream);
-    if(weights.NonBlocks.LMHead.Data != weights.NonBlocks.Embeddings.Data) {
-        fill_zero(weights.NonBlocks.LMHead, stream);
-    }
-    for(auto& layer: weights.Blocks) {
-        fill_zero(layer.LN1_w, stream);
-        fill_zero(layer.LN2_w, stream);
-        fill_zero(layer.Attn_QKV_w, stream);
-        if(auto& qkv_b = layer.Attn_QKV_b; qkv_b.has_value()) {
-            fill_zero(qkv_b.value(), stream);
-        }
-        fill_zero(layer.Attn_Out_w, stream);
-        fill_zero(layer.MLP_Up_w, stream);
-        fill_zero(layer.MLP_Down_w, stream);
-    }
 }
 
 void LLamaModel::allocate_run_state(const LLamaOptions& options, NCCLCommunicator& comm, int B, int T) {
@@ -763,26 +746,9 @@ void LLamaModel::allocate_run_state(const LLamaOptions& options, NCCLCommunicato
         Grads = LLamaGradsManager::create(42, 0, Config, options, comm.rank(), comm.world_size(), Allocator);
     }
 
-    {
-        auto ctx = Allocator->with_context("Adam M");
-        EAllocationType alloc_type = options.OffloadOptM ? options.offload_alloc() : EAllocationType::ON_DEVICE;
-        LLamaConfig c = Config;
-        c.DType = acts.Options.OptMomentumType;
-        OptM = std::make_unique<sLLamaWeights>(allocate_weights(c, alloc_type, comm.rank(), comm.world_size(), *Allocator));
-        zero_opt_buffer(*OptM, acts.MainStream);
-    }
-
-    {
-        auto ctx = Allocator->with_context("Adam V");
-        EAllocationType alloc_type = options.OffloadOptV ? options.offload_alloc() : EAllocationType::ON_DEVICE;
-        LLamaConfig c = Config;
-        c.DType = acts.Options.OptVarianceType;
-        OptV = std::make_unique<sLLamaWeights>(allocate_weights(c, alloc_type, comm.rank(), comm.world_size(), *Allocator));
-        zero_opt_buffer(*OptV, acts.MainStream);
-    }
-
     OptimizerRNG = std::minstd_rand{42};
     RunState = std::make_unique<LLamaRunState>(std::move(acts));
+    OptimizerState = std::make_unique<LLamaOptimizerStateManager>(Config, options, RunState->MainStream, comm, *Allocator);
     comm.barrier();     // make sure *all* GPUs have allocated the model before returning
 }
 
@@ -791,11 +757,11 @@ ITensorContainer& LLamaModel::weights() {
 }
 
 ITensorContainer& LLamaModel::opt_momentum() {
-    return *OptM;
+    return OptimizerState->full_m();
 }
 
 ITensorContainer& LLamaModel::opt_variance() {
-    return *OptV;
+    return OptimizerState->full_v();
 }
 
 std::vector<std::byte> LLamaModel::rng_state() const {

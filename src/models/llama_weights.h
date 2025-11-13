@@ -172,6 +172,12 @@ protected:
     bool mOffloadMaster;
 };
 
+class LLamaOptimizerParamManager {
+public:
+private:
+
+};
+
 sLLamaNonBlockWeights<Tensor> allocate_non_block_full(LLamaConfig config, ETensorDType dtype, EAllocationType kind, TensorAllocator& alloc);
 sLLamaNonBlockWeights<TensorShard> allocate_non_block_shard(LLamaConfig config, ETensorDType dtype, EAllocationType kind, int shard_idx, int num_shard, TensorAllocator& alloc);
 
