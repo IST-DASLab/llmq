@@ -706,8 +706,15 @@ WeightsMgrSharded::WeightsMgrSharded(const LLamaConfig& config, const LLamaOptio
             mQuants.push_back(sQuantBlock{allocate_block_shard(config, mWorkMatDType, config.DType, quant_alloc, mShardIdx, mNumShards, alloc), i});
         }
     } else {
-        for (int i = 0; i < 2; ++i) {
-            mQuants.push_back(sQuantBlock{shard_block(mWork.Blocks[i], mShardIdx, mNumShards)});
+        // TODO this should be more fine-grained; taking into account matrix and non-matrix parameters separately
+        if (mWorkMatDType == config.DType && mMasterDType == config.DType) {
+            for (int i = 0; i < config.NumLayers; ++i) {
+                mQuants.push_back(sQuantBlock{mMaster.Blocks[i], i, -1});
+            }
+        } else {
+            for (int i = 0; i < 2; ++i) {
+                mQuants.push_back(sQuantBlock{shard_block(mWork.Blocks[i], mShardIdx, mNumShards)});
+            }
         }
     }
 
