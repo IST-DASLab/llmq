@@ -353,37 +353,41 @@ The run marked with * uses additional arguments `--shard-weights --memcpy-all-ga
 ^1: `--recompute-swiglu --recompute-norm` to fit batch size 4. Smaller batch sizes drastically reduce efficiency.
 
 ### RTX 4090
+
+All settings use `--lmhead-chunks=${BATCH_SIZE}`
+
 | Model         | nGPU | DType | Batch | TPS  | SOL | TTB   |
 |---------------|------|-------|-------|------|-----|-------|
-| Qwen2.5-0.5B  | 1    | fp8   | 8     | 49k  | 60% | 5.40h |
-| Qwen2.5-0.5B  | 1    | bf16  | 8     | 40k  | 75% | 6:56h |
-| Qwen2.5-1.5B  | 1    | fp8   | 4     | 19k  | 67% | 14h   |
-| Qwen2.5-1.5B  | 1    | bf16  | 4     | 14k  | 80% | 20h   |
-| Qwen2.5-3B¹   | 1    | fp8   | 4     | 7.9k | 51% | 35h   |
-| Qwen2.5-3B²   | 1    | bf16  | 4     | 6.2k | 71% | 45h   |
-| Qwen2.5-7B³   | 1    | fp8   | 4     | 3.0k | 44% | 92h   |
-| Qwen2.5-7B⁴   | 1    | bf16  | 4     | 1.9k | 27% | 146h  |
-| Qwen2.5-0.5B  | 4    | fp8   | 8     | 185k | 57% | 1:30h |
-| Qwen2.5-0.5B  | 4    | bf16  | 8     | 151k | 71% | 1:50h |
-| Qwen2.5-1.5B⁵ | 4    | fp8   | 8     | 67k  | 57% | 4:08h |
-| Qwen2.5-1.5B⁵ | 4    | bf16  | 8     | 47k  | 68% | 5:54h |
-| Qwen2.5-3B²   | 4    | fp8   | 4     | 34k  | 55% | 8:10h |
-| Qwen2.5-3B²   | 4    | bf16  | 4     | 24k  | 69% | 12h   |
-| Qwen2.5-7B⁶   | 4    | fp8   | 8     | 13k  | 47% | 21h   |
-| Qwen2.5-7B⁷   | 4    | bf16  | 8     | 7.0k | 46% | 40h   |
-| Qwen2.5-14B⁸  | 4    | fp8   | 8     | 6.0k | 42% | 47h   |
-| Qwen2.5-14B⁹  | 4    | bf16  | 8     | 4.5k | 58% | 62h   |
+| Qwen2.5-0.5B  | 1    | fp8   | 16    | 48k  | 59% | 5.47h |
+| Qwen2.5-0.5B  | 1    | bf16  | 16    | 41k  | 76% | 6:48h |
+| Qwen2.5-1.5B  | 1    | fp8   | 4     | 20k  | 70% | 14h   |
+| Qwen2.5-1.5B  | 1    | bf16  | 4     | 14k  | 83% | 19h   |
+| Qwen2.5-3B¹   | 1    | fp8   | 4     | 10k  | 66% | 28h   |
+| Qwen2.5-3B²   | 1    | bf16  | 4     | 7.0k | 80% | 40h   |
+| Qwen2.5-7B³   | 1    | fp8   | 4     | 3.9k | 56% | 71h   |
+| Qwen2.5-7B⁴   | 1    | bf16  | 4     | 2.4k | 64% | 116h  |
+| Qwen2.5-0.5B  | 4    | fp8   | 16    | 173k | 53% | 1:35h |
+| Qwen2.5-0.5B  | 4    | bf16  | 16    | 148k | 69% | 1:52h |
+| Qwen2.5-1.5B  | 4    | fp8   | 8     | 70k  | 60% | 3:56h |
+| Qwen2.5-1.5B⁵ | 4    | bf16  | 8     | 50k  | 73% | 5:30h |
+| Qwen2.5-3B¹⁰  | 4    | fp8   | 4     | 36k  | 58% | 7:40h |
+| Qwen2.5-3B¹⁰  | 4    | bf16  | 4     | 25k  | 71% | 11h   |
+| Qwen2.5-7B⁶   | 4    | fp8   | 16    | 16k  | 57% | 17h   |
+| Qwen2.5-7B⁷   | 4    | bf16  | 16    | 9.3k | 61% | 30h   |
+| Qwen2.5-14B⁸  | 4    | fp8   | 8     | 7.3k | 51% | 38h   |
+| Qwen2.5-14B⁹  | 4    | bf16  | 8     | 3.5k | 46% | 78h   |
 
 
-^1: `--offload-opt-m --offload-opt-v --recompute-swiglu --recompute-norm --offload-master`  
+^1: `--offload-opt-m --offload-opt-v --recompute-swiglu --offload-master`  
 ^2: `--offload-opt-m --offload-opt-v --recompute-swiglu --recompute-norm`  
-^3: `--offload-opt-m --offload-opt-v --recompute-ffn --recompute-norm --recompute-att --offload-master --shard-weights --persistent-quants --offload-quants`  
+^3: `--offload-opt-m --offload-opt-v --recompute-ffn --recompute-norm --recompute-att --offload-master --shard-weights --persistent-quants --offload-quants --memcpy-all-gather`  
 ^4: `--offload-opt-m --offload-opt-v --recompute-ffn --recompute-norm --recompute-att --offload-master --shard-weights --memcpy-all-gather`  
 ^5: `--recompute-norm --recompute-swiglu` 
 ^6: `--offload-opt-m --offload-opt-v --recompute-ffn --recompute-norm --recompute-att --offload-master --shard-weights --memcpy-all-gather --shard-gradients --memcpy-send-recv --all-to-all-reduce --persistent-quants --offload-quants`  
 ^7: `--offload-opt-m --offload-opt-v --recompute-ffn --recompute-norm --recompute-att --offload-master --shard-weights --memcpy-all-gather --shard-gradients --memcpy-send-recv --all-to-all-reduce` 
 ^8: `--offload-opt-m --offload-opt-v --recompute-block --offload-master --shard-weights --memcpy-all-gather --shard-gradients --memcpy-send-recv --all-to-all-reduce --persistent-quants --offload-quants`  
 ^9: `--offload-opt-m --offload-opt-v --recompute-block --offload-master --shard-weights --memcpy-all-gather --shard-gradients --memcpy-send-recv --all-to-all-reduce`  
+^10: `--offload-opt-m --recompute-swiglu --recompute-norm`
 
 ### L40S
 
