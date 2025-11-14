@@ -130,7 +130,16 @@ void LLamaModel::forward(Tensor inputs, NCCLCommunicator& comm, int micro_step) 
         trace_or_execute_cuda_graph([&](){_forward_block(l, wgt);},
             main_stream, rs->ForwardBlockGraph, rs->Options.UseCudaGraphs);
         Parameters->release_block(l, main_stream);
+        if(Options.OffloadResidual && l > 0) {
+            CUDA_CHECK(cudaStreamWaitEvent(comm.stream(), rs->OffloadResidualEvent, 0));
+            CUDA_CHECK(cudaMemcpyAsync(rs->OffloadedResiduals.at(l-1).Data, rs->Acts.at(l-1).ResidualFFN.Data,
+                                       rs->Acts.at(l-1).ResidualFFN.bytes(), cudaMemcpyDeviceToHost, comm.stream()));
+            CUDA_CHECK(cudaEventRecord(rs->OffloadResidualEvent, comm.stream()));
+        }
     }
+
+    if (Options.OffloadResidual)
+        CUDA_CHECK(cudaStreamWaitEvent(main_stream, rs->OffloadResidualEvent, 0));
 
     {
         auto& acts = rs->Acts[Config.NumLayers-1];
@@ -138,6 +147,12 @@ void LLamaModel::forward(Tensor inputs, NCCLCommunicator& comm, int micro_step) 
         fused_residual_rmsnorm_forward(acts.ResidualFFN, rs->LNF, rs->LNF_Rstd, acts.ResidualAtt,
                                        acts.MlpDown, Parameters->get_lnf(main_stream), nullptr, Config.RmsNormEps, B * T, C, main_stream);
         Parameters->release_lnf(main_stream);
+
+        if(Options.OffloadResidual) {
+            CUDA_CHECK(cudaMemcpyAsync(rs->OffloadedResiduals.at(Config.NumLayers-1).Data, acts.ResidualFFN.Data,
+                                       acts.ResidualFFN.bytes(), cudaMemcpyDeviceToHost, main_stream));
+            CUDA_CHECK(cudaEventRecord(rs->OffloadResidualEvent, comm.stream()));
+        }
     }
 
     // do not return before inputs can be accessed again.
@@ -170,10 +185,16 @@ void LLamaModel::_forward_block(int layer, sLLamaBlockWeights<Tensor>& weights)
                         quant_abs_max_ptr(rs->Acts[0].LN1), Config.RmsNormEps, B, T, C, main_stream);
     } else {
         auto& prev = rs->Acts[l-1];
+        if(Options.OffloadResidual) {
+            CUDA_CHECK(cudaStreamWaitEvent(main_stream, rs->OffloadResidualEvent, 0));
+        }
         fused_residual_rmsnorm_forward(prev.ResidualFFN, acts.LN1.Value, acts.LN1_Rstd,
                                        prev.ResidualAtt, prev.MlpDown, weights.LN1_w,
                                        quant_abs_max_ptr(acts.LN1),
                                        Config.RmsNormEps, B * T, C, main_stream);
+        if(Options.OffloadResidual) {
+            CUDA_CHECK(cudaEventRecord(rs->OffloadResidualEvent, main_stream));
+        }
     }
 
     // 1) projection to QKV vectors (note k,v may be fewer heads than q)
@@ -416,9 +437,11 @@ void LLamaModel::backward(Tensor inputs, Tensor targets, NCCLCommunicator& comm,
     // backward the final layernorm
     rmsnorm_backward(d_acts[L-1].DResFFN.Value, d_lnf_w, rs->RMSNormScratch, d_acts[L - 1].DResFFN.Value, rs->DLNF,
                      rs->Acts[L - 1].ResidualFFN, Parameters->get_lnf(main_stream), rs->LNF_Rstd, quant_abs_max_ptr(d_acts[L-1].DResFFN), B, T, C, rs->DeviceProp, main_stream);
+    if(Options.OffloadResidual) {
+        CUDA_CHECK(cudaEventRecord(rs->OffloadResidualEvent, main_stream));
+    }
     Parameters->release_lnf(main_stream);
     Grads->notify_lnf_w(main_stream, comm);
-
     Parameters->gather_block(L - 1, comm, *rs);
     // now backward all the layers
     for (int l = L-1; l >= 0; l--) {
@@ -431,9 +454,19 @@ void LLamaModel::backward(Tensor inputs, Tensor targets, NCCLCommunicator& comm,
         }
         auto& weights = Parameters->get_block(l, main_stream);
         // last layer changes topology, so for now just don't use graph
-        trace_or_execute_cuda_graph([&](){
+        trace_or_execute_cuda_graph([&]() {
+            if(Options.OffloadResidual && l > 0) {
+                CUDA_CHECK(cudaStreamWaitEvent(comm.stream(), rs->OffloadResidualEvent, 0));
+                CUDA_CHECK(cudaMemcpyAsync(rs->Acts.at(l-1).ResidualFFN.Data, rs->OffloadedResiduals.at(l-1).Data,
+                                           rs->Acts.at(l-1).ResidualFFN.bytes(), cudaMemcpyHostToDevice, comm.stream()));
+                CUDA_CHECK(cudaEventRecord(rs->OffloadResidualEvent, comm.stream()));
+                CUDA_CHECK(cudaStreamWaitEvent(main_stream, rs->OffloadResidualEvent, 0));
+            }
             _recompute_block(l, weights);
             _backward_block(l, accumulate, weights, dw);
+            if(Options.OffloadResidual) {
+               CUDA_CHECK(cudaEventRecord(rs->OffloadResidualEvent, main_stream));
+           }
             }, main_stream, rs->BackwardBlockGraph, rs->Options.UseCudaGraphs && l != 0);
         Parameters->release_block(l, main_stream);
         Grads->notify_block(l, main_stream, comm);

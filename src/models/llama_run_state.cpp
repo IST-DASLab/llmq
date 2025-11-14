@@ -64,6 +64,7 @@ private:
     Tensor tAttBuffer;
     Tensor tLN1Buffer;
     Tensor tResAttBuffer;
+    Tensor tFFNResBuffer;
 };
 
 Tensor RunStateBuilder::generate_frequencies() {
@@ -91,7 +92,7 @@ LLamaRunState::LayerActivations RunStateBuilder::allocate_basic_fwd_tensors(Tens
 
     Tensor qkv = allocate_or_reuse(Options.RecomputeQKV, tQKVBuffer, Config.DType, "qkv", B, T, Config.qkv_channels());
     Tensor res_att = allocate_or_reuse(Options.RecomputeBlock, tResAttBuffer, Config.DType, "res_att", B, T, C);
-    Tensor res_ffn = allocate(Config.DType, "res_ffn", B, T, C);
+    Tensor res_ffn = allocate_or_reuse(Options.OffloadResidual, tFFNResBuffer, Config.DType, "res_ffn", B, T, C);
     Tensor lse = allocate(ETensorDType::FP32, "lse", B, T, Config.NumQueryHeads);
     Tensor att_v = allocate_or_reuse(Options.RecomputeAtt, tAttBuffer, Config.DType, "att_v", B, T, C);
     // not needed for backward, so can reuse an existing buffer
@@ -252,6 +253,7 @@ LLamaRunState allocate_run_state(LLamaConfig config, LLamaOptions options, int B
     cudaEvent_t forward_done_event = create_named_event("forward done");
     cudaEvent_t backward_done_event = create_named_event("backward done");
     cudaEvent_t norm_done_event = create_named_event("norm done");
+    cudaEvent_t offload_event = create_named_event("offload_res_ffn");
     cudaEvent_t lmhead_done = create_named_event("optimizer lmhead done");
     cudaEvent_t optimizer_done_event = create_named_event("optimizer done");
     cudaEvent_t transfer_done_event = create_named_event("transfer done");
@@ -294,15 +296,24 @@ LLamaRunState allocate_run_state(LLamaConfig config, LLamaOptions options, int B
 
     Tensor mm_scales = alloc->allocate(ETensorDType::FP32, "mm_scales", {2});
 
+    std::vector<Tensor> offloaded_residuals;
+    if(options.OffloadResidual) {
+        for(int i = 0; i < config.NumLayers; ++i) {
+            offloaded_residuals.push_back(
+                alloc->allocate(config.DType, "ffn-res-off", EAllocationType::PINNED, {B, T, C}));
+        }
+    }
+
     return LLamaRunState{inputs, targets, inputs_cpu, targets_cpu, losses,
                          encoded, freq_cis, output, lnf, lnf_rstd, std::move(layers),
-                         std::move(grads),
+                         std::move(offloaded_residuals), std::move(grads),
                          d_lnf, d_emb, rms_scratch, bias_scratch, cudnn_ws, enc_bw_scratch, enc_bw_idx, env_bw_info,
-            wgt_tp_buffer, act_tp_buffer, grd_tp_buffer,
+                         wgt_tp_buffer, act_tp_buffer, grd_tp_buffer,
                          abs_maxes, mm_scales,
                          norm_buffer, host_buffer.get<float>(), host_buffer.get<float>() + 1,
                          options, std::move(alloc), deviceProp, main_stream, side_stream, side_stream_event,
-                         forward_done_event, backward_done_event, transfer_done_event, norm_done_event, lmhead_done, std::move(optimizer_events), optimizer_done_event,
+                         forward_done_event, backward_done_event, transfer_done_event, norm_done_event, lmhead_done, offload_event,
+                         std::move(optimizer_events), optimizer_done_event,
                          nullptr, nullptr, nullptr, cudnn_handle, cublas_handle};
 }
 
