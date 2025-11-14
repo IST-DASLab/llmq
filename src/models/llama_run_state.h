@@ -66,6 +66,7 @@ struct LLamaRunState {
     Tensor LNF;             // (B, T, C)
     Tensor LNF_Rstd;        // (B, T)
     std::vector<LayerActivations> Acts;
+    std::vector<Tensor> OffloadedResiduals;
 
     // Gradients
     std::vector<LayerGradients> DActs;
@@ -107,6 +108,7 @@ struct LLamaRunState {
     cudaEvent_t TransferDone;       //!< recorded once CPU-side buffers have been copied to GPU
     cudaEvent_t NormDone;           //!< recorded after norm calculation completes
     cudaEvent_t OptEmbeddingsDone;      //!< recorded after the optimizer has done an update to the LMHead
+    cudaEvent_t OffloadResidualEvent;
     std::vector<cudaEvent_t> LayerUpdateDone;   //!< Recorded after the optimizer has done an update to the specified layer.
     cudaEvent_t OptimizerDone;      //!< recorded after the optimizer completes
 
