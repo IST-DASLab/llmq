@@ -131,7 +131,7 @@ void LLamaModel::forward(Tensor inputs, NCCLCommunicator& comm, int micro_step) 
             main_stream, rs->ForwardBlockGraph, rs->Options.UseCudaGraphs);
         Parameters->release_block(l, main_stream);
         if(l > 0) {
-            rs->put_res_ffn(l-1, comm.stream());
+            rs->put_res_ffn(l-1, rs->SideStream);
         }
     }
 
@@ -141,7 +141,7 @@ void LLamaModel::forward(Tensor inputs, NCCLCommunicator& comm, int micro_step) 
         fused_residual_rmsnorm_forward(rs->get_res_ffn(Config.NumLayers - 1, main_stream), rs->LNF, rs->LNF_Rstd, acts.ResidualAtt,
                                        acts.MlpDown, Parameters->get_lnf(main_stream), nullptr, Config.RmsNormEps, B * T, C, main_stream);
         Parameters->release_lnf(main_stream);
-        rs->put_res_ffn(Config.NumLayers-1, comm.stream());
+        rs->put_res_ffn(Config.NumLayers-1, rs->SideStream);
     }
 
     // do not return before inputs can be accessed again.
