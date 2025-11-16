@@ -247,7 +247,7 @@ void TrainingRunLogger::log_gpu_model(NCCLCommunicator& comm)
 
 void TrainingRunLogger::log_cmd(int argc, const char** argv)
 {
-    if(mRank == 0) return;
+    if(mRank != 0) return;
     std::string cmd = fmt::format(R"(  {{"log": "cmd", "time": "{}", "step": 0, "cmd": [)", std::chrono::system_clock::now());
     for (int i = 0; i < argc; i++)
     {
