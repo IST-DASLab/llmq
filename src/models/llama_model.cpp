@@ -425,6 +425,7 @@ void LLamaModel::backward(Tensor inputs, Tensor targets, NCCLCommunicator& comm,
 
     Parameters->release_lnf(main_stream);
     Grads->notify_lnf_w(main_stream, comm);
+    rs->fetch_res_ffn(L-2, comm.stream());
     Parameters->gather_block(L - 1, comm, *rs);
     // now backward all the layers
     for (int l = L-1; l >= 0; l--) {
@@ -432,22 +433,23 @@ void LLamaModel::backward(Tensor inputs, Tensor targets, NCCLCommunicator& comm,
         auto& dw = Grads->get_block_full(l, main_stream, comm, accumulate);
 
         // prefetch previous layer
+        if(l > 1) {
+            rs->fetch_res_ffn(l-2, comm.stream());
+        }
         if(l > 0) {
             Parameters->gather_block(l - 1, comm, *rs);
         }
+
         auto& weights = Parameters->get_block(l, main_stream);
 
         // last layer changes topology, so for now just don't use graph
         trace_or_execute_cuda_graph([&]() {
-            if(l > 0) {
-                rs->fetch_res_ffn(l-1, comm.stream());
-            }
             _recompute_block(l, weights);
             _backward_block(l, accumulate, weights, dw);
-            if(l > 0) {
-                rs->release_res_ffn(l - 1, main_stream);
-            }
             }, main_stream, rs->BackwardBlockGraph, rs->Options.UseCudaGraphs && l != 0);
+        if(l > 0) {
+            rs->release_res_ffn(l - 1, main_stream);
+        }
         Parameters->release_block(l, main_stream);
         Grads->notify_block(l, main_stream, comm);
     }
