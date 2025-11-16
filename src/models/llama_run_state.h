@@ -69,6 +69,14 @@ struct LLamaRunState {
     std::vector<Tensor> DeviceResiduals;        // (B, T, C)
     std::vector<Tensor> OffloadedResiduals;
 
+    struct sOffloadedResidualState {
+        cudaEvent_t Event;
+        int Layer;
+        int Ready;
+    };
+
+    std::vector<sOffloadedResidualState> OffloadedResidualState;
+
     void fetch_res_ffn(int layer_idx, cudaStream_t fetch_stream);
     void put_res_ffn(int layer_idx, cudaStream_t put_stream);
     Tensor& get_res_ffn(int layer_idx, cudaStream_t main_stream);
@@ -114,7 +122,6 @@ struct LLamaRunState {
     cudaEvent_t TransferDone;       //!< recorded once CPU-side buffers have been copied to GPU
     cudaEvent_t NormDone;           //!< recorded after norm calculation completes
     cudaEvent_t OptEmbeddingsDone;      //!< recorded after the optimizer has done an update to the LMHead
-    cudaEvent_t OffloadResidualEvent;
     std::vector<cudaEvent_t> LayerUpdateDone;   //!< Recorded after the optimizer has done an update to the specified layer.
     cudaEvent_t OptimizerDone;      //!< recorded after the optimizer completes
 

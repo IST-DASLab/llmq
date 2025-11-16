@@ -196,10 +196,15 @@ void LLamaRunState::fetch_res_ffn(int layer_idx, cudaStream_t fetch_stream) {
         return;
     }
 
-    CUDA_CHECK(cudaStreamWaitEvent(fetch_stream, OffloadResidualEvent, 0));
-    CUDA_CHECK(cudaMemcpyAsync(DeviceResiduals.at(0).Data, OffloadedResiduals.at(layer_idx).Data,
-                               DeviceResiduals.at(0).bytes(), cudaMemcpyHostToDevice, fetch_stream));
-    CUDA_CHECK(cudaEventRecord(OffloadResidualEvent, fetch_stream));
+    int l2 = layer_idx % 2;
+    auto& status = OffloadedResidualState.at(l2);
+
+    CUDA_CHECK(cudaStreamWaitEvent(fetch_stream, status.Event, 0));
+    status.Layer = layer_idx;
+    status.Ready = false;
+    CUDA_CHECK(cudaMemcpyAsync(DeviceResiduals.at(l2).Data, OffloadedResiduals.at(layer_idx).Data,
+                               DeviceResiduals.at(l2).bytes(), cudaMemcpyHostToDevice, fetch_stream));
+    CUDA_CHECK(cudaEventRecord(status.Event, fetch_stream));
 }
 
 void LLamaRunState::put_res_ffn(int layer_idx, cudaStream_t put_stream) {
@@ -207,10 +212,13 @@ void LLamaRunState::put_res_ffn(int layer_idx, cudaStream_t put_stream) {
         return;
     }
 
-    CUDA_CHECK(cudaStreamWaitEvent(put_stream, OffloadResidualEvent, 0));
-    CUDA_CHECK(cudaMemcpyAsync(OffloadedResiduals.at(layer_idx).Data, DeviceResiduals.at(0).Data,
-                               DeviceResiduals.at(0).bytes(), cudaMemcpyDeviceToHost, put_stream));
-    CUDA_CHECK(cudaEventRecord(OffloadResidualEvent, put_stream));
+    int l2 = layer_idx % 2;
+    auto& status = OffloadedResidualState.at(l2);
+    status.Ready = false;
+    CUDA_CHECK(cudaStreamWaitEvent(put_stream, status.Event, 0));
+    CUDA_CHECK(cudaMemcpyAsync(OffloadedResiduals.at(layer_idx).Data, DeviceResiduals.at(l2).Data,
+                               DeviceResiduals.at(l2).bytes(), cudaMemcpyDeviceToHost, put_stream));
+    CUDA_CHECK(cudaEventRecord(status.Event, put_stream));
 }
 
 Tensor& LLamaRunState::get_res_ffn(int layer_idx, cudaStream_t main_stream) {
@@ -218,15 +226,22 @@ Tensor& LLamaRunState::get_res_ffn(int layer_idx, cudaStream_t main_stream) {
         return DeviceResiduals.at(layer_idx);
     }
 
-    CUDA_CHECK(cudaStreamWaitEvent(main_stream, OffloadResidualEvent, 0));
-    return DeviceResiduals.at(0);
+    int l2 = layer_idx % 2;
+    auto& status = OffloadedResidualState.at(l2);
+    if(!status.Ready) {
+        CUDA_CHECK(cudaStreamWaitEvent(main_stream, status.Event, 0));
+        status.Ready = true;
+    }
+    return DeviceResiduals.at(l2);
 }
 
 void LLamaRunState::release_res_ffn(int layer_idx, cudaStream_t main_stream) {
     if(!Options.OffloadResidual) {
         return;
     }
-    CUDA_CHECK(cudaEventRecord(OffloadResidualEvent, main_stream));
+    int l2 = layer_idx % 2;
+    auto& status = OffloadedResidualState.at(l2);
+    CUDA_CHECK(cudaEventRecord(status.Event, main_stream));
 }
 
 LLamaRunState allocate_run_state(LLamaConfig config, LLamaOptions options, int B, int T, std::shared_ptr<TensorAllocator> alloc) {
@@ -271,11 +286,16 @@ LLamaRunState allocate_run_state(LLamaConfig config, LLamaOptions options, int B
     auto layers = builder.allocate_forward_buffers(lnf);
     std::vector<Tensor> device_residuals;
     std::vector<Tensor> offloaded_residuals;
+    std::vector<LLamaRunState::sOffloadedResidualState> offloaded_residual_states;
     if(options.OffloadResidual) {
         device_residuals.reserve(2);
         offloaded_residuals.reserve(config.NumLayers);
         for(int i = 0; i < 2; ++i) {
             device_residuals.emplace_back(alloc->allocate(config.DType, "res_ffn", {B, T, C}));
+            offloaded_residual_states.emplace_back(
+                create_named_event((std::string("offload_res_ffn_") + std::to_string(i)).c_str()),
+                -1, false
+                );
         }
         for(int i = 0; i < config.NumLayers; ++i) {
             offloaded_residuals.push_back(
@@ -307,7 +327,6 @@ LLamaRunState allocate_run_state(LLamaConfig config, LLamaOptions options, int B
     cudaEvent_t forward_done_event = create_named_event("forward done");
     cudaEvent_t backward_done_event = create_named_event("backward done");
     cudaEvent_t norm_done_event = create_named_event("norm done");
-    cudaEvent_t offload_event = create_named_event("offload_res_ffn");
     cudaEvent_t lmhead_done = create_named_event("optimizer lmhead done");
     cudaEvent_t optimizer_done_event = create_named_event("optimizer done");
     cudaEvent_t transfer_done_event = create_named_event("transfer done");
@@ -352,13 +371,14 @@ LLamaRunState allocate_run_state(LLamaConfig config, LLamaOptions options, int B
 
     return LLamaRunState{inputs, targets, inputs_cpu, targets_cpu, losses,
                          encoded, freq_cis, output, lnf, lnf_rstd, std::move(layers),
-                         std::move(device_residuals), std::move(offloaded_residuals), std::move(grads),
+                         std::move(device_residuals), std::move(offloaded_residuals), std::move(offloaded_residual_states),
+                         std::move(grads),
                          d_lnf, d_emb, rms_scratch, bias_scratch, cudnn_ws, enc_bw_scratch, enc_bw_idx, env_bw_info,
                          wgt_tp_buffer, act_tp_buffer, grd_tp_buffer,
                          abs_maxes, mm_scales,
                          norm_buffer, host_buffer.get<float>(), host_buffer.get<float>() + 1,
                          options, std::move(alloc), deviceProp, main_stream, side_stream, side_stream_event,
-                         forward_done_event, backward_done_event, transfer_done_event, norm_done_event, lmhead_done, offload_event,
+                         forward_done_event, backward_done_event, transfer_done_event, norm_done_event, lmhead_done,
                          std::move(optimizer_events), optimizer_done_event,
                          nullptr, nullptr, nullptr, cudnn_handle, cublas_handle};
 }
