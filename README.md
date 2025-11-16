@@ -238,6 +238,9 @@ Additional memory savings, especially for larger models, can be achieved by the 
 - `--recompute-ffn` - Recompute the entire feed-forward block during backward pass (implies --recompute-swiglu).
 - `--recompute-qkv` - Recompute QKV projections during backward pass.
 - `--recompute-att` - Recompute the entire attention block during backward pass (implies --recompute-qkv).
+- `--recompute-block` - Recompute the entire transformer block during backward pass (subsumes the other recompute flags).
+- `--offload-residuals` - Offload the residuals (of the ffn block; the only remaining part of the block that is not recomputed) to pinned host memory. Combined with `--recompute-block`, the total activation memory consumption becomes independent of the network depth.
+- `--lmhead-chunks=N` - Split LM-head computation into `N` chunks, so that the required size of the logit tensor is reduced by a factor of `N`.
 
 ### Multi-GPU
 - `--gpus <int>` - Number of GPUs to use. If 0, uses all available GPUs.
@@ -374,8 +377,8 @@ All settings use `--lmhead-chunks=${BATCH_SIZE}`
 | Qwen2.5-3B¹⁰  | 4    | bf16  | 4     | 25k  | 71% | 11h   |
 | Qwen2.5-7B⁶   | 4    | fp8   | 16    | 16k  | 57% | 17h   |
 | Qwen2.5-7B⁷   | 4    | bf16  | 16    | 9.3k | 61% | 30h   |
-| Qwen2.5-14B⁸  | 4    | fp8   | 8     | 7.3k | 51% | 38h   |
-| Qwen2.5-14B⁹  | 4    | bf16  | 8     | 3.5k | 46% | 78h   |
+| Qwen2.5-14B⁸  | 4    | fp8   | 16    | 7.8k | 54% | 36h   |
+| Qwen2.5-14B⁹  | 4    | bf16  | 16    | 5.1k | 66% | 54h   |
 
 
 ^1: `--offload-opt-m --offload-opt-v --recompute-swiglu --offload-master`  
@@ -385,8 +388,8 @@ All settings use `--lmhead-chunks=${BATCH_SIZE}`
 ^5: `--recompute-norm --recompute-swiglu` 
 ^6: `--offload-opt-m --offload-opt-v --recompute-ffn --recompute-norm --recompute-att --offload-master --shard-weights --memcpy-all-gather --shard-gradients --memcpy-send-recv --all-to-all-reduce --persistent-quants --offload-quants`  
 ^7: `--offload-opt-m --offload-opt-v --recompute-ffn --recompute-norm --recompute-att --offload-master --shard-weights --memcpy-all-gather --shard-gradients --memcpy-send-recv --all-to-all-reduce` 
-^8: `--offload-opt-m --offload-opt-v --recompute-block --offload-master --shard-weights --memcpy-all-gather --shard-gradients --memcpy-send-recv --all-to-all-reduce --persistent-quants --offload-quants`  
-^9: `--offload-opt-m --offload-opt-v --recompute-block --offload-master --shard-weights --memcpy-all-gather --shard-gradients --memcpy-send-recv --all-to-all-reduce`  
+^8: `--offload-opt-m --offload-opt-v --recompute-block --offload-master --offload-residual --shard-weights --memcpy-all-gather --shard-gradients --memcpy-send-recv --all-to-all-reduce --persistent-quants --offload-quants`  
+^9: `--offload-opt-m --offload-opt-v --recompute-block --offload-master --offload-residual --shard-weights --memcpy-all-gather --shard-gradients --memcpy-send-recv --all-to-all-reduce`  
 ^10: `--offload-opt-m --recompute-swiglu --recompute-norm`
 
 ### L40S
