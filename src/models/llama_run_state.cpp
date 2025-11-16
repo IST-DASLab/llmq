@@ -92,7 +92,6 @@ LLamaRunState::LayerActivations RunStateBuilder::allocate_basic_fwd_tensors(Tens
 
     Tensor qkv = allocate_or_reuse(Options.RecomputeQKV, tQKVBuffer, Config.DType, "qkv", B, T, Config.qkv_channels());
     Tensor res_att = allocate_or_reuse(Options.RecomputeBlock, tResAttBuffer, Config.DType, "res_att", B, T, C);
-    Tensor res_ffn = allocate_or_reuse(Options.OffloadResidual, tFFNResBuffer, Config.DType, "res_ffn", B, T, C);
     Tensor lse = allocate(ETensorDType::FP32, "lse", B, T, Config.NumQueryHeads);
     Tensor att_v = allocate_or_reuse(Options.RecomputeAtt, tAttBuffer, Config.DType, "att_v", B, T, C);
     // not needed for backward, so can reuse an existing buffer
@@ -112,7 +111,7 @@ LLamaRunState::LayerActivations RunStateBuilder::allocate_basic_fwd_tensors(Tens
     Tensor rope = allocate_or_reuse(true, qkv, Config.DType, "rope", B, T, Config.qkv_channels());
 
     return LLamaRunState::LayerActivations{ln1_rstd, ln1, ln2_rstd, ln2, qkv, lse, rope, att, atto,
-                                           res_att, mlp_up, mlp_down, swiglu, res_ffn};
+                                           res_att, mlp_up, mlp_down, swiglu};
 }
 
 void RunStateBuilder::allocate_fwd_quant_tensors(LLamaRunState::LayerActivations& act) {
@@ -192,6 +191,44 @@ std::vector<LLamaRunState::LayerGradients> RunStateBuilder::allocate_backward_bu
     return LGrads;
 }
 
+void LLamaRunState::fetch_res_ffn(int layer_idx, cudaStream_t fetch_stream) {
+    if(!Options.OffloadResidual) {
+        return;
+    }
+
+    CUDA_CHECK(cudaStreamWaitEvent(fetch_stream, OffloadResidualEvent, 0));
+    CUDA_CHECK(cudaMemcpyAsync(DeviceResiduals.at(0).Data, OffloadedResiduals.at(layer_idx).Data,
+                               DeviceResiduals.at(0).bytes(), cudaMemcpyHostToDevice, fetch_stream));
+    CUDA_CHECK(cudaEventRecord(OffloadResidualEvent, fetch_stream));
+}
+
+void LLamaRunState::put_res_ffn(int layer_idx, cudaStream_t put_stream) {
+    if(!Options.OffloadResidual) {
+        return;
+    }
+
+    CUDA_CHECK(cudaStreamWaitEvent(put_stream, OffloadResidualEvent, 0));
+    CUDA_CHECK(cudaMemcpyAsync(OffloadedResiduals.at(layer_idx).Data, DeviceResiduals.at(0).Data,
+                               DeviceResiduals.at(0).bytes(), cudaMemcpyDeviceToHost, put_stream));
+    CUDA_CHECK(cudaEventRecord(OffloadResidualEvent, put_stream));
+}
+
+Tensor& LLamaRunState::get_res_ffn(int layer_idx, cudaStream_t main_stream) {
+    if(!Options.OffloadResidual) {
+        return DeviceResiduals.at(layer_idx);
+    }
+
+    CUDA_CHECK(cudaStreamWaitEvent(main_stream, OffloadResidualEvent, 0));
+    return DeviceResiduals.at(0);
+}
+
+void LLamaRunState::release_res_ffn(int layer_idx, cudaStream_t main_stream) {
+    if(!Options.OffloadResidual) {
+        return;
+    }
+    CUDA_CHECK(cudaEventRecord(OffloadResidualEvent, main_stream));
+}
+
 LLamaRunState allocate_run_state(LLamaConfig config, LLamaOptions options, int B, int T, std::shared_ptr<TensorAllocator> alloc) {
     // we are *not* handling this as a single giant allocation
     // by using independent allocations, we give sanitizers a better chance of catching errors,
@@ -232,7 +269,24 @@ LLamaRunState allocate_run_state(LLamaConfig config, LLamaOptions options, int B
     Tensor d_emb = alloc->allocate(config.DType, "d_emb", {B, T, C});
 
     auto layers = builder.allocate_forward_buffers(lnf);
-
+    std::vector<Tensor> device_residuals;
+    std::vector<Tensor> offloaded_residuals;
+    if(options.OffloadResidual) {
+        device_residuals.reserve(2);
+        offloaded_residuals.reserve(config.NumLayers);
+        for(int i = 0; i < 2; ++i) {
+            device_residuals.emplace_back(alloc->allocate(config.DType, "res_ffn", {B, T, C}));
+        }
+        for(int i = 0; i < config.NumLayers; ++i) {
+            offloaded_residuals.push_back(
+                alloc->allocate(config.DType, "ffn-res-off", EAllocationType::PINNED, {B, T, C}));
+        }
+    } else {
+        device_residuals.reserve(config.NumLayers);
+        for(int i = 0; i < config.NumLayers; ++i) {
+            device_residuals.emplace_back(alloc->allocate(config.DType, "res_ffn", {B, T, C}));
+        }
+    }
 
     long num_c_groups = div_ceil(C, (long)(16 / get_dtype_size(config.DType) * 32));
     Tensor enc_bw_scratch = alloc->allocate(ETensorDType::INT32, "enc_bw_scratch", {B, T, num_c_groups * 5});
@@ -296,17 +350,9 @@ LLamaRunState allocate_run_state(LLamaConfig config, LLamaOptions options, int B
 
     Tensor mm_scales = alloc->allocate(ETensorDType::FP32, "mm_scales", {2});
 
-    std::vector<Tensor> offloaded_residuals;
-    if(options.OffloadResidual) {
-        for(int i = 0; i < config.NumLayers; ++i) {
-            offloaded_residuals.push_back(
-                alloc->allocate(config.DType, "ffn-res-off", EAllocationType::PINNED, {B, T, C}));
-        }
-    }
-
     return LLamaRunState{inputs, targets, inputs_cpu, targets_cpu, losses,
                          encoded, freq_cis, output, lnf, lnf_rstd, std::move(layers),
-                         std::move(offloaded_residuals), std::move(grads),
+                         std::move(device_residuals), std::move(offloaded_residuals), std::move(grads),
                          d_lnf, d_emb, rms_scratch, bias_scratch, cudnn_ws, enc_bw_scratch, enc_bw_idx, env_bw_info,
                          wgt_tp_buffer, act_tp_buffer, grd_tp_buffer,
                          abs_maxes, mm_scales,

@@ -38,7 +38,6 @@ struct LLamaRunState {
         Tensor MlpUp;       // (B, T, 2*Ch)
         Tensor MlpDown;     // (B, T, C)
         QTensor SwiGLu;     // (B, T, Ch)
-        Tensor ResidualFFN; // (B, T, C)
     };
 
     struct LayerGradients {
@@ -66,7 +65,14 @@ struct LLamaRunState {
     Tensor LNF;             // (B, T, C)
     Tensor LNF_Rstd;        // (B, T)
     std::vector<LayerActivations> Acts;
+
+    std::vector<Tensor> DeviceResiduals;        // (B, T, C)
     std::vector<Tensor> OffloadedResiduals;
+
+    void fetch_res_ffn(int layer_idx, cudaStream_t fetch_stream);
+    void put_res_ffn(int layer_idx, cudaStream_t put_stream);
+    Tensor& get_res_ffn(int layer_idx, cudaStream_t main_stream);
+    void release_res_ffn(int layer_idx, cudaStream_t main_stream);
 
     // Gradients
     std::vector<LayerGradients> DActs;
