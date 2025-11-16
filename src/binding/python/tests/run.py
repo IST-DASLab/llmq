@@ -44,6 +44,7 @@ class RunConfig:
     recompute_qkv: bool = False
     recompute_att: bool = False
     recompute_block: bool = False
+    offload_residual: bool = False
     use_cuda_graphs: bool = False
 
     # offloading
@@ -116,6 +117,7 @@ def _create_options(config: RunConfig) -> pyllmq.LLamaOptions:
     options.momentum_type = config.opt_m_dtype
     options.variance_type = config.opt_v_dtype
     options.lmhead_chunks = config.lmhead_chunks
+    options.offload_residual = config.offload_residual
 
     options.offload_opt_m = config.offload_opt_m
     options.offload_opt_v = config.offload_opt_v
@@ -226,6 +228,8 @@ def parse_args(args: list = None) -> RunConfig:
                         help="Recompute attention block during backward pass")
     parser.add_argument("--recompute-block", action="store_true",
                         help="Recompute entire transformer block")
+    parser.add_argument("--offload-residual", action="store_true",
+                        help="Offload residual activations")
     parser.add_argument("--use-cuda-graphs", action="store_true",
                         help="Enable CUDA graphs")
 
@@ -281,5 +285,6 @@ def parse_args(args: list = None) -> RunConfig:
         recompute_qkv=args.recompute_qkv,
         recompute_att=args.recompute_att,
         recompute_block=args.recompute_block,
+        offload_residual=args.offload_residual,
         use_cuda_graphs=args.use_cuda_graphs,
     )
