@@ -176,7 +176,7 @@ NB_MODULE(_pyllmq, m) {
 
     nb::class_<LLamaOptions>(m, "LLamaOptions")
         .def("__init__", [](LLamaOptions *t, bool recompute_swiglu, bool recompute_rmsnorm,
-            bool recompute_ffn, bool recompute_qkv, bool recompute_att, bool recompute_block,
+            bool recompute_ffn, bool recompute_qkv, bool recompute_att, bool recompute_block, bool offload_residual,
             bool use_cuda_graphs,
             bool offload_master, bool offload_quants, bool offload_opt_m, bool offload_opt_v,
             bool use_write_combined, bool shard_weights, bool persistent_quants, bool shard_gradients, bool use_all_to_all_reduce,
@@ -189,6 +189,7 @@ NB_MODULE(_pyllmq, m) {
                 .RecomputeQKV = recompute_qkv,
                 .RecomputeAtt = recompute_att,
                 .RecomputeBlock = recompute_block,
+                .OffloadResidual = offload_residual,
                 .LMHeadChunks = lmhead_chunks,
                 .UseCudaGraphs = use_cuda_graphs,
                 .OffloadMaster = offload_master,
@@ -210,6 +211,7 @@ NB_MODULE(_pyllmq, m) {
              nb::arg("recompute_swiglu") = false, nb::arg("recompute_rmsnorm") = false,
              nb::arg("recompute_ffn") = false,    nb::arg("recompute_qkv") = false,
              nb::arg("recompute_att") = false,    nb::arg("recompute_block") = false,
+             nb::arg("offload_residual") = false,
              nb::arg("use_cuda_graphs") = true,   nb::arg("offload_master") = false,
              nb::arg("offload_quants") = false,   nb::arg("offload_opt_m") = false,
              nb::arg("offload_opt_v") = false,    nb::arg("use_write_combined") = false,
@@ -225,6 +227,7 @@ NB_MODULE(_pyllmq, m) {
         .def_rw("recompute_qkv", &LLamaOptions::RecomputeQKV)
         .def_rw("recompute_att", &LLamaOptions::RecomputeAtt)
         .def_rw("recompute_block", &LLamaOptions::RecomputeBlock)
+        .def_rw("offload_residual", &LLamaOptions::OffloadResidual)
         .def_rw("lmhead_chunks", &LLamaOptions::LMHeadChunks)
         .def_rw("use_cuda_graphs", &LLamaOptions::UseCudaGraphs)
         .def_rw("offload_master", &LLamaOptions::OffloadMaster)
