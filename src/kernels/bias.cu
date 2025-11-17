@@ -101,6 +101,8 @@ __global__ void matmul_backward_bias_kernel(OutFloat* dbias, const floatX* dout,
                 a *= *abs_max;
                 if constexpr (std::is_same_v<floatX, __nv_fp8_e4m3>) {
                     a /= 448.f;
+                } else if constexpr (std::is_same_v<floatX, __nv_fp8_e5m2>) {
+                    a /= 448.f;
                 }
             }
             if constexpr (!UseAuxBuffer) {
@@ -181,5 +183,9 @@ void backward_bias(nv_bfloat16* dbias, const nv_bfloat16* dout, const float* dou
 }
 
 void backward_bias(nv_bfloat16* dbias, const __nv_fp8_e4m3* dout, const float* dout_abs_max, float* dbias_buffer, int B, int T, int OC, const cudaDeviceProp& dp, cudaStream_t stream)  {
+    backward_bias_imp(dbias, dout, dout_abs_max, dbias_buffer, B, T, OC, dp, stream);
+}
+
+void backward_bias(nv_bfloat16* dbias, const __nv_fp8_e5m2* dout, const float* dout_abs_max, float* dbias_buffer, int B, int T, int OC, const cudaDeviceProp& dp, cudaStream_t stream)  {
     backward_bias_imp(dbias, dout, dout_abs_max, dbias_buffer, B, T, OC, dp, stream);
 }

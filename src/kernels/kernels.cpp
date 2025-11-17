@@ -165,6 +165,8 @@ void transpose(Tensor& dst, const Tensor& src, int rows, int cols, cudaStream_t 
         transpose(dst.get<nv_bfloat16>(), src.get<nv_bfloat16>(), rows, cols, stream);
     } else if(dst.DType == ETensorDType::FP8_E4M3) {
         transpose(dst.get<__nv_fp8_e4m3>(), src.get<__nv_fp8_e4m3>(), rows, cols, stream);
+    }  else if(dst.DType == ETensorDType::FP8_E5M2) {
+        transpose(dst.get<__nv_fp8_e5m2>(), src.get<__nv_fp8_e5m2>(), rows, cols, stream);
     } else {
         throw std::logic_error("transpose: unsupported dtype");
     }
@@ -196,6 +198,8 @@ void quantize_with_abs_max(Tensor& out, const Tensor& in, const float* abs_max, 
             quantize_with_abs_max(out.get<nv_bfloat16>(), in.get<float>(), abs_max, N, dp, stream);
         } else if (out.DType == ETensorDType::FP8_E4M3) {
             quantize_with_abs_max(out.get<__nv_fp8_e4m3>(), in.get<float>(), abs_max, N, dp, stream);
+        } else if (out.DType == ETensorDType::FP8_E5M2) {
+            quantize_with_abs_max(out.get<__nv_fp8_e5m2>(), in.get<float>(), abs_max, N, dp, stream);
         } else if (out.DType == ETensorDType::INT8) {
             quantize_with_abs_max(out.get<int8_t>(), in.get<float>(), abs_max, N, dp, stream);
         } else {
@@ -204,6 +208,8 @@ void quantize_with_abs_max(Tensor& out, const Tensor& in, const float* abs_max, 
     } else if (in.DType == ETensorDType::BF16) {
         if (out.DType == ETensorDType::FP8_E4M3) {
             quantize_with_abs_max(out.get<__nv_fp8_e4m3>(), in.get<nv_bfloat16>(), abs_max, N, dp, stream);
+        } else if (out.DType == ETensorDType::FP8_E5M2) {
+            quantize_with_abs_max(out.get<__nv_fp8_e5m2>(), in.get<nv_bfloat16>(), abs_max, N, dp, stream);
         } else if (out.DType == ETensorDType::INT8) {
             quantize_with_abs_max(out.get<int8_t>(), in.get<nv_bfloat16>(), abs_max, N, dp, stream);
         } else {
@@ -271,9 +277,12 @@ void matmul(Tensor& c, const Tensor& a, const Tensor& b, std::optional<Tensor> b
         } else {
             matmul(c.get<float>(), a.get<__nv_fp8_e4m3>(), b.get<__nv_fp8_e4m3>(), (nv_bfloat16*)nullptr, scale,handle, ws, ws_size, M, N, K, mode, accumulate, stream);
         }
-    } else if(c.DType == ETensorDType::BF16 && a.DType == ETensorDType::FP8_E4M3) {
+    } else if(c.DType == ETensorDType::BF16 && a.DType == ETensorDType::FP8_E4M3 && b.DType == ETensorDType::FP8_E4M3) {
         nv_bfloat16* bias_ptr = bias.has_value() ? bias.value().get<nv_bfloat16>() : nullptr;
         matmul(c.get<nv_bfloat16>(), a.get<__nv_fp8_e4m3>(), b.get<__nv_fp8_e4m3>(), bias_ptr, scale,handle, ws, ws_size, M, N, K, mode, accumulate, stream);
+    } else if(c.DType == ETensorDType::BF16 && a.DType == ETensorDType::FP8_E4M3 && b.DType == ETensorDType::FP8_E5M2) {
+        nv_bfloat16* bias_ptr = bias.has_value() ? bias.value().get<nv_bfloat16>() : nullptr;
+        matmul(c.get<nv_bfloat16>(), a.get<__nv_fp8_e4m3>(), b.get<__nv_fp8_e5m2>(), bias_ptr, scale, handle, ws, ws_size, M, N, K, mode, accumulate, stream);
     } else if(c.DType == ETensorDType::BF16) {
         nv_bfloat16* bias_ptr = bias.has_value() ? bias.value().get<nv_bfloat16>() : nullptr;
         matmul(c.get<nv_bfloat16>(), a.get<nv_bfloat16>(), b.get<nv_bfloat16>(), bias_ptr, scale,handle, ws, ws_size, M, N, K, mode, accumulate, stream);
@@ -287,8 +296,10 @@ void backward_bias(Tensor& dbias, const Tensor& dout, const float* dout_abs_max,
         backward_bias(dbias.get<float>(), dout.get<float>(), dout_abs_max, dbias_buffer.get<float>(), B, T, OC, dp, stream);
     } else if(dbias.DType == ETensorDType::BF16 && dout.DType == ETensorDType::BF16) {
         backward_bias(dbias.get<nv_bfloat16>(), dout.get<nv_bfloat16>(), dout_abs_max, dbias_buffer.get<float>(), B, T, OC, dp, stream);
-    }  else if(dbias.DType == ETensorDType::BF16 && dout.DType == ETensorDType::FP8_E4M3) {
+    } else if(dbias.DType == ETensorDType::BF16 && dout.DType == ETensorDType::FP8_E4M3) {
         backward_bias(dbias.get<nv_bfloat16>(), dout.get<__nv_fp8_e4m3>(), dout_abs_max, dbias_buffer.get<float>(), B, T, OC, dp, stream);
+    }  else if(dbias.DType == ETensorDType::BF16 && dout.DType == ETensorDType::FP8_E5M2) {
+        backward_bias(dbias.get<nv_bfloat16>(), dout.get<__nv_fp8_e5m2>(), dout_abs_max, dbias_buffer.get<float>(), B, T, OC, dp, stream);
     } else {
         throw std::logic_error("backward_bias: unsupported dtype");
     }
