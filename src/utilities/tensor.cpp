@@ -74,6 +74,9 @@ void Tensor::print_sample(long offset, long count) const {
     case ETensorDType::FP8_E4M3:
         do_print<__nv_fp8_e4m3, float>(*this, offset, count);
         break;
+    case ETensorDType::FP8_E5M2:
+        do_print<__nv_fp8_e5m2, float>(*this, offset, count);
+        break;
     case ETensorDType::INT32:
         do_print<int, int>(*this, offset, count);
         break;

@@ -251,6 +251,7 @@ std::int64_t time_for_op_ns(const sPerfSpecs& spec, ETensorDType dtype, std::int
     case ETensorDType::INT8:
         return count / spec.INT8_TFlops;
     case ETensorDType::FP8_E4M3:
+    case ETensorDType::FP8_E5M2:
         return count / spec.FP8_32_TFlops;
     default:
         throw std::logic_error("invalid dtype");

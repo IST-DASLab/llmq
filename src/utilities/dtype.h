@@ -20,6 +20,7 @@ enum class ETensorDType : int {
     INT32,
     INT8,
     FP8_E4M3,
+    FP8_E5M2,
     BYTE,               // use for generic buffers
 };
 
@@ -37,7 +38,9 @@ consteval ETensorDType dtype_from_pointer(const T*) {
         return ETensorDType::INT8;
     } else if constexpr (std::is_same_v<T, __nv_fp8_e4m3>) {
         return ETensorDType::FP8_E4M3;
-    }else if constexpr (std::is_same_v<T, std::byte>) {
+    }  else if constexpr (std::is_same_v<T, __nv_fp8_e5m2>) {
+        return ETensorDType::FP8_E5M2;
+    } else if constexpr (std::is_same_v<T, std::byte>) {
         return ETensorDType::BYTE;
     }
     throw std::runtime_error("Invalid dtype");
@@ -60,6 +63,7 @@ constexpr int get_dtype_size(const ETensorDType type)  {
             return 2;
         case ETensorDType::INT8:
         case ETensorDType::FP8_E4M3:
+        case ETensorDType::FP8_E5M2:
         case ETensorDType::BYTE:
             return 1;
     }
