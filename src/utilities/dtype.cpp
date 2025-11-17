@@ -26,6 +26,8 @@ ETensorDType dtype_from_str(std::string_view dtype) {
         return ETensorDType::INT8;
     } else if(iequals_any(dtype, "E4M3", "fp8_e4m3", "F8_E4M3")) {
         return ETensorDType::FP8_E4M3;
+    }  else if(iequals_any(dtype, "E5M2", "fp8_e5m2", "F8_E5M2")) {
+        return ETensorDType::FP8_E5M2;
     } else if(iequals_any(dtype, "byte")) {
         return ETensorDType::BYTE;
     } else if(iequals_any(dtype, "FP8", "F8")) {
@@ -48,6 +50,8 @@ const char* dtype_to_str(ETensorDType dtype) {
         return "I8";
     case ETensorDType::FP8_E4M3:
         return "F8_E4M3";
+    case ETensorDType::FP8_E5M2:
+        return "F8_E5M2";
     case ETensorDType::BYTE:
         return "U8";
     default:
@@ -69,6 +73,8 @@ const char* dtype_to_torch_str(ETensorDType dtype) {
             return "int8";
         case ETensorDType::FP8_E4M3:
             return "float8_e4m3fn";
+        case ETensorDType::FP8_E5M2:
+            return "float8_e5m2";
         case ETensorDType::BYTE:
             return "uint8";
         default:

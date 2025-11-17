@@ -72,10 +72,16 @@ constexpr Dst narrow(Src input) {
 template<typename Scalar>
 inline cudaDataType to_cuda_lib_type_enum;
 
-template<> inline cudaDataType to_cuda_lib_type_enum<float> = cudaDataType::CUDA_R_32F;
-template<> inline cudaDataType to_cuda_lib_type_enum<nv_bfloat16> = cudaDataType::CUDA_R_16BF;
-template<> inline cudaDataType to_cuda_lib_type_enum<std::int8_t> = cudaDataType::CUDA_R_8I;
-template<> inline cudaDataType to_cuda_lib_type_enum<__nv_fp8_e4m3> = cudaDataType::CUDA_R_8F_E4M3;
+template<> inline constexpr cudaDataType to_cuda_lib_type_enum<float> = cudaDataType::CUDA_R_32F;
+template<> inline constexpr cudaDataType to_cuda_lib_type_enum<nv_bfloat16> = cudaDataType::CUDA_R_16BF;
+template<> inline constexpr cudaDataType to_cuda_lib_type_enum<std::int8_t> = cudaDataType::CUDA_R_8I;
+template<> inline constexpr cudaDataType to_cuda_lib_type_enum<__nv_fp8_e4m3> = cudaDataType::CUDA_R_8F_E4M3;
+template<> inline constexpr cudaDataType to_cuda_lib_type_enum<__nv_fp8_e5m2> = cudaDataType::CUDA_R_8F_E5M2;
+
+template<typename FP8Type>
+inline __nv_fp8_interpretation_t fp8_interpretation_v;
+template<> inline constexpr __nv_fp8_interpretation_t fp8_interpretation_v<__nv_fp8_e4m3> = __nv_fp8_interpretation_t::__NV_E4M3;
+template<> inline constexpr __nv_fp8_interpretation_t fp8_interpretation_v<__nv_fp8_e5m2> = __nv_fp8_interpretation_t::__NV_E5M2;
 
 // ----------------------------------------------------------------------------
 // NVTX utils
