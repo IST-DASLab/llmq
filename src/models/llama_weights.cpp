@@ -162,7 +162,7 @@ sLLamaWeights allocate_weights(const LLamaConfig& config, EAllocationType kind, 
 }
 
 LLamaWeightsManager::LLamaWeightsManager(const LLamaConfig& config, const LLamaOptions& options, int rank, int world) :
-    mMasterDType(options.MasterDType.value_or(config.DType)), mWorkMatDType(options.MatmulType.value_or(config.DType)),
+    mMasterDType(options.MasterDType.value_or(config.DType)), mWorkMatDType(options.matmul_dtype()),
     mShardIdx(rank), mNumShards(world)
 {
     mEmbStatus.DoneEvent = create_named_event("emb_done");

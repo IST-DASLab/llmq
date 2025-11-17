@@ -86,6 +86,7 @@ void TrainingRunner::load_training_config(int argc, const char** argv) {
     CLI::App app;
 
     std::string matmul_dtype = "";
+    std::string gradient_dtype = "";
 
     Options.KeepAllActivations = false;
     Options.RecomputeSwiGLu = false;
@@ -98,6 +99,7 @@ void TrainingRunner::load_training_config(int argc, const char** argv) {
     auto from_scratch = app.add_flag("--from-scratch", FromScratch, "Train the model from a random initialization");
     app.add_flag("--init-proj-to-zero", Options.InitProjectionsToZero, "Init (ffn.down and att.out) projections to zero, as in modded-nanogpt")->needs(from_scratch);
     app.add_option("--matmul-dtype", matmul_dtype, "Which dtype to use for matmuls. Defaults to model-dtype.");
+    app.add_option("--gradient-dtype", gradient_dtype, "Which dtype to use for (activation) gradients. Defaults to matmul-dtype.");
     app.add_option("--model-dtype", ModelDType, "Which dtype to use for model");
     app.add_option("--batch,--batch-size", B, "micro-batch size");
     app.add_option("--seq-len,--seq-length", T, "sequence length");
@@ -173,6 +175,7 @@ void TrainingRunner::load_training_config(int argc, const char** argv) {
     }
 
     Options.MatmulType = matmul_dtype.empty() ? std::optional<ETensorDType>{} : dtype_from_str(matmul_dtype);
+    Options.GradientType = gradient_dtype.empty() ? std::optional<ETensorDType>{} : dtype_from_str(gradient_dtype);
 
     switch (ZeroLevel) {
     case 0:
@@ -258,6 +261,7 @@ void TrainingRunner::run_training(int argc, const char** argv, NCCLCommunicator&
         model_path = ModelRootPath + "/model.safetensors.index.json";
     }
     LLamaConfig config = create_config(ModelRootPath, FromScratch, ModelDType);
+    Options.ModelType = config.DType;
 
     TrainingRunLogger logger(LogFile, comm.rank(), TrainingRunLogger::DEFAULT);
     logger.log_cmd(argc, argv);
@@ -287,7 +291,8 @@ void TrainingRunner::run_training(int argc, const char** argv, NCCLCommunicator&
         {"memcpy-all-gather",  MemcpyAllGather},
         {"memcpy-send-recv",   MemcpySendRecv},
         {"use-write-combined", Options.UseWriteCombined},
-        {"matmul-dtype",       dtype_to_str(Options.MatmulType.value_or(ModelDType))},
+        {"matmul-dtype",       dtype_to_str(Options.matmul_dtype())},
+        {"gradient-dtype",     dtype_to_str(Options.grad_dtype())},
         {"model-dtype",        dtype_to_str(ModelDType)},
         {"opt-m-dtype",        dtype_to_str(Options.OptMomentumType)},
         {"opt-v-dtype",        dtype_to_str(Options.OptVarianceType)},
@@ -393,7 +398,7 @@ void TrainingRunner::run_training(int argc, const char** argv, NCCLCommunicator&
     logger.set_expected_time_per_token(estimate_speed_of_light(get_gpu_name().c_str(),
         get_transformer_ops(
             config.NumLayers * ((long)config.HiddenSize * (config.IntermediateSize * 3 + config.HiddenSize * 1 + config.qkv_channels())),
-        Options.MatmulType.value_or(config.DType), (long)config.VocabSize * config.HiddenSize, config.DType,
+        Options.matmul_dtype(), (long)config.VocabSize * config.HiddenSize, config.DType,
         config.NumQueryHeads * config.head_size(), config.NumLayers, T)) / comm.world_size());
 
     logger.log_allocator(model.get_allocator().get_allocation_segments());

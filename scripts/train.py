@@ -53,6 +53,8 @@ def setup_options(config: pyllmq.TrainingConfig) -> pyllmq.LLamaOptions:
     options.init_projections_to_zero = config.init_proj_to_zero
     if config.matmul_dtype:
         options.matmul_type = config.matmul_dtype
+    if config.gradient_dtype:
+        options.gradient_type = config.gradient_dtype
 
     return options
 
@@ -88,6 +90,7 @@ def parse_args():
     parser.add_argument("--init-proj-to-zero", action="store_true", help="Initialize projections to zero")
     parser.add_argument("--model-dtype", default=default.model_dtype, help="Model dtype")
     parser.add_argument("--matmul-dtype", help="Matmul dtype (defaults to model-dtype)")
+    parser.add_argument("--gradient-dtype", help="Gradient dtype (defaults to matmul-dtype, except e4m3 matmul uses m5m2 gradients)")
 
     # Batch configuration
     parser.add_argument("--batch-size", "--batch", type=int, default=default.batch_size, help="Micro-batch size")

@@ -84,7 +84,7 @@ Tensor RunStateBuilder::generate_frequencies() {
 LLamaRunState::LayerActivations RunStateBuilder::allocate_basic_fwd_tensors(Tensor lnf) {
     Tensor ln1_rstd = allocate(ETensorDType::FP32, "ln1_rstd", B, T);
     Tensor ln2_rstd = allocate(ETensorDType::FP32, "ln2_rstd", B, T);
-    bool quant = (Options.MatmulType.value_or(Config.DType) != Config.DType) && !Options.KeepAllActivations;
+    bool quant = (Options.matmul_dtype() != Config.DType) && !Options.KeepAllActivations;
     bool reuse_ln_buffer = Options.RecomputeRMSNorm || quant;
     Tensor ln1_v = allocate_or_reuse(reuse_ln_buffer || Options.RecomputeAtt, tLN1Buffer, Config.DType, "ln1", B, T, C);
     Tensor ln2_v = allocate_or_reuse(reuse_ln_buffer || Options.RecomputeFFN, lnf, Config.DType, "ln2", B, T, C);
@@ -113,7 +113,7 @@ LLamaRunState::LayerActivations RunStateBuilder::allocate_basic_fwd_tensors(Tens
 }
 
 void RunStateBuilder::allocate_fwd_quant_tensors(LLamaRunState::LayerActivations& act) {
-    ETensorDType matmul_dtype = Options.MatmulType.value();
+    ETensorDType matmul_dtype = Options.matmul_dtype();
     // allocate a new buffer for every forward quantization
     act.LN1.Quant = allocate(matmul_dtype, "ln1.q", B, T, C);
     act.LN2.Quant = allocate(matmul_dtype, "ln2.q", B, T, C);
@@ -124,11 +124,11 @@ void RunStateBuilder::allocate_fwd_quant_tensors(LLamaRunState::LayerActivations
 void RunStateBuilder::keep_fwd_quant_tensors(LLamaRunState::LayerActivations& act, LLamaRunState::LayerActivations& src) {
     // allocate new buffers for activation quants (so we can drop the unquantized ones), but reuse
     // the weight quant buffers.
-    act.LN1.Quant = Options.RecomputeRMSNorm ? src.LN1.Quant : allocate(Options.MatmulType.value(), "ln1.q", B, T, C);
-    act.LN2.Quant = Options.RecomputeRMSNorm ? src.LN2.Quant : allocate(Options.MatmulType.value(), "ln2.q", B, T, C);
+    act.LN1.Quant = Options.RecomputeRMSNorm ? src.LN1.Quant : allocate(Options.matmul_dtype(), "ln1.q", B, T, C);
+    act.LN2.Quant = Options.RecomputeRMSNorm ? src.LN2.Quant : allocate(Options.matmul_dtype(), "ln2.q", B, T, C);
     // note: Att is needed unquantized for attention-backward
     act.Att.Quant = src.Att.Quant;
-    act.SwiGLu.Quant = (Options.RecomputeSwiGLu || Options.RecomputeFFN) ? src.SwiGLu.Quant : allocate(Options.MatmulType.value(), "swiglu.q", B, T, H);
+    act.SwiGLu.Quant = (Options.RecomputeSwiGLu || Options.RecomputeFFN) ? src.SwiGLu.Quant : allocate(Options.matmul_dtype(), "swiglu.q", B, T, H);
 }
 
 std::vector<LLamaRunState::LayerActivations> RunStateBuilder::allocate_forward_buffers(Tensor lnf)
@@ -138,7 +138,7 @@ std::vector<LLamaRunState::LayerActivations> RunStateBuilder::allocate_forward_b
     for(int l = 0; l < Config.NumLayers; ++l) {
         LLamaRunState::LayerActivations act = allocate_basic_fwd_tensors(lnf);
 
-        if(Options.MatmulType.value_or(Config.DType) != Config.DType) {
+        if(Options.matmul_dtype() != Config.DType) {
             if(l == 0) {
                 allocate_fwd_quant_tensors(act);
             } else {
@@ -172,12 +172,13 @@ std::vector<LLamaRunState::LayerGradients> RunStateBuilder::allocate_backward_bu
     for (int l = 0; l < Config.NumLayers; ++l) {
         if (Options.KeepAllActivations || l == 0) {
             LLamaRunState::LayerGradients grads = allocate_basic_bwd_tensors(d_lnf);
-            ETensorDType matmul_dtype = Options.MatmulType.value_or(Config.DType);
-            if(matmul_dtype != Config.DType) {
-                grads.DResFFN.Quant = allocate(matmul_dtype, "d_res_ffn.q", B, T, C);
-                grads.DResAtt.Quant = Options.KeepAllActivations ? allocate(matmul_dtype, "d_res_att.q", B, T, C) : grads.DResFFN.Quant;
-                grads.DMlpUp.Quant = allocate(matmul_dtype, "d_mlp_up.q", B, T, 2 * Config.IntermediateSize);
-                grads.DQKV.Quant = allocate(matmul_dtype, "d_qkv.q", Config.qkv_channels(), B, T);
+            ETensorDType matmul_dtype = Options.matmul_dtype();
+            ETensorDType grad_dtype = Options.grad_dtype();
+            if(grad_dtype != Config.DType) {
+                grads.DResFFN.Quant = allocate(grad_dtype, "d_res_ffn.q", B, T, C);
+                grads.DResAtt.Quant = Options.KeepAllActivations ? allocate(grad_dtype, "d_res_att.q", B, T, C) : grads.DResFFN.Quant;
+                grads.DMlpUp.Quant = allocate(grad_dtype, "d_mlp_up.q", B, T, 2 * Config.IntermediateSize);
+                grads.DQKV.Quant = allocate(grad_dtype, "d_qkv.q", Config.qkv_channels(), B, T);
             }
             LGrads.push_back(grads);
         } else {
@@ -322,13 +323,16 @@ LLamaRunState allocate_run_state(LLamaConfig config, LLamaOptions options, int B
     Tensor enc_bw_scratch = alloc->allocate(ETensorDType::INT32, "enc_bw_scratch", {B, T, num_c_groups * 5});
     Tensor enc_bw_idx = alloc->allocate(ETensorDType::INT32, "enc_bw_idx", EAllocationType::PINNED, {B, T, num_c_groups});
     Tensor env_bw_info = alloc->allocate(ETensorDType::INT32, "env_bw_info", EAllocationType::PINNED, {B, T, 4 * num_c_groups});
+
     Tensor wgt_tp_buffer;
     Tensor act_tp_buffer;
     Tensor grd_tp_buffer;
-    if(options.MatmulType.value_or(config.DType) == ETensorDType::FP8_E4M3) {
+    if(options.grad_dtype() == ETensorDType::FP8_E4M3 || options.grad_dtype() == ETensorDType::FP8_E5M2) {
         wgt_tp_buffer = alloc->allocate(ETensorDType::FP8_E4M3, "wgt_tp_buffer", {config.HiddenSize, 2 * config.IntermediateSize});
         act_tp_buffer = alloc->allocate(ETensorDType::FP8_E4M3, "act_tp_buffer", {H, B, T});
-        grd_tp_buffer = alloc->allocate(ETensorDType::FP8_E4M3, "grd_tp_buffer", {2*H, B, T});
+        grd_tp_buffer = alloc->allocate(options.grad_dtype(), "grd_tp_buffer", {2*H, B, T});
+    } else {
+        // no TP buffers needed
     }
 
     Tensor norm_buffer = alloc->allocate(ETensorDType::FP32, "norm_buffer", {get_max_num_block_sums(deviceProp)});
@@ -358,7 +362,7 @@ LLamaRunState allocate_run_state(LLamaConfig config, LLamaOptions options, int B
     }
 
     std::optional<Tensor> abs_maxes;
-    if(options.MatmulType.value_or(config.DType) != config.DType) {
+    if(options.matmul_dtype() != config.DType) {
         abs_maxes = alloc->allocate(ETensorDType::FP32, "abs_max", {config.NumLayers, 6l*QWEN2_NUM_LINEAR_OPS});
         float* abs_max_ptr = abs_maxes->get<float>();
         for(int i = 0; i < config.NumLayers; ++i) {

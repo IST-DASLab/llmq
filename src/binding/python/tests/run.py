@@ -28,6 +28,7 @@ class RunConfig:
     model: str = "Qwen/Qwen2.5-0.5B"
     train_file: str = "data/tiny-shakespeare-qwen/train.bin"
     matmul_dtype: Optional[str] = None
+    gradient_dtype: Optional[str] = None
 
     # Communication settings
     memcpy_all_gather: bool = False
@@ -127,6 +128,8 @@ def _create_options(config: RunConfig) -> pyllmq.LLamaOptions:
 
     if config.matmul_dtype:
         options.matmul_type = config.matmul_dtype
+    if config.gradient_dtype:
+        options.gradient_type = config.gradient_dtype
 
     # Apply recomputation dependencies
     if options.recompute_att:
@@ -206,6 +209,8 @@ def parse_args(args: list = None) -> RunConfig:
                         help="Path to HuggingFace model directory or cached model name")
     parser.add_argument("--matmul-dtype", default=None,
                         help="Which dtype to use for matmuls (defaults to model-dtype)")
+    parser.add_argument("--gradient-dtype", default=None,
+                        help="Which dtype to use for activation gradients (defaults to matmul-dtype)")
     parser.add_argument("--model-dtype", default=RunConfig.model_dtype,
                         help="Which dtype to use for model")
     parser.add_argument("--train-file", default=RunConfig.train_file,
@@ -277,6 +282,7 @@ def parse_args(args: list = None) -> RunConfig:
         weight_decay=args.weight_decay,
         learning_rate=args.learning_rate,
         matmul_dtype=args.matmul_dtype,
+        gradient_dtype=args.gradient_dtype,
         opt_m_dtype=args.opt_m_dtype,
         opt_v_dtype=args.opt_v_dtype,
         recompute_swiglu=args.recompute_swiglu,

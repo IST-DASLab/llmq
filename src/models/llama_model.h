@@ -43,10 +43,21 @@ struct LLamaOptions {
 
     bool InitProjectionsToZero = false;
 
+    // ModelType is just a copy of the dtype set in config
+    std::optional<ETensorDType> ModelType = std::nullopt;
     std::optional<ETensorDType> MatmulType = std::nullopt;
+    std::optional<ETensorDType> GradientType = std::nullopt;
     std::optional<ETensorDType> MasterDType = std::nullopt;
     ETensorDType OptMomentumType = ETensorDType::FP32;
     ETensorDType OptVarianceType = ETensorDType::FP32;
+
+    ETensorDType matmul_dtype() const {
+        return MatmulType.value_or(ModelType.value());
+    }
+
+    ETensorDType grad_dtype() const {
+        return GradientType.value_or(matmul_dtype());
+    }
 
     EAllocationType offload_alloc() const {
         return UseWriteCombined ? EAllocationType::WRITE_CMB : EAllocationType::PINNED;

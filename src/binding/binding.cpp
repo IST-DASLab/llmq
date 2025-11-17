@@ -181,7 +181,7 @@ NB_MODULE(_pyllmq, m) {
             bool offload_master, bool offload_quants, bool offload_opt_m, bool offload_opt_v, bool use_zero_copy,
             bool use_write_combined, bool shard_weights, bool persistent_quants, bool shard_gradients, bool use_all_to_all_reduce,
             bool init_projections_to_zero, int lmhead_chunks,
-            const std::string matmul_type, const std::string master_dtype, const std::string momentum_type, const std::string variance_type) {
+            const std::string matmul_type, const std::string gradient_type, const std::string master_dtype, const std::string momentum_type, const std::string variance_type) {
             new (t) LLamaOptions{
                 .RecomputeSwiGLu = recompute_swiglu,
                 .RecomputeRMSNorm = recompute_rmsnorm,
@@ -204,6 +204,7 @@ NB_MODULE(_pyllmq, m) {
                 .UseAllToAllReduce = use_all_to_all_reduce,
                 .InitProjectionsToZero = init_projections_to_zero,
                 .MatmulType = opt_dtype_from_str(matmul_type),
+                .GradientType = opt_dtype_from_str(gradient_type),
                 .MasterDType = opt_dtype_from_str(master_dtype),
                 .OptMomentumType = dtype_from_str(momentum_type),
                 .OptVarianceType = dtype_from_str(variance_type)
@@ -220,7 +221,8 @@ NB_MODULE(_pyllmq, m) {
              nb::arg("shard_weights") = false,    nb::arg("persistent_quants") = false,
              nb::arg("shard_gradients") = false,  nb::arg("use_all_to_all_reduce") = false,
              nb::arg("init_projections_to_zero") = false, nb::arg("lmhead_chunks") = 1,
-             nb::arg("matmul_type") = "",         nb::arg("master_dtype") = "",
+             nb::arg("matmul_type") = "",         nb::arg("gradient_type") = "",
+             nb::arg("master_dtype") = "",
              nb::arg("momentum_type") = "fp32",   nb::arg("variance_type") = "fp32"
                  )
         .def_rw("recompute_swiglu", &LLamaOptions::RecomputeSwiGLu)
@@ -243,10 +245,12 @@ NB_MODULE(_pyllmq, m) {
         .def_rw("shard_gradients", &LLamaOptions::ShardGradients)
         .def_rw("use_all_to_all_reduce", &LLamaOptions::UseAllToAllReduce)
         .def_rw("init_projections_to_zero", &LLamaOptions::InitProjectionsToZero)
-        .def_prop_rw("matmul_type", [](const LLamaOptions* opt){ return cast_opt_dtype(opt->MatmulType); },
-                     [](LLamaOptions* opt, const std::string& dtype_str){ opt->MatmulType = dtype_from_str(dtype_str); })
+        .def_prop_rw("matmul_type", [](const LLamaOptions* opt){ return opt->matmul_dtype(); },
+                     [](LLamaOptions* opt, const std::string& dtype_str){ opt->MatmulType = opt_dtype_from_str(dtype_str); })
+        .def_prop_rw("gradient_type", [](const LLamaOptions* opt){ return opt->grad_dtype(); },
+                     [](LLamaOptions* opt, const std::string& dtype_str){ opt->GradientType = opt_dtype_from_str(dtype_str); })
         .def_prop_rw("master_dtype", [](const LLamaOptions* opt){ return cast_opt_dtype(opt->MasterDType); },
-                     [](LLamaOptions* opt, const std::string& dtype_str){ opt->MasterDType = dtype_from_str(dtype_str); })
+                     [](LLamaOptions* opt, const std::string& dtype_str){ opt->MasterDType = opt_dtype_from_str(dtype_str); })
         .def_prop_rw("momentum_type", [](const LLamaOptions* opt){ return dtype_to_str(opt->OptMomentumType); },
                      [](LLamaOptions* opt, const std::string& dtype_str){ opt->OptMomentumType = dtype_from_str(dtype_str); })
         .def_prop_rw("variance_type", [](const LLamaOptions* opt){ return dtype_to_str(opt->OptVarianceType); },
@@ -271,6 +275,7 @@ NB_MODULE(_pyllmq, m) {
                 model_path = hf_path + "/model.safetensors.index.json";
             }
             LLamaConfig config = load_llama_config(config_path.c_str(), dtype_from_str(dtype));
+            options.ModelType = config.DType;
             auto trainer = new MultiGPUPyTrainer(ngpu, config, options, batch_size, seq_len, grad_accum, memcpy_all_gather, memcpy_send_recv);
             trainer->import_weights(model_path);
             return trainer;
@@ -452,7 +457,7 @@ NB_MODULE(_pyllmq, m) {
              auto& options = trainer->options();
                 auto ops = get_transformer_ops(
                     config.NumLayers * ((long)config.HiddenSize * (config.IntermediateSize * 3 + config.HiddenSize * 1 + config.qkv_channels())),
-                    options.MatmulType.value_or(config.DType), (long)config.VocabSize * config.HiddenSize, config.DType,
+                    options.matmul_dtype(), (long)config.VocabSize * config.HiddenSize, config.DType,
                     config.NumQueryHeads * config.head_size(), config.NumLayers, trainer->seq_length());
                  logger->set_expected_time_per_token(estimate_speed_of_light(get_gpu_name().c_str(), ops) / trainer->world_size());
              })
