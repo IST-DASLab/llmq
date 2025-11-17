@@ -127,7 +127,24 @@ void LLamaModel::forward(Tensor inputs, NCCLCommunicator& comm, int micro_step) 
         }
 
         auto& wgt = Parameters->get_block(l, main_stream);
-        trace_or_execute_cuda_graph([&](){_forward_block(l, wgt);},
+        Tensor residual = l == 0 ? rs->Encoded : rs->get_res_ffn(l-1, main_stream);
+
+        // fuse RMSNorm with residual, except in the first layer when no residual exists yet.
+        // mark_res_ffn_ready records an event, and we need to wait for that event outside the
+        // graph, so this block has to be separate.
+        if (l == 0) {
+            rmsnorm_forward(rs->Acts[0].LN1.Value, rs->Acts[0].LN1_Rstd, residual, wgt.LN1_w,
+                            quant_abs_max_ptr(rs->Acts[0].LN1), Config.RmsNormEps, B, T, C, main_stream);
+        } else {
+            auto& prev = rs->Acts[l-1];
+            fused_residual_rmsnorm_forward(residual, rs->Acts[l].LN1.Value, rs->Acts[l].LN1_Rstd,
+                                           prev.ResidualAtt, prev.MlpDown, wgt.LN1_w,
+                                           quant_abs_max_ptr(rs->Acts[l].LN1),
+                                           Config.RmsNormEps, B * T, C, main_stream);
+            rs->mark_res_ffn_ready(l-1, main_stream);
+        }
+
+        trace_or_execute_cuda_graph([&](){_forward_block(l, wgt, residual);},
             main_stream, rs->ForwardBlockGraph, rs->Options.UseCudaGraphs);
         Parameters->release_block(l, main_stream);
         if(l > 0) {
@@ -141,6 +158,7 @@ void LLamaModel::forward(Tensor inputs, NCCLCommunicator& comm, int micro_step) 
         fused_residual_rmsnorm_forward(rs->get_res_ffn(Config.NumLayers - 1, main_stream), rs->LNF, rs->LNF_Rstd, acts.ResidualAtt,
                                        acts.MlpDown, Parameters->get_lnf(main_stream), nullptr, Config.RmsNormEps, B * T, C, main_stream);
         Parameters->release_lnf(main_stream);
+        rs->mark_res_ffn_ready(Config.NumLayers-1, main_stream);
         rs->put_res_ffn(Config.NumLayers-1, rs->SideStream);
     }
 
@@ -149,7 +167,7 @@ void LLamaModel::forward(Tensor inputs, NCCLCommunicator& comm, int micro_step) 
     CUDA_CHECK(cudaEventRecord(rs->ForwardDone, main_stream));
 }
 
-void LLamaModel::_forward_block(int layer, sLLamaBlockWeights<Tensor>& weights)
+void LLamaModel::_forward_block(int layer, sLLamaBlockWeights<Tensor>& weights, Tensor& residual)
 {
     auto& rs = RunState;
     int l = layer;
@@ -162,24 +180,7 @@ void LLamaModel::_forward_block(int layer, sLLamaBlockWeights<Tensor>& weights)
     long Hs = Config.head_size();
     cudaStream_t main_stream = rs->MainStream;
 
-    Tensor residual = l == 0 ? rs->Encoded : rs->get_res_ffn(l-1, main_stream);
-
     auto& acts = rs->Acts[l];
-
-    // fuse RMSNorm with residual, except in the first layer when no residual exists yet.
-    // note that there is a unified kernel for fused/unfused rmsnorm, so this condition
-    // is in fact safe to use during graph capture.
-    if (l == 0) {
-        rmsnorm_forward(rs->Acts[0].LN1.Value, rs->Acts[0].LN1_Rstd, rs->Encoded, weights.LN1_w,
-                        quant_abs_max_ptr(rs->Acts[0].LN1), Config.RmsNormEps, B, T, C, main_stream);
-    } else {
-        auto& prev = rs->Acts[l-1];
-        fused_residual_rmsnorm_forward(rs->get_res_ffn(l-1, main_stream), acts.LN1.Value, acts.LN1_Rstd,
-                                       prev.ResidualAtt, prev.MlpDown, weights.LN1_w,
-                                       quant_abs_max_ptr(acts.LN1),
-                                       Config.RmsNormEps, B * T, C, main_stream);
-        rs->release_res_ffn(l-1, main_stream);
-    }
 
     // 1) projection to QKV vectors (note k,v may be fewer heads than q)
     forward_qmm(acts.QKV, acts.LN1, weights.Attn_QKV_w, weights.Attn_QKV_b,
@@ -441,10 +442,9 @@ void LLamaModel::backward(Tensor inputs, Tensor targets, NCCLCommunicator& comm,
         }
 
         auto& weights = Parameters->get_block(l, main_stream);
-
-        // last layer changes topology, so for now just don't use graph
+        Tensor residual = l == 0 ? rs->Encoded : rs->get_res_ffn(l - 1, main_stream);
         trace_or_execute_cuda_graph([&]() {
-            _recompute_block(l, weights);
+            _recompute_block(l, weights, residual);
             _backward_block(l, accumulate, weights, dw);
             }, main_stream, rs->BackwardBlockGraph, rs->Options.UseCudaGraphs && l != 0);
         if(l > 0) {
@@ -467,7 +467,7 @@ void LLamaModel::backward(Tensor inputs, Tensor targets, NCCLCommunicator& comm,
     CUDA_CHECK(cudaEventSynchronize(rs->TransferDone));
 }
 
-void LLamaModel::_recompute_block(int layer, sLLamaBlockWeights<Tensor>& weights) {
+void LLamaModel::_recompute_block(int layer, sLLamaBlockWeights<Tensor>& weights, Tensor& residual) {
     NvtxRange classifier_and_loss_range("recompute");
     auto& rs = RunState;
     cudaStream_t main_stream = rs->MainStream;
@@ -492,7 +492,6 @@ void LLamaModel::_recompute_block(int layer, sLLamaBlockWeights<Tensor>& weights
 
     // Attention block
     if(recompute_ln1) {
-        Tensor residual = layer == 0 ? rs->Encoded : rs->get_res_ffn(layer - 1, main_stream);
         rmsnorm_forward(acts.LN1.Value, acts.LN1_Rstd, residual, weights.LN1_w, nullptr, Config.RmsNormEps, B, T, C, main_stream);
     }
 

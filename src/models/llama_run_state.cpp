@@ -207,6 +207,15 @@ void LLamaRunState::fetch_res_ffn(int layer_idx, cudaStream_t fetch_stream) {
     CUDA_CHECK(cudaEventRecord(status.Event, fetch_stream));
 }
 
+void LLamaRunState::mark_res_ffn_ready(int layer_idx, cudaStream_t main_stream) {
+    if(!Options.OffloadResidual) {
+        return;
+    }
+    auto& status = OffloadedResidualState.at(layer_idx % 2);
+    status.Layer = layer_idx;
+    CUDA_CHECK(cudaEventRecord(ResidualsAreReady, main_stream));
+}
+
 void LLamaRunState::put_res_ffn(int layer_idx, cudaStream_t put_stream) {
     if(!Options.OffloadResidual) {
         return;
@@ -215,7 +224,11 @@ void LLamaRunState::put_res_ffn(int layer_idx, cudaStream_t put_stream) {
     int l2 = layer_idx % 2;
     auto& status = OffloadedResidualState.at(l2);
     status.Ready = false;
-    CUDA_CHECK(cudaStreamWaitEvent(put_stream, status.Event, 0));
+    if(status.Layer != layer_idx) {
+        throw std::logic_error("Mismatched layer index in put_res_ffn");
+    }
+
+    CUDA_CHECK(cudaStreamWaitEvent(put_stream, ResidualsAreReady, 0));
     CUDA_CHECK(cudaMemcpyAsync(OffloadedResiduals.at(layer_idx).Data, DeviceResiduals.at(l2).Data,
                                DeviceResiduals.at(l2).bytes(), cudaMemcpyDeviceToHost, put_stream));
     CUDA_CHECK(cudaEventRecord(status.Event, put_stream));
@@ -287,6 +300,7 @@ LLamaRunState allocate_run_state(LLamaConfig config, LLamaOptions options, int B
     std::vector<Tensor> device_residuals;
     std::vector<Tensor> offloaded_residuals;
     std::vector<LLamaRunState::sOffloadedResidualState> offloaded_residual_states;
+    cudaEvent_t residual_ready_event = create_named_event("residual_ready");
     if(options.OffloadResidual) {
         device_residuals.reserve(2);
         offloaded_residuals.reserve(config.NumLayers);
@@ -379,7 +393,7 @@ LLamaRunState allocate_run_state(LLamaConfig config, LLamaOptions options, int B
                          norm_buffer, host_buffer.get<float>(), host_buffer.get<float>() + 1,
                          options, std::move(alloc), deviceProp, main_stream, side_stream, side_stream_event,
                          forward_done_event, backward_done_event, transfer_done_event, norm_done_event, lmhead_done,
-                         std::move(optimizer_events), optimizer_done_event,
+                         std::move(optimizer_events), optimizer_done_event, residual_ready_event,
                          nullptr, nullptr, nullptr, cudnn_handle, cublas_handle};
 }
 
