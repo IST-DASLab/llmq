@@ -18,6 +18,7 @@ class TrainingConfig:
     init_proj_to_zero: bool = False
     model_dtype: str = "bfloat16"
     matmul_dtype: Optional[str] = None
+    gradient_dtype: Optional[str] = None
 
     # Batch configuration
     batch_size: int = 1

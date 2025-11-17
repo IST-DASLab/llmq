@@ -308,7 +308,12 @@ void backward_qmm(Tensor& dinp, Tensor& dweight, std::optional<Tensor> dbias,
         }
         transpose(rs.WeightTranspose, weight, OC, C, stream);
 
-        float scale = weight.DType == ETensorDType::FP8_E4M3 ? 448.f : std::numeric_limits<std::int8_t>::max();
+        float scale = 1.f;
+        switch(weight.DType) {
+            case ETensorDType::FP8_E4M3:
+            case ETensorDType::FP8_E5M2: scale = 448.f; break;
+            case ETensorDType::INT8: scale = 128.f; break;
+        }
         matmul_out_scale(dinp_scale, dout_scale, wgt_scale, 1.f / scale / scale, stream);
         matmul_out_scale(dwgt_scale, dout_scale, act_scale, 1.f / scale / scale, stream);
 
