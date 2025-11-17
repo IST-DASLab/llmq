@@ -121,7 +121,7 @@ jobs:
           - name: "Determinism test"
             args: ""
           - name: "Full Block"
-            args: "--recompute-block --offload-residual"
+            args: "--recompute-block --offload-residual --use-cuda-graphs"
           - name: "Blockwise"
             args: "--recompute-att --recompute-ffn"
           - name: "Non-linearities"

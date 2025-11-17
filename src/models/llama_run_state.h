@@ -80,6 +80,7 @@ struct LLamaRunState {
     void fetch_res_ffn(int layer_idx, cudaStream_t fetch_stream);
     void put_res_ffn(int layer_idx, cudaStream_t put_stream);
     Tensor& get_res_ffn(int layer_idx, cudaStream_t main_stream);
+    void mark_res_ffn_ready(int layer_idx, cudaStream_t main_stream);
     void release_res_ffn(int layer_idx, cudaStream_t main_stream);
 
     // Gradients
@@ -124,6 +125,7 @@ struct LLamaRunState {
     cudaEvent_t OptEmbeddingsDone;      //!< recorded after the optimizer has done an update to the LMHead
     std::vector<cudaEvent_t> LayerUpdateDone;   //!< Recorded after the optimizer has done an update to the specified layer.
     cudaEvent_t OptimizerDone;      //!< recorded after the optimizer completes
+    cudaEvent_t ResidualsAreReady;  //!< recorded after the residuals have been calculated in forward, indicating that they may be offloaded
 
     cudaGraphExec_t GlobalNormGraph;
     cudaGraphExec_t ForwardBlockGraph;
