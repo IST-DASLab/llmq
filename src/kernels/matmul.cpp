@@ -63,8 +63,8 @@ void setup_cublas() {
 
 // Wrapper around cublasLtMatmul that is meant to support everything we need in llm.c
 // https://docs.nvidia.com/cuda/cublas/#cublasltmatmul
-template<class floatO, class floatX, class floatB>
-void matmul_cublaslt(floatO* d, const floatX* a, const floatX* b, const floatB* bias,
+template<class FloatC, class FloatA, class FloatB, class FloatBias>
+void matmul_cublaslt(FloatC* d, const FloatA* a, const FloatB* b, const FloatBias* bias,
                      std::byte* workspace, std::size_t workspace_size,
                      int m, int n, int k, cudaStream_t stream, cublasLtHandle_t handle,
                      const float* scale, EMMTranspose mode, bool accumulate)
@@ -78,7 +78,7 @@ void matmul_cublaslt(floatO* d, const floatX* a, const floatX* b, const floatB* 
 
     // create the operation descriptor
     cublasLtMatmulDesc_t operationDesc;
-    if(std::is_same_v<floatX, std::int8_t>) {
+    if(std::is_same_v<FloatA, std::int8_t>) {
         CUBLAS_CHECK(cublasLtMatmulDescCreate(&operationDesc, CUBLAS_COMPUTE_32F, CUDA_R_32F));
     } else {
         CUBLAS_CHECK(cublasLtMatmulDescCreate(&operationDesc, cublas_compute, CUDA_R_32F));
@@ -102,18 +102,18 @@ void matmul_cublaslt(floatO* d, const floatX* a, const floatX* b, const floatB* 
     cublasLtMatrixLayout_t DLayout;
     cublasLtMatrixLayout_t CLayout;
     if (transA) {
-        CUBLAS_CHECK(cublasLtMatrixLayoutCreate(&ALayout, to_cuda_lib_type_enum<floatX>, k, m, k));
+        CUBLAS_CHECK(cublasLtMatrixLayoutCreate(&ALayout, to_cuda_lib_type_enum<FloatA>, k, m, k));
     } else {
-        CUBLAS_CHECK(cublasLtMatrixLayoutCreate(&ALayout, to_cuda_lib_type_enum<floatX>, m, k, m));
+        CUBLAS_CHECK(cublasLtMatrixLayoutCreate(&ALayout, to_cuda_lib_type_enum<FloatA>, m, k, m));
     }
     if (transB) {
-        CUBLAS_CHECK(cublasLtMatrixLayoutCreate(&BLayout, to_cuda_lib_type_enum<floatX>, n, k, n));
+        CUBLAS_CHECK(cublasLtMatrixLayoutCreate(&BLayout, to_cuda_lib_type_enum<FloatB>, n, k, n));
     } else {
-        CUBLAS_CHECK(cublasLtMatrixLayoutCreate(&BLayout, to_cuda_lib_type_enum<floatX>, k, n, k));
+        CUBLAS_CHECK(cublasLtMatrixLayoutCreate(&BLayout, to_cuda_lib_type_enum<FloatB>, k, n, k));
     }
     // cuBLASLt requires C in FP8 mode to be BF16 or FP32... (sigh)
-    CUBLAS_CHECK(cublasLtMatrixLayoutCreate(&CLayout, to_cuda_lib_type_enum<floatO>, m, n, m));
-    CUBLAS_CHECK(cublasLtMatrixLayoutCreate(&DLayout, to_cuda_lib_type_enum<floatO>, m, n, m));
+    CUBLAS_CHECK(cublasLtMatrixLayoutCreate(&CLayout, to_cuda_lib_type_enum<FloatC>, m, n, m));
+    CUBLAS_CHECK(cublasLtMatrixLayoutCreate(&DLayout, to_cuda_lib_type_enum<FloatC>, m, n, m));
 
     // create a preference handle with specified max workspace
     CUBLAS_CHECK(cublasLtMatmulPreferenceCreate(&preference));
@@ -129,7 +129,7 @@ void matmul_cublaslt(floatO* d, const floatX* a, const floatX* b, const floatB* 
 
     if (has_bias) {
         // cuBLASLt requires bias in FP8 mode to be BF16... (sigh)
-        cublasDataType_t bias_data_type = to_cuda_lib_type_enum<floatB>; // force BF16 bias for FP8 mode
+        cublasDataType_t bias_data_type = to_cuda_lib_type_enum<FloatBias>; // force BF16 bias for FP8 mode
         CUBLAS_CHECK(cublasLtMatmulDescSetAttribute(operationDesc, CUBLASLT_MATMUL_DESC_BIAS_DATA_TYPE, &bias_data_type, sizeof(bias_data_type)));
         CUBLAS_CHECK(cublasLtMatmulDescSetAttribute(operationDesc, CUBLASLT_MATMUL_DESC_BIAS_POINTER, &bias, sizeof(bias)));
     }
@@ -212,6 +212,12 @@ void matmul(nv_bfloat16* c, const nv_bfloat16* a, const nv_bfloat16* b, const nv
 }
 
 void matmul(nv_bfloat16* c, const __nv_fp8_e4m3* a, const __nv_fp8_e4m3* b, const nv_bfloat16* bias, const float* scale,
+            cublasLtHandle_t handle, std::byte* workspace, std::size_t workspace_size,
+            int M, int N, int K, EMMTranspose mode, bool accumulate, cudaStream_t stream) {
+    matmul_cublaslt(c, a, b, bias, workspace, workspace_size, M, N, K, stream, handle, scale, mode, accumulate);
+}
+
+void matmul(nv_bfloat16* c, const __nv_fp8_e4m3* a, const __nv_fp8_e5m2* b, const nv_bfloat16* bias, const float* scale,
             cublasLtHandle_t handle, std::byte* workspace, std::size_t workspace_size,
             int M, int N, int K, EMMTranspose mode, bool accumulate, cudaStream_t stream) {
     matmul_cublaslt(c, a, b, bias, workspace, workspace_size, M, N, K, stream, handle, scale, mode, accumulate);

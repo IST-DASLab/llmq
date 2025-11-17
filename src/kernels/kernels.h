@@ -73,11 +73,19 @@ void matmul(float* c, const __nv_fp8_e4m3* a, const __nv_fp8_e4m3* b, const nv_b
             cublasLtHandle_t handle, std::byte* workspace, std::size_t workspace_size,
             int M, int N, int K, EMMTranspose mode, bool accumulate, cudaStream_t stream);
 
+void matmul(float* c, const __nv_fp8_e4m3* a, const __nv_fp8_e5m2* b, const nv_bfloat16* bias, const float* scale,
+            cublasLtHandle_t handle, std::byte* workspace, std::size_t workspace_size,
+            int M, int N, int K, EMMTranspose mode, bool accumulate, cudaStream_t stream);
+
 void matmul(nv_bfloat16* c, const nv_bfloat16* a, const nv_bfloat16* b, const nv_bfloat16* bias, const float* scale,
             cublasLtHandle_t handle, std::byte* workspace, std::size_t workspace_size,
             int M, int N, int K, EMMTranspose mode, bool accumulate, cudaStream_t stream);
 
 void matmul(nv_bfloat16* c, const __nv_fp8_e4m3* a, const __nv_fp8_e4m3* b, const nv_bfloat16* bias, const float* scale,
+            cublasLtHandle_t handle, std::byte* workspace, std::size_t workspace_size,
+            int M, int N, int K, EMMTranspose mode, bool accumulate, cudaStream_t stream);
+
+void matmul(nv_bfloat16* c, const __nv_fp8_e4m3* a, const __nv_fp8_e5m2* b, const nv_bfloat16* bias, const float* scale,
             cublasLtHandle_t handle, std::byte* workspace, std::size_t workspace_size,
             int M, int N, int K, EMMTranspose mode, bool accumulate, cudaStream_t stream);
 
@@ -91,6 +99,7 @@ int get_bias_backward_scratch_size(ETensorDType dtype, int OC, const cudaDeviceP
 void backward_bias(float* dbias, const float* dout, const float* dout_abs_max, float* dbias_buffer, int B, int T, int OC, const cudaDeviceProp& dp, cudaStream_t stream);
 void backward_bias(nv_bfloat16* dbias, const nv_bfloat16* dout, const float* dout_abs_max, float* dbias_buffer, int B, int T, int OC, const cudaDeviceProp& dp, cudaStream_t stream);
 void backward_bias(nv_bfloat16* dbias, const __nv_fp8_e4m3* dout, const float* dout_abs_max, float* dbias_buffer, int B, int T, int OC, const cudaDeviceProp& dp, cudaStream_t stream);
+void backward_bias(nv_bfloat16* dbias, const __nv_fp8_e5m2* dout, const float* dout_abs_max, float* dbias_buffer, int B, int T, int OC, const cudaDeviceProp& dp, cudaStream_t stream);
 void backward_bias(Tensor& dbias, const Tensor& dout, const float* dout_abs_max, Tensor& dbias_buffer, int B, int T, int OC, const cudaDeviceProp& dp, cudaStream_t stream);
 
 
@@ -193,8 +202,10 @@ void abs_max(float* scale, const Tensor& in, long N, const cudaDeviceProp& dp, c
 void quantize_with_abs_max(nv_bfloat16* out, const float* in, const float* abs_max, long N, const cudaDeviceProp& dp, cudaStream_t stream);
 void quantize_with_abs_max(std::int8_t* out, const float* in, const float* abs_max, long N, const cudaDeviceProp& dp, cudaStream_t stream);
 void quantize_with_abs_max(__nv_fp8_e4m3* out, const float* in, const float* abs_max, long N, const cudaDeviceProp& dp, cudaStream_t stream);
+void quantize_with_abs_max(__nv_fp8_e5m2* out, const float* in, const float* abs_max, long N, const cudaDeviceProp& dp, cudaStream_t stream);
 void quantize_with_abs_max(std::int8_t* out, const nv_bfloat16* in, const float* abs_max, long N, const cudaDeviceProp& dp, cudaStream_t stream);
 void quantize_with_abs_max(__nv_fp8_e4m3* out, const nv_bfloat16* in, const float* abs_max, long N, const cudaDeviceProp& dp, cudaStream_t stream);
+void quantize_with_abs_max(__nv_fp8_e5m2* out, const nv_bfloat16* in, const float* abs_max, long N, const cudaDeviceProp& dp, cudaStream_t stream);
 void quantize_with_abs_max(Tensor& out, const Tensor& in, const float* abs_max, long N, const cudaDeviceProp& dp, cudaStream_t stream);
 
 void quantize_and_transpose_with_abs_max(nv_bfloat16* out, const float* in, const float* abs_max, int rows, int cols, const cudaDeviceProp& dp, cudaStream_t stream);
@@ -208,6 +219,7 @@ void matmul_out_scale(float* out, const float* a, const float* b, float dtype_sc
 
 void transpose(float* dst, const float* src, int rows, int cols, cudaStream_t stream);
 void transpose(__nv_fp8_e4m3* dst, const __nv_fp8_e4m3* src, int rows, int cols, cudaStream_t stream);
+void transpose(__nv_fp8_e5m2* dst, const __nv_fp8_e5m2* src, int rows, int cols, cudaStream_t stream);
 void transpose(nv_bfloat16* dst, const nv_bfloat16* src, int rows, int cols, cudaStream_t stream);
 void transpose(Tensor& dst, const Tensor& src, int rows, int cols, cudaStream_t stream);
 

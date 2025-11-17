@@ -38,6 +38,9 @@ void transpose(float* dst, const float* src, int rows, int cols, cudaStream_t st
 void transpose(__nv_fp8_e4m3* dst, const __nv_fp8_e4m3* src, int rows, int cols, cudaStream_t stream) {
     transpose_imp(dst, src, rows, cols, stream);
 }
+void transpose(__nv_fp8_e5m2* dst, const __nv_fp8_e5m2* src, int rows, int cols, cudaStream_t stream) {
+    transpose_imp(dst, src, rows, cols, stream);
+}
 void transpose(nv_bfloat16* dst, const nv_bfloat16* src, int rows, int cols, cudaStream_t stream) {
     transpose_imp(dst, src, rows, cols, stream);
 }

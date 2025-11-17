@@ -71,17 +71,18 @@ __global__ void quantize_with_abs_max_kernel(std::int8_t* out, const floatX* in,
         quants.store(out + i);
     }
 }
-template<class floatX>
-__global__ void quantize_with_abs_max_kernel(__nv_fp8_e4m3* out, const floatX* in, const float* abs_max, long N) {
-    using vec_t = GenericVector<floatX, 16 / sizeof(floatX)>;
-    using f8v_t = GenericVector<__nv_fp8_e4m3, 16 / sizeof(floatX)>;
+template<typename FloatOut, typename FloatIn,
+    typename _ = std::enable_if_t<std::is_same_v<FloatOut, __nv_fp8_e4m3> || std::is_same_v<FloatOut, __nv_fp8_e5m2>, void>>
+__global__ void quantize_with_abs_max_kernel(FloatOut* out, const FloatIn* in, const float* abs_max, long N) {
+    using vec_t = GenericVector<FloatIn, 16 / sizeof(FloatIn)>;
+    using f8v_t = GenericVector<FloatOut, 16 / sizeof(FloatIn)>;
     float scale = 448.f / *abs_max;
     for (int i = vec_t::size * (blockIdx.x * blockDim.x + threadIdx.x); i < N; i += blockDim.x * gridDim.x * vec_t::size) {
         vec_t values = vec_t::load(in + i);
         f8v_t quants;
         for(int j = 0; j < vec_t::size; ++j) {
-            __nv_fp8_e4m3 result;
-            result.__x = __nv_cvt_float_to_fp8(scale * (float)values[j], __nv_saturation_t::__NV_SATFINITE, __nv_fp8_interpretation_t::__NV_E4M3);
+            FloatOut result;
+            result.__x = __nv_cvt_float_to_fp8(scale * (float)values[j], __nv_saturation_t::__NV_SATFINITE, fp8_interpretation_v<FloatOut>);
             quants[j] = result;
         }
         quants.store(out + i);
@@ -113,11 +114,17 @@ void quantize_with_abs_max(std::int8_t* out, const float* in, const float* abs_m
 void quantize_with_abs_max(__nv_fp8_e4m3* out, const float* in, const float* abs_max, long N, const cudaDeviceProp& dp, cudaStream_t stream) {
     quantize_with_abs_max_launcher(out, in, abs_max, N, dp, stream);
 }
+void quantize_with_abs_max(__nv_fp8_e5m2* out, const float* in, const float* abs_max, long N, const cudaDeviceProp& dp, cudaStream_t stream) {
+    quantize_with_abs_max_launcher(out, in, abs_max, N, dp, stream);
+}
 
 void quantize_with_abs_max(std::int8_t* out, const nv_bfloat16* in, const float* abs_max, long N, const cudaDeviceProp& dp, cudaStream_t stream) {
     quantize_with_abs_max_launcher(out, in, abs_max, N, dp, stream);
 }
 void quantize_with_abs_max(__nv_fp8_e4m3* out, const nv_bfloat16* in, const float* abs_max, long N, const cudaDeviceProp& dp, cudaStream_t stream) {
+    quantize_with_abs_max_launcher(out, in, abs_max, N, dp, stream);
+}
+void quantize_with_abs_max(__nv_fp8_e5m2* out, const nv_bfloat16* in, const float* abs_max, long N, const cudaDeviceProp& dp, cudaStream_t stream) {
     quantize_with_abs_max_launcher(out, in, abs_max, N, dp, stream);
 }
 
