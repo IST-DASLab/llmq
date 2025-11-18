@@ -22,35 +22,42 @@ struct QuantizableTensor {
     std::optional<Tensor> Quant = std::nullopt;
 };
 
+
+struct sLLamaLayerActivations {
+    using QTensor = QuantizableTensor;
+    Tensor LN1_Rstd;    // (B, T)
+    QTensor LN1;        // (B, T, C)
+    Tensor LN2_Rstd;    // (B, T)
+    QTensor LN2;        // (B, T, C)
+    Tensor QKV;         // (B, T, QKV_C)
+    Tensor LSE;         // (B, T)
+    Tensor Rope;        // (B, T, C) -- only for debug
+    QTensor Att;        // (B, T, C)
+    Tensor AttO;        // (B, T, C)
+    Tensor ResidualAtt; // (B, T, C)
+    Tensor MlpUp;       // (B, T, 2*Ch)
+    Tensor MlpDown;     // (B, T, C)
+    QTensor SwiGLu;     // (B, T, Ch)
+};
+
+struct sLLamaLayerGradients {
+    using QTensor = QuantizableTensor;
+
+    QTensor DResFFN;                   // (B, T, C)
+    Tensor DSwiGLU;                    // (B, T, Ch)
+    QTensor DMlpUp;                    // (B, T, 2*Ch)
+    Tensor DLN2;                       // (B, T, C)
+    QTensor DResAtt;                   // (B, T, C)
+    Tensor DAttY;                      // (B, T, C)
+    Tensor DRope;                      // (B, T, QKV_C)
+    QTensor DQKV;                      // (B, T, QKV_C)
+    Tensor DLN1;                       // (B, T, C)
+};
+
 struct LLamaRunState {
     using QTensor = QuantizableTensor;
-    struct LayerActivations {
-        Tensor LN1_Rstd;    // (B, T)
-        QTensor LN1;        // (B, T, C)
-        Tensor LN2_Rstd;    // (B, T)
-        QTensor LN2;        // (B, T, C)
-        Tensor QKV;         // (B, T, QKV_C)
-        Tensor LSE;         // (B, T)
-        Tensor Rope;        // (B, T, C) -- only for debug
-        QTensor Att;        // (B, T, C)
-        Tensor AttO;        // (B, T, C)
-        Tensor ResidualAtt; // (B, T, C)
-        Tensor MlpUp;       // (B, T, 2*Ch)
-        Tensor MlpDown;     // (B, T, C)
-        QTensor SwiGLu;     // (B, T, Ch)
-    };
-
-    struct LayerGradients {
-        QTensor DResFFN;                   // (B, T, C)
-        Tensor DSwiGLU;                    // (B, T, Ch)
-        QTensor DMlpUp;                    // (B, T, 2*Ch)
-        Tensor DLN2;                       // (B, T, C)
-        QTensor DResAtt;                   // (B, T, C)
-        Tensor DAttY;                      // (B, T, C)
-        Tensor DRope;                      // (B, T, QKV_C)
-        QTensor DQKV;                      // (B, T, QKV_C)
-        Tensor DLN1;                       // (B, T, C)
-    };
+    using LayerActivations = ::sLLamaLayerActivations;
+    using LayerGradients = ::sLLamaLayerGradients;
 
     Tensor Inputs;          // (B, T) Int32
     Tensor Targets;         // (B, T) Int32

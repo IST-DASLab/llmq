@@ -144,7 +144,7 @@ void LLamaModel::forward(Tensor inputs, NCCLCommunicator& comm, int micro_step) 
             rs->mark_res_ffn_ready(l-1, main_stream);
         }
 
-        trace_or_execute_cuda_graph([&](){_forward_block(l, wgt, residual);},
+        trace_or_execute_cuda_graph([&](){_forward_block(wgt, rs->Acts[l], residual);},
             main_stream, rs->ForwardBlockGraph, rs->Options.UseCudaGraphs);
         Parameters->release_block(l, main_stream);
         if(l > 0) {
@@ -167,10 +167,9 @@ void LLamaModel::forward(Tensor inputs, NCCLCommunicator& comm, int micro_step) 
     CUDA_CHECK(cudaEventRecord(rs->ForwardDone, main_stream));
 }
 
-void LLamaModel::_forward_block(int layer, sLLamaBlockWeights<Tensor>& weights, Tensor& residual)
+void LLamaModel::_forward_block(sLLamaBlockWeights<Tensor>& weights, sLLamaLayerActivations& acts, Tensor& residual)
 {
     auto& rs = RunState;
-    int l = layer;
     long B = rs->Inputs.Sizes[0];
     long T = rs->Inputs.Sizes[1];
     long C = Config.HiddenSize;
@@ -179,8 +178,6 @@ void LLamaModel::_forward_block(int layer, sLLamaBlockWeights<Tensor>& weights, 
     long Hkv = Config.NumKeyValHeads;
     long Hs = Config.head_size();
     cudaStream_t main_stream = rs->MainStream;
-
-    auto& acts = rs->Acts[l];
 
     // 1) projection to QKV vectors (note k,v may be fewer heads than q)
     forward_qmm(acts.QKV, acts.LN1, weights.Attn_QKV_w, weights.Attn_QKV_b,
@@ -328,7 +325,6 @@ void backward_qmm(Tensor& dinp, Tensor& dweight, std::optional<Tensor> dbias,
 void LLamaModel::backward(Tensor inputs, Tensor targets, NCCLCommunicator& comm, int grad_accum_steps, int micro_step) {
     auto& rs = RunState;
     cudaStream_t main_stream = rs->MainStream;
-    auto& d_acts = rs->DActs;
 
     NVTX_RANGE_FN();
 
@@ -357,8 +353,7 @@ void LLamaModel::backward(Tensor inputs, Tensor targets, NCCLCommunicator& comm,
 
     // reset residual stream gradients (put here to work with gradient accumulation)
     fill_zero(rs->DLNF, main_stream);
-    fill_zero(d_acts[L-1].DResFFN.Value, main_stream);
-
+    fill_zero(rs->DActs[L-1].DResFFN.Value, main_stream);
     _backward_lmhead(B, T, micro_step, grad_accum_steps, comm);
 
     // ok, now reduce the loss across all ranks
@@ -370,8 +365,9 @@ void LLamaModel::backward(Tensor inputs, Tensor targets, NCCLCommunicator& comm,
     auto& d_lnf_w = Grads->get_lnf_w_full(main_stream, comm, accumulate);
     Parameters->gather_lnf(comm);
     // backward the final layernorm
-    rmsnorm_backward(d_acts[L-1].DResFFN.Value, d_lnf_w, rs->RMSNormScratch, d_acts[L - 1].DResFFN.Value, rs->DLNF,
-                     rs->get_res_ffn(L-1, main_stream), Parameters->get_lnf(main_stream), rs->LNF_Rstd, quant_abs_max_ptr(d_acts[L-1].DResFFN), B, T, C, rs->DeviceProp, main_stream);
+    rmsnorm_backward(rs->DActs[L-1].DResFFN.Value, d_lnf_w, rs->RMSNormScratch, rs->DActs[L - 1].DResFFN.Value, rs->DLNF,
+                     rs->get_res_ffn(L-1, main_stream), Parameters->get_lnf(main_stream), rs->LNF_Rstd,
+                     quant_abs_max_ptr(rs->DActs[L-1].DResFFN), B, T, C, rs->DeviceProp, main_stream);
     rs->release_res_ffn(L-1, main_stream);
 
     Parameters->release_lnf(main_stream);
@@ -392,13 +388,22 @@ void LLamaModel::backward(Tensor inputs, Tensor targets, NCCLCommunicator& comm,
         }
 
         auto& weights = Parameters->get_block(l, main_stream);
+        auto& d_acts = rs->DActs.at(l);
         Tensor residual = l == 0 ? rs->Encoded : rs->get_res_ffn(l - 1, main_stream);
         trace_or_execute_cuda_graph([&]() {
-            _recompute_block(l, weights, residual);
-            _backward_block(l, accumulate, weights, dw);
-            }, main_stream, rs->BackwardBlockGraph, rs->Options.UseCudaGraphs && l != 0);
+            _recompute_block(weights, rs->Acts[l], residual);
+            _backward_block(accumulate, weights, dw, rs->Acts[l], rs->DActs[l]);
+            }, main_stream, rs->BackwardBlockGraph, rs->Options.UseCudaGraphs);
+
         if(l > 0) {
+            auto& prev_dacts = rs->DActs.at(l - 1);
+            rmsnorm_backward(prev_dacts.DResFFN.Value, dw.LN1_w, rs->RMSNormScratch, prev_dacts.DResAtt.Value, d_acts.DLN1,
+                             rs->get_res_ffn(l-1, main_stream), weights.LN1_w, rs->Acts[l].LN1_Rstd, quant_abs_max_ptr(prev_dacts.DResFFN),
+                             B, T, C, rs->DeviceProp, main_stream);
             rs->release_res_ffn(l - 1, main_stream);
+        } else {
+            rmsnorm_backward(rs->DEmb, dw.LN1_w, rs->RMSNormScratch, d_acts.DResAtt.Value, d_acts.DLN1,
+                             rs->Encoded, weights.LN1_w, rs->Acts[l].LN1_Rstd, nullptr, B, T, C, rs->DeviceProp, main_stream);
         }
         Parameters->release_block(l, main_stream);
         Grads->notify_block(l, main_stream, comm);
@@ -478,7 +483,7 @@ void LLamaModel::_backward_lmhead(long B, long T, int micro_step, int grad_accum
     Parameters->release_head(main_stream);
 }
 
-void LLamaModel::_recompute_block(int layer, sLLamaBlockWeights<Tensor>& weights, Tensor& residual) {
+void LLamaModel::_recompute_block(sLLamaBlockWeights<Tensor>& weights, sLLamaLayerActivations& acts, Tensor& residual) {
     NvtxRange classifier_and_loss_range("recompute");
     auto& rs = RunState;
     cudaStream_t main_stream = rs->MainStream;
@@ -491,7 +496,6 @@ void LLamaModel::_recompute_block(int layer, sLLamaBlockWeights<Tensor>& weights
     long Hkv = Config.NumKeyValHeads;
     long Hs = Config.head_size();
 
-    auto& acts = rs->Acts[layer];
     auto& opt = rs->Options;
 
     // Figure out which parts we need to recompute
@@ -533,7 +537,6 @@ void LLamaModel::_recompute_block(int layer, sLLamaBlockWeights<Tensor>& weights
     // Feed-forward block
     if(recompute_ln2) {
         if (opt.RecomputeBlock) {
-            Tensor residual = layer == 0 ? rs->Encoded : rs->get_res_ffn(layer - 1, main_stream);
             fused_residual_rmsnorm_forward(acts.ResidualAtt, acts.LN2.Value, acts.LN2_Rstd, residual, acts.AttO, weights.LN2_w,
                                  nullptr, Config.RmsNormEps, B * T, C, main_stream);
         } else {
@@ -558,7 +561,8 @@ void LLamaModel::_recompute_block(int layer, sLLamaBlockWeights<Tensor>& weights
     }
 }
 
-void LLamaModel::_backward_block(int layer, bool accumulate, sLLamaBlockWeights<Tensor>& weights, sLLamaGradBlock& d_weights) {
+void LLamaModel::_backward_block(bool accumulate, sLLamaBlockWeights<Tensor>& weights, sLLamaGradBlock& d_weights,
+                                 sLLamaLayerActivations& acts, sLLamaLayerGradients& d_acts) {
     auto& rs = RunState;
     cudaStream_t main_stream = rs->MainStream;
     // convenience shortcuts, size_t instead of int so that pointer arithmetics don't overflow
@@ -569,9 +573,6 @@ void LLamaModel::_backward_block(int layer, bool accumulate, sLLamaBlockWeights<
     long Hq = Config.NumQueryHeads;
     long Hkv = Config.NumKeyValHeads;
     long Hs = Config.head_size();
-
-    auto& acts = rs->Acts[layer];
-    auto& d_acts = rs->DActs.at(layer);
 
     // backward the 2nd matmul of MLP
     // note that _recompute_block guarantees that if SwiGLu is already quantized (if necessary)
@@ -600,16 +601,6 @@ void LLamaModel::_backward_block(int layer, bool accumulate, sLLamaBlockWeights<
 
     backward_qmm(d_acts.DLN1, d_weights.Attn_QKV_w, d_weights.Attn_QKV_b, d_acts.DQKV, acts.LN1, weights.Attn_QKV_w, rs->MatmulBiasScratch,
                  accumulate, *rs, B, T, C, Config.qkv_channels(), !recompute_ln1, main_stream);
-
-    if(layer > 0) {
-        auto& prev_dacts = rs->DActs.at(layer - 1);
-        rmsnorm_backward(prev_dacts.DResFFN.Value, d_weights.LN1_w, rs->RMSNormScratch, prev_dacts.DResAtt.Value, d_acts.DLN1,
-                         rs->get_res_ffn(layer-1, main_stream), weights.LN1_w, acts.LN1_Rstd, quant_abs_max_ptr(prev_dacts.DResFFN),
-                         B, T, C, rs->DeviceProp, main_stream);
-    } else {
-        rmsnorm_backward(rs->DEmb, d_weights.LN1_w, rs->RMSNormScratch, d_acts.DResAtt.Value, d_acts.DLN1,
-                         rs->Encoded, weights.LN1_w, acts.LN1_Rstd, nullptr, B, T, C, rs->DeviceProp, main_stream);
-    }
 }
 
 void LLamaModel::_reduce_loss(LLamaRunState& acts, NCCLCommunicator& comm, int B, int T) {

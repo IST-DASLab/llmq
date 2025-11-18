@@ -54,6 +54,8 @@ struct LLamaOptions {
 
 template<class T>
 struct sLLamaBlockWeights;
+struct sLLamaLayerActivations;
+struct sLLamaLayerGradients;
 class LLamaWeightsManager;
 class LLamaGradsManager;
 class LLamaOptimizerStateManager;
@@ -107,10 +109,11 @@ protected:
     void _calculate_gradient_norm(NCCLCommunicator& comm, float grad_clip);
     void _reduce_loss(LLamaRunState& acts, NCCLCommunicator& comm, int B, int T);
 
-    void _forward_block(int layer, sLLamaBlockWeights<Tensor>& weights, Tensor& residual);
+    void _forward_block(sLLamaBlockWeights<Tensor>& weights, sLLamaLayerActivations& activations, Tensor& residual);
     void _backward_lmhead(long B, long T, int micro_step, int grad_accum_steps, NCCLCommunicator& comm);
-    void _recompute_block(int layer, sLLamaBlockWeights<Tensor>& weights, Tensor& residual);
-    void _backward_block(int layer, bool accumulate, sLLamaBlockWeights<Tensor>& weights, sLLamaGradBlock& grads);
+    void _recompute_block(sLLamaBlockWeights<Tensor>& weights, sLLamaLayerActivations& activations, Tensor& residual);
+    void _backward_block(bool accumulate, sLLamaBlockWeights<Tensor>& weights, sLLamaGradBlock& grads,
+                         sLLamaLayerActivations& activations, sLLamaLayerGradients& d_activations);
 private:
     LLamaConfig Config;
     LLamaOptions Options;
