@@ -395,32 +395,37 @@ All settings use `--lmhead-chunks=${BATCH_SIZE}`
 ^10: `--offload-opt-m --recompute-swiglu --recompute-norm`
 
 ### L40S
+On the L40S system, we found zero-copy access to offloaded optimizer states (`--use-zero-copy`) to be much more performant than cudaMemcpy-based double buffering.
 
 | Model        | nGPU | DType | Batch | TPS  | SOL | TTB   |
 |--------------|------|-------|-------|------|-----|-------|
-| Qwen2.5-0.5B | 1    | fp8   | 32    | 48k  | 53% | 5.47h |
-| Qwen2.5-0.5B | 1    | bf16  | 16    | 42k  | 72% | 6:36h |
+| Qwen2.5-0.5B | 1    | fp8   | 32    | 47k  | 52% | 5:55h |
+| Qwen2.5-0.5B | 1    | bf16  | 16    | 44k  | 74% | 6:20h |
 | Qwen2.5-1.5B | 1    | fp8   | 8     | 20k  | 63% | 14h   |
 | Qwen2.5-1.5B | 1    | bf16  | 8     | 17k  | 87% | 16h   |
 | Qwen2.5-3B   | 1    | fp8   | 4     | 11k  | 66% | 25h   |
 | Qwen2.5-3B   | 1    | bf16  | 4     | 8.9k | 93% | 31h   |
-| Qwen2.5-7B¹  | 1    | fp8   | 4     | 5.1k | 65% | 71h   |
-| Qwen2.5-7B²  | 1    | bf16  | 4     | 3.9k | 93% | 45h   |
-| Qwen2.5-0.5B | 4    | fp8   | 32    | 189k | 52% | 1.28h |
-| Qwen2.5-0.5B | 4    | bf16  | 16    | 170k | 72% | 1:38h |
-| Qwen2.5-1.5B | 4    | fp8   | 16    | 81k  | 62% | 3.25h |
+| Qwen2.5-7B¹  | 1    | fp8   | 4     | 5.2k | 66% | 54h   |
+| Qwen2.5-7B²  | 1    | bf16  | 4     | 3.9k | 94% | 70h   |
+| Qwen2.5-14B³ | 1    | fp8   | 16    | 1.7k | 44% | 159h  |
+| Qwen2.5-14B⁴ | 1    | bf16  | 16    | 1.5k | 70% | 185h  |
+| Qwen2.5-0.5B | 4    | fp8   | 32    | 185k | 50% | 1:30h |
+| Qwen2.5-0.5B | 4    | bf16  | 16    | 169k | 71% | 1:38h |
+| Qwen2.5-1.5B | 4    | fp8   | 16    | 79k  | 60% | 3:30h |
 | Qwen2.5-1.5B | 4    | bf16  | 8     | 65k  | 85% | 4:16h |
-| Qwen2.5-3B   | 4    | fp8   | 8     | 45k  | 65% | 6:10h |
+| Qwen2.5-3B   | 4    | fp8   | 8     | 44k  | 63% | 6:20h |
 | Qwen2.5-3B   | 4    | bf16  | 8     | 35k  | 90% | 7:56h |
-| Qwen2.5-7B¹  | 4    | fp8   | 4     | 18k  | 59% | 15h   |
-| Qwen2.5-7B²  | 4    | bf16  | 4     | 15k  | 88% | 18h   |
-| Qwen2.5-14B³ | 4    | fp8   | 4     | 7.1k | 45% | 39h   |
-| Qwen2.5-14B³ | 4    | bf16  | 4     | 4.8k | 57% | 58h   |
+| Qwen2.5-7B¹  | 4    | fp8   | 4     | 18k  | 58% | 16h   |
+| Qwen2.5-7B²  | 4    | bf16  | 4     | 15k  | 87% | 18h   |
+| Qwen2.5-14B⁵ | 4    | fp8   | 64    | 8.7k | 54% | 32h   |
+| Qwen2.5-14B⁶ | 4    | bf16  | 64    | 6.3k | 73% | 44h   |
 
-^1: `--offload-opt-m --offload-opt-v --recompute-swiglu --recompute-norm --offload-master`  
-^2: `--offload-opt-m --offload-opt-v --recompute-swiglu --recompute-norm`  
-^3: `--offload-opt-m --offload-opt-v --recompute-ffn --recompute-norm --offload-master --shard-weights --persistent-quants --offload-quants`  
-^4: `--offload-opt-m --offload-opt-v --recompute-ffn --recompute-norm --offload-master --shard-weights`  
+^1: `--offload-opt-m --offload-opt-v --offload-master`  
+^2: `--offload-opt-m --offload-opt-v --recompute-swiglu --recompute-norm`
+^3: `--offload-opt-m --offload-opt-v --offload-master --recompute-block --use-zero-copy --lmhead-chunks=16 --shard-weights --offload-residual --persistent-quants --offload-quants`
+^4: `--offload-opt-m --offload-opt-v --offload-master --recompute-block --use-zero-copy --lmhead-chunks=16 --shard-weights --offload-residual`
+^5: `--offload-opt-m --offload-opt-v --offload-master --recompute-block --use-zero-copy --lmhead-chunks=16 --shard-weights --offload-residual --shard-gradients --persistent-quants --offload-quants`  
+^6: `--offload-opt-m --offload-opt-v --offload-master --recompute-block --use-zero-copy --lmhead-chunks=16 --shard-weights --offload-residual --shard-gradients`  
 
 ### RTX 5090 Performance Benchmarks
 
