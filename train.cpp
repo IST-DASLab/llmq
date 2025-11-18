@@ -151,6 +151,7 @@ void TrainingRunner::load_training_config(int argc, const char** argv) {
     app.add_flag("--offload-quants", Options.OffloadQuants, "Store quantized weights in pinned host memory.")->needs(persist);
     app.add_flag("--offload-opt-m", Options.OffloadOptM, "Store first-order momentum in pinned host memory.");
     app.add_flag("--offload-opt-v", Options.OffloadOptV, "Store second-order momentum in pinned host memory.");
+    app.add_flag("--use-zero-copy", Options.UseZeroCopy, "Use ZeroCopy memory access, instead of double-buffered cudaMemcpy, for offloaded optimizer states. On consumer cards, DMA appears to be much slower, whereas on professional cards it is faster.");
     app.add_flag("--shard-gradients", Options.ShardGradients, "Shard gradients across GPUs")->excludes(zero);
     app.add_flag("--memcpy-all-gather", MemcpyAllGather, "Use memcpy to perform all-gathers. Currently only supported by the threads backend.");
     app.add_flag("--memcpy-send-recv", MemcpySendRecv, "Use memcpy to perform send/receive (all-to-all). Currently only supported by the threads backend.");
@@ -277,6 +278,7 @@ void TrainingRunner::run_training(int argc, const char** argv, NCCLCommunicator&
         {"offload-quants",     Options.OffloadQuants},
         {"offload-opt-m",      Options.OffloadOptM},
         {"offload-opt-v",      Options.OffloadOptV},
+        {"use-zero-copy",      Options.UseZeroCopy},
         {"shard-weights",      Options.ShardWeights},
         {"shard-gradients",    Options.ShardGradients},
         {"persistent-quants",  Options.PersistentQuants},

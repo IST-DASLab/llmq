@@ -170,6 +170,7 @@ protected:
     ETensorDType mWorkMatDType;
 
     bool mOffloadMaster;
+    bool mUseZeroCopy;
 };
 
 class LLamaOptimizerParamManager {
