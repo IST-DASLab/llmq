@@ -339,8 +339,6 @@ down, though it has more parts.
 void LLamaModel::backward(Tensor inputs, Tensor targets, NCCLCommunicator& comm, int micro_step, int step) {
     // [define convenience variables]
 
-    // results in the uniform average loss over all elements
-    const float d_loss = 1.0f / (float) (B * T * grad_accum_steps);
     CUDA_CHECK(cudaMemcpyAsync(rs->Targets.Data, targets.Data, targets.bytes(), cudaMemcpyHostToDevice, main_stream));
     CUDA_CHECK(cudaEventRecord(rs->TransferDone, main_stream));
 
@@ -362,7 +360,7 @@ void LLamaModel::backward(Tensor inputs, Tensor targets, NCCLCommunicator& comm,
     fill_zero(rs->DLNF, main_stream);
     fill_zero(d_acts[L-1].DResFFN.Value, main_stream);
     
-    // [handle chunked LM-head]
+    _backward_lmhead(B, T, micro_step, grad_accum_steps, comm);
 
     // ok, now reduce the loss across all ranks
     if (last_step) {
@@ -418,14 +416,19 @@ As with the other layers, the main computation is surrounded by gather/release c
 Note that in case of the LM-head being tied with the embedding weights, the `gather_head` call would automatically detect if the embeddings are still present locally, and avoid doing needless communication.
 
 ```cpp
-bool accumulate;
+// uniform average loss over all elements
+const float d_loss = 1.0f / (float) (B * T * grad_accum_steps);
+long nano_batches = Options.LMHeadChunks;
 int nano_batch_size = div_exact(B * T, nano_batches);
+
+NvtxRange classifier_and_loss_range("lm-head");
 Parameters->gather_head(comm);
-for(int nano_step = 0; nano_step < nano_batches; nano_step++) {
+for (int nano_step = 0; nano_step < nano_batches; nano_step++) {
     // [setup tensors to current chunk]
 
     matmul(rs->Output, Parameters->get_head(main_stream), lnf_slice,
-           std::nullopt, nullptr, rs->CublasLtHandle, rs->Workspace, V, nano_batch_size, C, EMMTranspose::TN, false, main_stream);
+           std::nullopt, nullptr, rs->CublasLtHandle, rs->Workspace, V, nano_batch_size, C, EMMTranspose::TN,
+           false, main_stream);
 
     // accumulate the losses inside rs->losses, and kick off the backward pass inside the fused classifier
     fused_classifier(rs->Output, losses, d_loss, tgt, nano_batch_size, V, Vp, true, main_stream);
@@ -433,6 +436,7 @@ for(int nano_step = 0; nano_step < nano_batches; nano_step++) {
     // [wait until we're ready for gradient computation]
 
     // handle the LM-head. We run the d_lmhead matmul first, so that the gradient reduction can overlap with the DLNF matmul.
+    bool accumulate;
     auto& d_lmhead = Grads->get_lmhead_full(main_stream, comm, accumulate);
     accumulate |= nano_step != 0;
     matmul(d_lmhead, lnf_slice, rs->Output, std::nullopt, get_device_one(),
