@@ -335,13 +335,9 @@ void LLamaModel::backward(Tensor inputs, Tensor targets, NCCLCommunicator& comm,
     // convenience shortcuts, size_t instead of int so that pointer arithmetics don't overflow
     long B = inputs.Sizes[0];
     long T = inputs.Sizes[1];
-    const size_t V = Config.VocabSize;
-    const size_t Vp = Config.VocabSize;
     const size_t C = Config.HiddenSize;
     const size_t L = Config.NumLayers;
 
-    const float d_loss =
-        1.0f / (float) (B * T * grad_accum_steps); // results in the uniform average loss over all elements
     CUDA_CHECK(cudaMemcpyAsync(rs->Targets.Data, targets.Data, targets.bytes(), cudaMemcpyHostToDevice, main_stream));
     CUDA_CHECK(cudaEventRecord(rs->TransferDone, main_stream));
 
@@ -359,64 +355,18 @@ void LLamaModel::backward(Tensor inputs, Tensor targets, NCCLCommunicator& comm,
         Grads->start_micro_step(main_stream, micro_step, grad_accum_steps);
     }
 
-    long nano_batches = Options.LMHeadChunks;
-
     // reset residual stream gradients (put here to work with gradient accumulation)
     fill_zero(rs->DLNF, main_stream);
     fill_zero(d_acts[L-1].DResFFN.Value, main_stream);
-    bool accumulate;
 
-    int nano_batch_size = div_exact(B * T, nano_batches);
-
-    Parameters->gather_head(comm);
-    for(int nano_step = 0; nano_step < nano_batches; nano_step++) {
-        Tensor lnf_slice = rs->LNF;
-        lnf_slice.Data += nano_step * nano_batch_size * C * get_dtype_size(lnf_slice.DType);
-        Tensor tgt = rs->Targets;
-        tgt.Data += nano_step *  nano_batch_size * get_dtype_size(tgt.DType);
-        Tensor losses = rs->Losses;
-        losses.Data += nano_step * nano_batch_size * get_dtype_size(losses.DType);
-        Tensor dlnf_slice = rs->DLNF;
-        dlnf_slice.Data += nano_step * nano_batch_size * C * get_dtype_size(dlnf_slice.DType);
-
-        matmul(rs->Output, Parameters->get_head(main_stream), lnf_slice,
-               std::nullopt, nullptr, rs->CublasLtHandle, rs->Workspace, V, nano_batch_size, C, EMMTranspose::TN, false, main_stream);
-
-        // accumulate the losses inside rs->losses, and kick off the backward pass inside the fused classifier
-        fused_classifier(rs->Output, losses, d_loss, tgt, nano_batch_size, V, Vp, true, main_stream);
-
-        // if we reset model grads to zero, now is the time we need to wait
-        if (micro_step == 0 && nano_step == 0) {
-            CUDA_CHECK(cudaStreamWaitEvent(main_stream, rs->SideStreamEvent, 0));
-        }
-
-        if(nano_step == 0) {
-            // BackwardDone ensures that zero-2 gradient accumulation of the previous step has finished, so we can safely write to d_lmhead again.
-            CUDA_CHECK(cudaEventSynchronize(rs->BackwardDone));
-        }
-
-        // handle the LM-head. We run the d_lmhead matmul first, so that the gradient reduction can overlap with the DLNF matmul.
-        auto& d_lmhead = Grads->get_lmhead_full(main_stream, comm, accumulate);
-        accumulate |= nano_step != 0;
-        matmul(d_lmhead, lnf_slice, rs->Output, std::nullopt, get_device_one(),
-               rs->CublasLtHandle, rs->Workspace, C, V, nano_batch_size, EMMTranspose::NT, accumulate, main_stream);
-        if (nano_step == nano_batches - 1) {
-            Grads->notify_lmhead(main_stream, comm);
-        }
-
-        // for some reason, we cannot set scale == nullptr here ?!
-        // so instead supply the value one (get_device_one())
-        matmul(dlnf_slice, Parameters->get_head(main_stream), rs->Output, std::nullopt, get_device_one(),
-               rs->CublasLtHandle, rs->Workspace, C, nano_batch_size, V, EMMTranspose::NN, false, main_stream);
-
-    }
-    Parameters->release_head(main_stream);
+    _backward_lmhead(B, T, micro_step, grad_accum_steps, comm);
 
     // ok, now reduce the loss across all ranks
     if (last_step) {
         _reduce_loss(*rs, comm, B, T);
     }
 
+    bool accumulate;
     auto& d_lnf_w = Grads->get_lnf_w_full(main_stream, comm, accumulate);
     Parameters->gather_lnf(comm);
     // backward the final layernorm
@@ -465,6 +415,67 @@ void LLamaModel::backward(Tensor inputs, Tensor targets, NCCLCommunicator& comm,
 
     // do not return before inputs can be accessed again.
     CUDA_CHECK(cudaEventSynchronize(rs->TransferDone));
+}
+
+void LLamaModel::_backward_lmhead(long B, long T, int micro_step, int grad_accum_steps, NCCLCommunicator& comm) {
+    auto& rs = RunState;
+    const size_t C = Config.HiddenSize;
+    const size_t V = Config.VocabSize;
+    const size_t Vp = Config.VocabSize;
+    cudaStream_t main_stream = rs->MainStream;
+
+    long nano_batches = Options.LMHeadChunks;
+    int nano_batch_size = div_exact(B * T, nano_batches);
+
+    const float d_loss =
+        1.0f / (float) (B * T * grad_accum_steps); // results in the uniform average loss over all elements
+
+    NvtxRange classifier_and_loss_range("lm-head");
+    Parameters->gather_head(comm);
+    for (int nano_step = 0; nano_step < nano_batches; nano_step++) {
+        Tensor lnf_slice = rs->LNF;
+        lnf_slice.Data += nano_step * nano_batch_size * C * get_dtype_size(lnf_slice.DType);
+        Tensor tgt = rs->Targets;
+        tgt.Data += nano_step * nano_batch_size * get_dtype_size(tgt.DType);
+        Tensor losses = rs->Losses;
+        losses.Data += nano_step * nano_batch_size * get_dtype_size(losses.DType);
+        Tensor dlnf_slice = rs->DLNF;
+        dlnf_slice.Data += nano_step * nano_batch_size * C * get_dtype_size(dlnf_slice.DType);
+
+        matmul(rs->Output, Parameters->get_head(main_stream), lnf_slice,
+               std::nullopt, nullptr, rs->CublasLtHandle, rs->Workspace, V, nano_batch_size, C, EMMTranspose::TN,
+               false, main_stream);
+
+        // accumulate the losses inside rs->losses, and kick off the backward pass inside the fused classifier
+        fused_classifier(rs->Output, losses, d_loss, tgt, nano_batch_size, V, Vp, true, main_stream);
+
+        // if we reset model grads to zero, now is the time we need to wait
+        if (micro_step == 0 && nano_step == 0) {
+            CUDA_CHECK(cudaStreamWaitEvent(main_stream, rs->SideStreamEvent, 0));
+        }
+
+        if (nano_step == 0) {
+            // BackwardDone ensures that zero-2 gradient accumulation of the previous step has finished, so we can safely write to d_lmhead again.
+            CUDA_CHECK(cudaEventSynchronize(rs->BackwardDone));
+        }
+
+        // handle the LM-head. We run the d_lmhead matmul first, so that the gradient reduction can overlap with the DLNF matmul.
+        bool accumulate;
+        auto& d_lmhead = Grads->get_lmhead_full(main_stream, comm, accumulate);
+        accumulate |= nano_step != 0;
+        matmul(d_lmhead, lnf_slice, rs->Output, std::nullopt, get_device_one(),
+               rs->CublasLtHandle, rs->Workspace, C, V, nano_batch_size, EMMTranspose::NT, accumulate, main_stream);
+        if (nano_step == nano_batches - 1) {
+            Grads->notify_lmhead(main_stream, comm);
+        }
+
+        // for some reason, we cannot set scale == nullptr here ?!
+        // so instead supply the value one (get_device_one())
+        matmul(dlnf_slice, Parameters->get_head(main_stream), rs->Output, std::nullopt, get_device_one(),
+               rs->CublasLtHandle, rs->Workspace, C, nano_batch_size, V, EMMTranspose::NN, false, main_stream);
+
+    }
+    Parameters->release_head(main_stream);
 }
 
 void LLamaModel::_recompute_block(int layer, sLLamaBlockWeights<Tensor>& weights, Tensor& residual) {

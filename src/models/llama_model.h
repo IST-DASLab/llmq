@@ -108,6 +108,7 @@ protected:
     void _reduce_loss(LLamaRunState& acts, NCCLCommunicator& comm, int B, int T);
 
     void _forward_block(int layer, sLLamaBlockWeights<Tensor>& weights, Tensor& residual);
+    void _backward_lmhead(long B, long T, int micro_step, int grad_accum_steps, NCCLCommunicator& comm);
     void _recompute_block(int layer, sLLamaBlockWeights<Tensor>& weights, Tensor& residual);
     void _backward_block(int layer, bool accumulate, sLLamaBlockWeights<Tensor>& weights, sLLamaGradBlock& grads);
 private:
