@@ -9,7 +9,7 @@
 #include "utilities/comm.h"
 
 void LLamaOptimizerStateManager::fetch_block(int layer_idx, cudaStream_t fetch_stream) {
-    if(!mOffloadM && !mOffloadV) return;
+    if((!mOffloadM && !mOffloadV) || mUseZeroCopy) return;
 
     int buffer = layer_idx % 2;
     auto& stat = mStatus.at(buffer);
@@ -62,12 +62,12 @@ void LLamaOptimizerStateManager::fetch_block(int layer_idx, cudaStream_t fetch_s
 }
 
 sLLamaBlockWeights<TensorShard>& LLamaOptimizerStateManager::get_block_m(int layer_idx, cudaStream_t stream) {
-    if(!mOffloadM) return mOptM.Blocks[layer_idx];
+    if(!mOffloadM || mUseZeroCopy) return mOptM.Blocks[layer_idx];
     return get_block_from(layer_idx, stream, mOptMBuffer.at(layer_idx % 2));
 }
 
 sLLamaBlockWeights<TensorShard>& LLamaOptimizerStateManager::get_block_v(int layer_idx, cudaStream_t stream) {
-    if(!mOffloadV) return mOptV.Blocks[layer_idx];
+    if(!mOffloadV || mUseZeroCopy) return mOptV.Blocks[layer_idx];
     return get_block_from(layer_idx, stream, mOptVBuffer.at(layer_idx % 2));
 }
 
@@ -90,6 +90,8 @@ sLLamaBlockWeights<TensorShard>& LLamaOptimizerStateManager::get_block_from(int 
 }
 
 void LLamaOptimizerStateManager::store_block(int layer_idx, cudaStream_t stream, cudaStream_t put_stream)  {
+    if (mUseZeroCopy) return;
+
     int buffer = layer_idx % 2;
     if(mOffloadM) {
         store_one_block(layer_idx, stream, put_stream, mOptMBuffer[buffer], mOptM.Blocks[layer_idx]);
@@ -110,8 +112,6 @@ void LLamaOptimizerStateManager::store_block(int layer_idx, cudaStream_t stream,
 }
 
 void LLamaOptimizerStateManager::store_one_block(int layer_idx, cudaStream_t stream, cudaStream_t put_stream, sLLamaBlockWeights<TensorShard>& buf, sLLamaBlockWeights<TensorShard>& dst) {
-
-
     auto& stat = mStatus.at(layer_idx % 2);
 
     auto send = [put_stream](TensorShard& dst, TensorShard& src) {
@@ -164,7 +164,7 @@ void zero_opt_state(sLLamaWeights& weights, cudaStream_t stream) {
 }
 
 LLamaOptimizerStateManager::LLamaOptimizerStateManager(LLamaConfig cfg, LLamaOptions options, cudaStream_t stream, NCCLCommunicator& comm, TensorAllocator& alloc):
-    mOffloadM(options.OffloadOptM), mOffloadV(options.OffloadOptV)
+    mOffloadM(options.OffloadOptM), mOffloadV(options.OffloadOptV), mUseZeroCopy(options.UseZeroCopy)
 {
     {
         auto ctx = alloc.with_context("Adam M");
@@ -174,7 +174,7 @@ LLamaOptimizerStateManager::LLamaOptimizerStateManager(LLamaConfig cfg, LLamaOpt
         mOptM = allocate_weights(c, alloc_type, comm.rank(), comm.world_size(), alloc);
         zero_opt_state(mOptM, stream);
 
-        if(options.OffloadOptM){
+        if(options.OffloadOptM && !mUseZeroCopy) {
             mOptMBuffer[0] = allocate_block_shard(c, options.OptMomentumType, options.OptMomentumType,
                                                   EAllocationType::ON_DEVICE, comm.rank(), comm.world_size(), alloc);
             mOptMBuffer[1] = allocate_block_shard(c, options.OptMomentumType, options.OptMomentumType,
@@ -189,7 +189,7 @@ LLamaOptimizerStateManager::LLamaOptimizerStateManager(LLamaConfig cfg, LLamaOpt
         c.DType = options.OptVarianceType;
         mOptV = allocate_weights(c, alloc_type, comm.rank(), comm.world_size(), alloc);
         zero_opt_state(mOptV, stream);
-        if(options.OffloadOptV){
+        if(options.OffloadOptV && !mUseZeroCopy){
             mOptVBuffer[0] = allocate_block_shard(c, options.OptVarianceType, options.OptVarianceType,
                                                   EAllocationType::ON_DEVICE, comm.rank(), comm.world_size(), alloc);
             mOptVBuffer[1] = allocate_block_shard(c, options.OptVarianceType, options.OptVarianceType,
@@ -197,7 +197,7 @@ LLamaOptimizerStateManager::LLamaOptimizerStateManager(LLamaConfig cfg, LLamaOpt
         }
     }
 
-    if(options.OffloadOptM || options.OffloadOptV) {
+    if((options.OffloadOptM || options.OffloadOptV) && !mUseZeroCopy) {
         mStatus[0] = sBufferStatus{-1, create_named_event("opt_fetch_0"), false, true};
         mStatus[1] = sBufferStatus{-1, create_named_event("opt_fetch_1"), false, true};
     }

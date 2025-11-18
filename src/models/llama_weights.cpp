@@ -174,6 +174,7 @@ LLamaWeightsManager::LLamaWeightsManager(const LLamaConfig& config, const LLamaO
     mHeadID = config.TiedWordEmbeddings ? 0 : 1;
 
     mOffloadMaster = options.OffloadMaster;
+    mUseZeroCopy = options.UseZeroCopy;
 }
 
 LLamaWeightsManager::~LLamaWeightsManager() {
@@ -214,7 +215,7 @@ std::pair<float*, float*> LLamaWeightsManager::get_scales_for_block(int layer_id
 
 
 void LLamaWeightsManager::setup_master_buffers(const LLamaConfig& config, TensorAllocator& alloc) {
-    if (mOffloadMaster) {
+    if (mOffloadMaster && !mUseZeroCopy) {
         for(int i = 0; i < 2; ++i) {
             auto& buf = mMasterDeviceDoubleBuffer.at(i);
             if (mWorkMatDType != mMasterDType) {
@@ -266,7 +267,7 @@ TensorShard& LLamaWeightsManager::get_master_lnf_w() {
 }
 
 void LLamaWeightsManager::fetch_master_block(int layer_idx, cudaStream_t fetch_stream) {
-    if(!mOffloadMaster) return;
+    if(!mOffloadMaster || mUseZeroCopy) return;
 
     int buffer = layer_idx % 2;
     auto& buf = mMasterDeviceDoubleBuffer.at(buffer);
@@ -303,7 +304,7 @@ void LLamaWeightsManager::fetch_master_block(int layer_idx, cudaStream_t fetch_s
 }
 
 sLLamaBlockWeights<TensorShard>& LLamaWeightsManager::get_master_block(int layer_idx, cudaStream_t stream) {
-    if(!mOffloadMaster) return mMaster.Blocks[layer_idx];
+    if(!mOffloadMaster || mUseZeroCopy) return mMaster.Blocks[layer_idx];
 
     int buffer = layer_idx % 2;
     auto& buf = mMasterDeviceDoubleBuffer.at(buffer);
@@ -313,7 +314,7 @@ sLLamaBlockWeights<TensorShard>& LLamaWeightsManager::get_master_block(int layer
 }
 
 void LLamaWeightsManager::release_master_block(int layer_idx, cudaStream_t stream, cudaStream_t put_stream, LLamaRunState& run_state) {
-    if(!mOffloadMaster) return;
+    if(!mOffloadMaster || mUseZeroCopy) return;
 
     int buffer = layer_idx % 2;
     auto& buf = mMasterDeviceDoubleBuffer.at(buffer);
