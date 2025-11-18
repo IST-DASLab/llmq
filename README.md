@@ -308,6 +308,8 @@ The [src](src) directory contains four major subdirectories:
 Additionally, the [scripts](scripts) directory contains utility python scripts, and
 [binding](src/binding) the glue code for python bindings.
 
+For more details on how the model's forward and backward passes are organized, see [doc.md](doc.md).
+
 ## Speed
 TPS: tokens per second.
 SOL: Speed of light.
