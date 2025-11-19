@@ -27,6 +27,7 @@ struct LLamaOptions {
     bool RecomputeBlock = false;
     bool OffloadResidual = false;
     int LMHeadChunks = 1;
+    int AttBwdChunks = 1;
     bool UseCudaGraphs = false;
 
     bool OffloadMaster = false;

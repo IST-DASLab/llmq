@@ -104,6 +104,7 @@ void TrainingRunner::load_training_config(int argc, const char** argv) {
     app.add_option("--batch,--batch-size", B, "micro-batch size");
     app.add_option("--seq-len,--seq-length", T, "sequence length");
     app.add_option("--lmhead-chunks", Options.LMHeadChunks, "Run the LM-Head in chunks to avoid materializing the large logit tensor.");
+    app.add_option("--attn-bwd-chunks", Options.AttBwdChunks, "Run the attention backward pass in chunks, to avoid having to materialize a large workspace tensor.");
 
     // debug
     app.add_option("--debug-log-allocations", LogAllocations, "Log all memory allocations larger than the given number (in MiB)");
@@ -278,6 +279,8 @@ void TrainingRunner::run_training(int argc, const char** argv, NCCLCommunicator&
         {"recompute-qkv",      Options.RecomputeQKV},
         {"recompute-att",      Options.RecomputeAtt},
         {"recompute-block",    Options.RecomputeBlock},
+        {"lm-head-chunks",     Options.LMHeadChunks},
+        {"attn-bwd-chunks",    Options.AttBwdChunks},
         {"offload-master",     Options.OffloadMaster},
         {"offload-quants",     Options.OffloadQuants},
         {"offload-opt-m",      Options.OffloadOptM},

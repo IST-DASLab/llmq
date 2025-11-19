@@ -254,7 +254,7 @@ void LLamaRunState::release_res_ffn(int layer_idx, cudaStream_t main_stream) {
     CUDA_CHECK(cudaEventRecord(status.Event, main_stream));
 }
 
-LLamaRunState allocate_run_state(LLamaConfig config, LLamaOptions options, int B, int T, std::shared_ptr<TensorAllocator> alloc) {
+LLamaRunState allocate_run_state(LLamaConfig config, LLamaOptions options, long B, long T, std::shared_ptr<TensorAllocator> alloc) {
     // we are *not* handling this as a single giant allocation
     // by using independent allocations, we give sanitizers a better chance of catching errors,
     // and we never have to worry about tensor alignment
@@ -277,7 +277,7 @@ LLamaRunState allocate_run_state(LLamaConfig config, LLamaOptions options, int B
     Tensor encoded = alloc->allocate(config.DType, "encoded", {B, T, C});
     Tensor freq_cis = builder.generate_frequencies();
     // We're chunking the logit computation, so we can allocate a much smaller tensor.
-    int out_size = div_exact(B*T, options.LMHeadChunks);
+    long out_size = div_exact(B*T, (long)options.LMHeadChunks);
     Tensor output = alloc->allocate(config.DType, "output", {out_size, V});
     Tensor lnf = alloc->allocate(config.DType, "lnf", {B, T, C});
     Tensor lnf_rstd = alloc->allocate(ETensorDType::FP32, "lnf_rstd", {B, T});
@@ -285,7 +285,10 @@ LLamaRunState allocate_run_state(LLamaConfig config, LLamaOptions options, int B
     long rms_scratch_size = get_rmsnorm_backward_scratch_size(C, deviceProp);
     long bias_scratch_size = get_bias_backward_scratch_size(config.DType, config.qkv_channels(), deviceProp);
     cudnnHandle_t cudnn_handle = create_cudnn_handle();
-    long ws_size = cudnn_get_workspace_size(B, T, config.NumQueryHeads, config.NumKeyValHeads, config.head_size(), cudnn_handle);
+
+    // batch size for chunked attention backward
+    long chunk_batch_size = div_exact(B, (long)options.AttBwdChunks);
+    long ws_size = cudnn_get_workspace_size(chunk_batch_size, T, config.NumQueryHeads, config.NumKeyValHeads, config.head_size(), cudnn_handle);
     ws_size = std::max(ws_size, 32l * 1024 * 1024); // Hardcoding workspace to 32MiB but only Hopper needs 32 (for others 4 is OK)
     cublasLtHandle_t cublas_handle = create_cublaslt_handle();
     Tensor rms_scratch = alloc->allocate(ETensorDType::BYTE, "rms_scratch", {rms_scratch_size});
