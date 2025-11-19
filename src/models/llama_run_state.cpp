@@ -322,9 +322,14 @@ LLamaRunState allocate_run_state(LLamaConfig config, LLamaOptions options, int B
     Tensor enc_bw_scratch = alloc->allocate(ETensorDType::INT32, "enc_bw_scratch", {B, T, num_c_groups * 5});
     Tensor enc_bw_idx = alloc->allocate(ETensorDType::INT32, "enc_bw_idx", EAllocationType::PINNED, {B, T, num_c_groups});
     Tensor env_bw_info = alloc->allocate(ETensorDType::INT32, "env_bw_info", EAllocationType::PINNED, {B, T, 4 * num_c_groups});
-    Tensor wgt_tp_buffer = alloc->allocate(ETensorDType::FP8_E4M3, "wgt_tp_buffer", {config.HiddenSize, 2 * config.IntermediateSize});
-    Tensor act_tp_buffer = alloc->allocate(ETensorDType::FP8_E4M3, "wgt_tp_buffer", {H, B, T});
-    Tensor grd_tp_buffer = alloc->allocate(ETensorDType::FP8_E4M3, "grd_tp_buffer", {2*H, B, T});
+    Tensor wgt_tp_buffer;
+    Tensor act_tp_buffer;
+    Tensor grd_tp_buffer;
+    if(options.MatmulType.value_or(config.DType) == ETensorDType::FP8_E4M3) {
+        wgt_tp_buffer = alloc->allocate(ETensorDType::FP8_E4M3, "wgt_tp_buffer", {config.HiddenSize, 2 * config.IntermediateSize});
+        act_tp_buffer = alloc->allocate(ETensorDType::FP8_E4M3, "act_tp_buffer", {H, B, T});
+        grd_tp_buffer = alloc->allocate(ETensorDType::FP8_E4M3, "grd_tp_buffer", {2*H, B, T});
+    }
 
     Tensor norm_buffer = alloc->allocate(ETensorDType::FP32, "norm_buffer", {get_max_num_block_sums(deviceProp)});
     Tensor host_buffer = alloc->allocate(ETensorDType::FP32, "host_buffer", EAllocationType::PINNED, {2});
