@@ -598,7 +598,16 @@ void LLamaModel::_backward_block(bool accumulate, sLLamaBlockWeights<Tensor>& we
     backward_qmm(d_acts.DAttY, d_weights.Attn_Out_w, std::nullopt, d_acts.DResAtt, acts.Att, weights.Attn_Out_w, std::nullopt,
                  accumulate, *rs, B, T, C, C, false, main_stream);
 
-    attention_backward_cudnn(d_acts.DQKV.Value, acts.LSE, acts.Att.Value, d_acts.DAttY, acts.QKV, rs->Workspace, rs->CudnnHandle, B, T, Hq, Hkv, Hs, main_stream);
+    for (int i=0; i < Options.AttBwdChunks; ++i) {
+        long chunk_batch_size = div_exact(B, (long)Options.AttBwdChunks);
+        Tensor d_qkv = shard_view(d_acts.DQKV.Value, i, Options.AttBwdChunks);
+        Tensor lse = shard_view(acts.LSE, i, Options.AttBwdChunks);
+        Tensor att = shard_view(acts.Att.Value, i, Options.AttBwdChunks);
+        Tensor d_atty = shard_view(d_acts.DAttY, i, Options.AttBwdChunks);
+        Tensor qkv = shard_view(acts.QKV, i, Options.AttBwdChunks);
+        attention_backward_cudnn(d_qkv, lse, att, d_atty, qkv, rs->Workspace, rs->CudnnHandle,
+            chunk_batch_size, T, Hq, Hkv, Hs, main_stream);
+    }
     rope_backward(d_acts.DQKV.Value, d_acts.DQKV.Value, rs->FreqCis, B, T, Hq, Hkv, Hs, main_stream);
 
     if (d_acts.DQKV.Quant.has_value()) {
