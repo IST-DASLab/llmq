@@ -297,7 +297,6 @@ void backward_qmm(Tensor& dinp, Tensor& dweight, std::optional<Tensor> dbias,
         float* dwgt_scale = dinp_scale + 1;
 
         quantize_with_abs_max(dout.Quant.value(), dout.Value, dout_scale, B*T*OC, rs.DeviceProp, stream);
-        transpose(rs.GradientTranspose, dout.Quant.value(), B*T, OC, stream);
 
         if(reuse_inp) {
             // inp is already quantized from the forward pass, so just transpose here
@@ -314,6 +313,8 @@ void backward_qmm(Tensor& dinp, Tensor& dweight, std::optional<Tensor> dbias,
         matmul_out_scale(dwgt_scale, dout_scale, act_scale, 1.f / scale / scale, stream);
 
         matmul(dinp, rs.WeightTranspose, dout.Quant.value(), std::nullopt, dinp_scale, rs.CublasLtHandle, rs.Workspace, C, B*T, OC, EMMTranspose::TN, false, stream);
+
+        transpose(rs.GradientTranspose, dout.Quant.value(), B*T, OC, stream);
         matmul(dweight, rs.ActivationTranspose, rs.GradientTranspose, std::nullopt, dwgt_scale, rs.CublasLtHandle, rs.Workspace, C, OC, B*T, EMMTranspose::TN, accumulate_gradient, stream);
         if (dbias.has_value()) {
             backward_bias(dbias.value(), dout.Quant.value(), dout_scale, bias_buffer.value(), B, T, OC, rs.DeviceProp, stream);
