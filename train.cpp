@@ -75,6 +75,8 @@ struct TrainingRunner {
 
     LLamaOptions Options;
 
+    int LogAllocations = -1;
+
     void load_training_config(int argc, const char** argv);
     void launch_training(int argc, const char** argv);
     void run_training(int argc, const char** argv, NCCLCommunicator& comm);
@@ -100,6 +102,9 @@ void TrainingRunner::load_training_config(int argc, const char** argv) {
     app.add_option("--batch,--batch-size", B, "micro-batch size");
     app.add_option("--seq-len,--seq-length", T, "sequence length");
     app.add_option("--lmhead-chunks", Options.LMHeadChunks, "Run the LM-Head in chunks to avoid materializing the large logit tensor.");
+
+    // debug
+    app.add_option("--debug-log-allocations", LogAllocations, "Log all memory allocations larger than the given number (in MiB)");
 
     // optimizer
     app.add_option("--lr,--learning-rate", LearningRate, "Base learning rate");
@@ -196,6 +201,8 @@ void TrainingRunner::load_training_config(int argc, const char** argv) {
     if (Options.RecomputeFFN) {
         Options.RecomputeSwiGLu = true;
     }
+
+    LogAllocations *= 1024 * 1024;
 }
 
 void TrainingRunner::launch_training(int argc, const char** argv) {
@@ -322,7 +329,24 @@ void TrainingRunner::run_training(int argc, const char** argv, NCCLCommunicator&
 
     setup_cublas();
 
-    LLamaModel model{config, Options, comm.rank(), comm.world_size()};
+    auto allocator = std::make_shared<TensorAllocator>();
+    if (LogAllocations >= 0 && comm.rank() == 0) {
+        allocator->set_callback([this](const std::string& ctx, const std::string& name, EAllocationType kind, std::size_t amount){
+            if(amount >= LogAllocations) {
+                const char* kind_str;
+                switch(kind) {
+                    case EAllocationType::ON_DEVICE: kind_str = "GPU "; break;
+                    case EAllocationType::MANAGED: kind_str = "USM "; break;
+                    case EAllocationType::WRITE_CMB:
+                    case EAllocationType::PINNED:
+                    case EAllocationType::ON_HOST: kind_str = "HOST"; break;
+                }
+                ::printf("%s  %15s - %15s: %4zu MiB\n", kind_str, ctx.c_str(), name.c_str(), amount / 1024 / 1024);
+            }
+        });
+    }
+
+    LLamaModel model{config, Options, comm.rank(), comm.world_size(), allocator};
 
     // Note: cannot check for exact equality, because vocab_size differs in tokenizer vs model (implicit padding)
     if (train_loader.vocab_size() > 0 && train_loader.vocab_size() >= config.VocabSize) {

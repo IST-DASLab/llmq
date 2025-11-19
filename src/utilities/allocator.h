@@ -10,6 +10,7 @@
 #include <initializer_list>
 #include <memory>
 #include <vector>
+#include <functional>
 
 #include "tensor.h"
 
@@ -41,6 +42,7 @@ public:
     TensorAllocator& operator=(const TensorAllocator&) = delete;
 
     void print_stats() const;
+    void set_callback(std::function<void(const std::string& ctx, const std::string& name, EAllocationType kind, std::size_t amount)>);
 
     Tensor allocate(ETensorDType dtype, const char* name, EAllocationType kind, const std::vector<long>& shape);
     Tensor allocate(ETensorDType dtype, const char* name, EAllocationType kind, const std::initializer_list<long>& shape);
@@ -84,6 +86,8 @@ private:
 
     std::vector<sAllocationData> m_Pointers;
     std::unique_ptr<sAllocStats> m_Stats;
+
+    std::function<void(const std::string& ctx, const std::string& name, EAllocationType kind, std::size_t amount)> mCallback;
 };
 
 #endif //LLMQ_SRC_UTILITIES_ALLOCATOR_H
