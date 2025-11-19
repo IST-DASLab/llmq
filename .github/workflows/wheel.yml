@@ -1,6 +1,5 @@
 name: Build Wheels
 on:
-  create:
   workflow_dispatch:
   push:
     branches:
@@ -165,6 +164,8 @@ jobs:
             args: "fixed bf16"
           - name: "LLMQ FP8"
             args: "fixed e4m3"
+          - name: "LLMQ E5M2"
+            args: "fixed e5m2"
           - name: "Torch BF16 ga=1"
             args: "torch-step --grad-accum 1 --model-dtype bf16 --matmul-dtype bf16"
           - name: "Torch BF16 ga=4"
