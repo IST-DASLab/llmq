@@ -64,7 +64,6 @@ private:
     Tensor tAttBuffer;
     Tensor tLN1Buffer;
     Tensor tResAttBuffer;
-    Tensor tFFNResBuffer;
 };
 
 Tensor RunStateBuilder::generate_frequencies() {
@@ -108,9 +107,8 @@ LLamaRunState::LayerActivations RunStateBuilder::allocate_basic_fwd_tensors(Tens
     QuantizableTensor swiglu = {swiglu_v, std::nullopt};
 
     Tensor mlp_down = allocate_or_reuse(true, lnf, Config.DType, "mlp_down", B, T, C);
-    Tensor rope = allocate_or_reuse(true, qkv, Config.DType, "rope", B, T, Config.qkv_channels());
 
-    return LLamaRunState::LayerActivations{ln1_rstd, ln1, ln2_rstd, ln2, qkv, lse, rope, att, atto,
+    return LLamaRunState::LayerActivations{ln1_rstd, ln1, ln2_rstd, ln2, qkv, lse, att, atto,
                                            res_att, mlp_up, mlp_down, swiglu};
 }
 
@@ -163,10 +161,8 @@ LLamaRunState::LayerGradients RunStateBuilder::allocate_basic_bwd_tensors(Tensor
     QuantizableTensor d_qkv{allocate(Config.DType, "d_qkv", B, T, Config.qkv_channels())};
     Tensor d_ln1 = Options.KeepAllActivations ? allocate(Config.DType, "d_ln1", B, T, C) : d_lnf;
     QuantizableTensor d_res_att = Options.KeepAllActivations ? QuantizableTensor{allocate(Config.DType, "d_res_att", B, T, C)} : d_res_ffn;
-    Tensor d_rope = Options.KeepAllActivations ? allocate(Config.DType, "d_rope", B, T, Config.qkv_channels()) : d_qkv.Value;
 
-    return LLamaRunState::LayerGradients{d_res_ffn, d_swiglu, d_mlp_up, d_ln2, d_res_att, d_att_y, d_rope, d_qkv,
-                                         d_ln1};
+    return LLamaRunState::LayerGradients{d_res_ffn, d_swiglu, d_mlp_up, d_ln2, d_res_att, d_att_y, d_qkv, d_ln1};
 }
 
 std::vector<LLamaRunState::LayerGradients> RunStateBuilder::allocate_backward_buffers(Tensor d_lnf)
