@@ -155,7 +155,7 @@ std::vector<LLamaRunState::LayerActivations> RunStateBuilder::allocate_forward_b
 LLamaRunState::LayerGradients RunStateBuilder::allocate_basic_bwd_tensors(Tensor d_lnf) {
     QuantizableTensor d_res_ffn{allocate(Config.DType, "d_res_ffn", B, T, C)};
     Tensor d_swiglu = allocate(Config.DType, "d_swiglu", B, T, H);
-    QuantizableTensor d_mlp_up{allocate(Config.DType, "d_mlp_up", B, T, 2 * H)};
+    QuantizableTensor d_mlp_up{};   // this will be handled in-place
     Tensor d_ln2 = Options.KeepAllActivations ? allocate(Config.DType, "d_ln2", B, T, C) : d_lnf;
     Tensor d_att_y = Options.KeepAllActivations ? allocate(Config.DType, "d_att_y", B, T, C) : d_lnf;
     QuantizableTensor d_qkv{allocate(Config.DType, "d_qkv", B, T, Config.qkv_channels())};
@@ -352,6 +352,10 @@ LLamaRunState allocate_run_state(LLamaConfig config, LLamaOptions options, int B
     }
 
     std::vector<LLamaRunState::LayerGradients> grads = builder.allocate_backward_buffers(d_lnf);
+    for (int i = 0; i < config.NumLayers; ++i) {
+        // DMlpUp is handled in-place
+        grads[i].DMlpUp.Value = layers[i].MlpUp;
+    }
 
     std::optional<Tensor> abs_maxes;
     if(options.MatmulType.value_or(config.DType) != config.DType) {
