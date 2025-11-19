@@ -185,9 +185,9 @@ void LLamaModel::_forward_block(sLLamaBlockWeights<Tensor>& weights, sLLamaLayer
                 B, T, C, Config.qkv_channels(),
                 rs->DeviceProp, false, main_stream);
     // 2) apply RoPE to q,k (potentially in place)
-    rope_forward(acts.Rope, acts.QKV, rs->FreqCis, B, T, Hq, Hkv, Hs, main_stream);
+    rope_forward(acts.QKV, acts.QKV, rs->FreqCis, B, T, Hq, Hkv, Hs, main_stream);
     // 3) attention: att <- softmax(qk^T)v
-    attention_forward_cudnn(acts.Att.Value, acts.LSE, acts.Rope, rs->Workspace, rs->CudnnHandle, B, T, Hq, Hkv, Hs, main_stream);
+    attention_forward_cudnn(acts.Att.Value, acts.LSE, acts.QKV, rs->Workspace, rs->CudnnHandle, B, T, Hq, Hkv, Hs, main_stream);
     // quantize attention if necessary
     if(acts.Att.Quant.has_value()) {
         abs_max(acts.Att.Quant->Scales, acts.Att.Value, acts.Att.Value.nelem(), rs->DeviceProp, main_stream);
@@ -519,11 +519,11 @@ void LLamaModel::_recompute_block(sLLamaBlockWeights<Tensor>& weights, sLLamaLay
                      rs->CublasLtHandle, rs->Workspace,
                      B, T, C, Config.qkv_channels(),
                      rs->DeviceProp, !recompute_ln1, main_stream);
-        rope_forward(acts.Rope, acts.QKV, rs->FreqCis, B, T, Hq, Hkv, Hs, main_stream);
+        rope_forward(acts.QKV, acts.QKV, rs->FreqCis, B, T, Hq, Hkv, Hs, main_stream);
     }
 
     if (recompute_att) {
-        attention_forward_cudnn(acts.Att.Value, acts.LSE, acts.Rope, rs->Workspace, rs->CudnnHandle, B, T, Hq, Hkv, Hs, main_stream);
+        attention_forward_cudnn(acts.Att.Value, acts.LSE, acts.QKV, rs->Workspace, rs->CudnnHandle, B, T, Hq, Hkv, Hs, main_stream);
         // AttO not needed in backward pass; but if we want to recompute the entire transformer block, we need its output
         // to recompute the FFN part
         if (opt.RecomputeBlock) {
@@ -592,8 +592,8 @@ void LLamaModel::_backward_block(bool accumulate, sLLamaBlockWeights<Tensor>& we
     backward_qmm(d_acts.DAttY, d_weights.Attn_Out_w, std::nullopt, d_acts.DResAtt, acts.Att, weights.Attn_Out_w, std::nullopt,
                  accumulate, *rs, B, T, C, C, false, main_stream);
 
-    attention_backward_cudnn(d_acts.DRope, acts.LSE, acts.Att.Value, d_acts.DAttY, acts.Rope, rs->Workspace, rs->CudnnHandle, B, T, Hq, Hkv, Hs, main_stream);
-    rope_backward(d_acts.DQKV.Value, d_acts.DRope, rs->FreqCis, B, T, Hq, Hkv, Hs, main_stream);
+    attention_backward_cudnn(d_acts.DQKV.Value, acts.LSE, acts.Att.Value, d_acts.DAttY, acts.QKV, rs->Workspace, rs->CudnnHandle, B, T, Hq, Hkv, Hs, main_stream);
+    rope_backward(d_acts.DQKV.Value, d_acts.DQKV.Value, rs->FreqCis, B, T, Hq, Hkv, Hs, main_stream);
 
     if (d_acts.DQKV.Quant.has_value()) {
         abs_max(d_acts.DQKV.Quant->Scales, d_acts.DQKV.Value, d_acts.DQKV.Value.nelem(), rs->DeviceProp, main_stream);
