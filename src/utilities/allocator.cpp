@@ -110,6 +110,9 @@ Tensor TensorAllocator::allocate_impl(ETensorDType dtype, const char* name, EAll
         if (!m_Stats->Context.empty()){
             record_stats(m_Stats->ContextStats, m_Stats->Context, kind, allocated.bytes());
         }
+        if(mCallback) {
+            mCallback(m_Stats->Context, name, kind, allocated.bytes());
+        }
         return allocated;
     } catch (const cuda_error& error) {
         if(error.code == cudaErrorMemoryAllocation) {
@@ -234,4 +237,8 @@ std::vector<std::pair<std::string, sSegmentMemory>> TensorAllocator::get_allocat
     }
     segments.emplace_back("Other", sSegmentMemory{(long)total - (long)free - sum - reserved, 0, 0, 0});
     return segments;
+}
+
+void TensorAllocator::set_callback(std::function<void(const std::string&, const std::string&, EAllocationType, std::size_t)> cb) {
+    mCallback = std::move(cb);
 }
