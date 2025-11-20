@@ -134,6 +134,7 @@ add_library(llmq-common SHARED
         src/utilities/tensor.cpp
         src/utilities/sol.cpp
         src/utilities/dtype.cpp
+        src/utilities/stack.cpp
 
         src/training/dataloader.cpp
         src/training/logging.cpp

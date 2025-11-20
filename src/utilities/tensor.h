@@ -64,6 +64,23 @@ struct Tensor {
 
         return reinterpret_cast<TargetType*>(Data);
     }
+
+
+    template<typename Container>
+    static Tensor from_pointer(std::byte* ptr, int device, ETensorDType dtype, const Container& shape)
+    {
+        if(shape.size() > MAX_TENSOR_DIM) {
+            throw std::runtime_error("Tensor rank too large");
+        }
+
+        int rank = narrow<int>(shape.size());
+        std::array<long, MAX_TENSOR_DIM> sizes{};
+        std::copy(shape.begin(), shape.end(), sizes.begin());
+        std::fill(sizes.begin() + shape.size(), sizes.end(), 1);
+
+        return Tensor{dtype, sizes, ptr, nullptr, rank, device};
+    }
+
 };
 
 void fill_zero(Tensor& dst, cudaStream_t stream);
