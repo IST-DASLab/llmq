@@ -94,7 +94,7 @@ TensorShard::TensorShard(const Tensor& src) : Tensor(src), GlobalShape(src.Sizes
 
 std::size_t TensorShard::global_nelem() const {
     std::size_t sz = 1;
-    for (int i = 0; i < MAX_TENSOR_DIM; ++i)
+    for (int i = 0; i < Rank; ++i)
         sz *= GlobalShape[i];
     return sz;
 }

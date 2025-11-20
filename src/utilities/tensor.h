@@ -32,7 +32,7 @@ struct Tensor {
 
     [[nodiscard]] constexpr std::size_t nelem() const {
         std::size_t sz = 1;
-        for(int i = 0; i < MAX_TENSOR_DIM; ++i) {
+        for(int i = 0; i < Rank; ++i) {
             sz *= Sizes[i];
         }
         return sz;
