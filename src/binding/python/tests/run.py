@@ -14,6 +14,7 @@ class RunConfig:
     seq_len: int = 1024
     grad_accum: int = 4
     lmhead_chunks: int = 1
+    attn_bwd_chunks: int = 1
     max_steps: int = 10
 
     # Optimizer settings
@@ -118,6 +119,7 @@ def _create_options(config: RunConfig) -> pyllmq.LLamaOptions:
     options.momentum_type = config.opt_m_dtype
     options.variance_type = config.opt_v_dtype
     options.lmhead_chunks = config.lmhead_chunks
+    options.attn_bwd_chunks = config.attn_bwd_chunks
     options.offload_residual = config.offload_residual
 
     options.offload_opt_m = config.offload_opt_m
@@ -219,6 +221,8 @@ def parse_args(args: list = None) -> RunConfig:
                         help="Number of micro-batches per optimizer step")
     parser.add_argument("--lmhead-chunks", type=int, default=RunConfig.lmhead_chunks,
                         help="Number of chunks for the lm-head")
+    parser.add_argument("--attn-bwd-chunks", type=int, default=RunConfig.attn_bwd_chunks,
+                        help="Number of chunks for attention backward")
 
     # Recomputation options
     parser.add_argument("--recompute-swiglu", action="store_true",
