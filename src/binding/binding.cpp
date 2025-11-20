@@ -180,7 +180,7 @@ NB_MODULE(_pyllmq, m) {
             bool use_cuda_graphs,
             bool offload_master, bool offload_quants, bool offload_opt_m, bool offload_opt_v, bool use_zero_copy,
             bool use_write_combined, bool shard_weights, bool persistent_quants, bool shard_gradients, bool use_all_to_all_reduce,
-            bool init_projections_to_zero, int lmhead_chunks,
+            bool init_projections_to_zero, int lmhead_chunks, int attn_bwd_chunks,
             const std::string matmul_type, const std::string gradient_type, const std::string master_dtype, const std::string momentum_type, const std::string variance_type) {
             new (t) LLamaOptions{
                 .RecomputeSwiGLu = recompute_swiglu,
@@ -191,6 +191,7 @@ NB_MODULE(_pyllmq, m) {
                 .RecomputeBlock = recompute_block,
                 .OffloadResidual = offload_residual,
                 .LMHeadChunks = lmhead_chunks,
+                .AttBwdChunks = attn_bwd_chunks,
                 .UseCudaGraphs = use_cuda_graphs,
                 .OffloadMaster = offload_master,
                 .OffloadQuants = offload_quants,
@@ -221,6 +222,7 @@ NB_MODULE(_pyllmq, m) {
              nb::arg("shard_weights") = false,    nb::arg("persistent_quants") = false,
              nb::arg("shard_gradients") = false,  nb::arg("use_all_to_all_reduce") = false,
              nb::arg("init_projections_to_zero") = false, nb::arg("lmhead_chunks") = 1,
+             nb::arg("attn_bwd_chunks") = 1,
              nb::arg("matmul_type") = "",         nb::arg("gradient_type") = "",
              nb::arg("master_dtype") = "",
              nb::arg("momentum_type") = "fp32",   nb::arg("variance_type") = "fp32"
@@ -233,6 +235,7 @@ NB_MODULE(_pyllmq, m) {
         .def_rw("recompute_block", &LLamaOptions::RecomputeBlock)
         .def_rw("offload_residual", &LLamaOptions::OffloadResidual)
         .def_rw("lmhead_chunks", &LLamaOptions::LMHeadChunks)
+        .def_rw("attn_bwd_chunks", &LLamaOptions::AttBwdChunks)
         .def_rw("use_cuda_graphs", &LLamaOptions::UseCudaGraphs)
         .def_rw("offload_master", &LLamaOptions::OffloadMaster)
         .def_rw("offload_quants", &LLamaOptions::OffloadQuants)

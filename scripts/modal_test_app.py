@@ -76,7 +76,7 @@ def compare_and_create_report(result, expected):
 )
 def run_recompute_test(test_args: list[str]):
     """Run recomputation tests on Modal."""
-    from pyllmq.tests.run import parse_args, run_training, compare_results
+    from pyllmq.tests.run import parse_args, run_training
     from pyllmq.tests.recompute import disable_recompute
 
     # Parse test arguments into config

@@ -32,6 +32,7 @@ def disable_recompute(config: RunConfig):
     baseline_config.offload_master = False
     baseline_config.offload_opt_v = False
     baseline_config.offload_opt_m = False
+    baseline_config.attn_bwd_chunks = 1
     return baseline_config
 
 

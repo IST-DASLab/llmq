@@ -25,6 +25,7 @@ def setup_options(config: pyllmq.TrainingConfig) -> pyllmq.LLamaOptions:
     options.recompute_att = config.recompute_att or config.recompute_block
 
     options.lmhead_chunks = config.lmhead_chunks
+    options.attn_bwd_chunks = config.attn_bwd_chunks
 
     # Optimizer dtype
     options.momentum_type = config.opt_m_dtype
@@ -97,6 +98,7 @@ def parse_args():
     parser.add_argument("--seq-len", "--seq-length", type=int, default=default.seq_len, help="Sequence length")
     parser.add_argument("--grad-accumulation", type=int, default=default.grad_accumulation, help="Gradient accumulation steps")
     parser.add_argument("--lmhead-chunks", type=int, default=default.lmhead_chunks, help="Run LM-head in smaller chunks")
+    parser.add_argument("--attn-bwd-chunks", type=int, default=default.attn_bwd_chunks, help="Run attention backward in smaller chunks")
 
     # Optimizer
     parser.add_argument("--learning-rate", "--lr", type=float, default=default.learning_rate, help="Learning rate")
