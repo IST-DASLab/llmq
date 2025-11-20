@@ -34,7 +34,7 @@ struct LLamaOptions {
     bool OffloadQuants = false;
     bool OffloadOptM   = false;
     bool OffloadOptV   = false;
-    bool UseZeroCopy = true;
+    bool UseZeroCopy   = false;
     bool UseWriteCombined = false;
     bool ShardWeights = false;
     bool PersistentQuants = false;
