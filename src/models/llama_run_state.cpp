@@ -391,6 +391,22 @@ LLamaRunState allocate_run_state(LLamaConfig config, LLamaOptions options, long 
     return state;
 }
 
+Tensor LLamaRunState::temp_alloc(ETensorDType dtype, const std::vector<long>& shape) {
+    return mTempStack.allocate(dtype, shape);
+}
+
+void LLamaRunState::temp_acquire(Tensor& target) {
+    if(target.Device != mTempStack.device_id()) {
+        throw std::logic_error("device mismatch");
+    }
+
+    target.Data = mTempStack.allocate(target.bytes());
+}
+
+void LLamaRunState::temp_free(Tensor& tensor) {
+    mTempStack.free(tensor);
+}
+
 float get_loss(LLamaRunState& acts) {
     CUDA_CHECK(cudaEventSynchronize(acts.BackwardDone));
     return acts.LossHost[0];
@@ -408,3 +424,4 @@ Tensor& get_input_buffer(LLamaRunState& acts) {
 Tensor& get_target_buffer(LLamaRunState& acts) {
     return acts.Targets_CPU;
 }
+

@@ -8,6 +8,7 @@
 #include "llama_model.h"
 #include "llama_weights.h"
 #include "utilities/tensor.h"
+#include "utilities/stack.h"
 
 class TensorAllocator;
 using sLLamaGradients = sLLamaWeightsSet<TensorShard>;
@@ -115,6 +116,13 @@ struct LLamaRunState {
     Tensor NormBuffer;
     float* NormHost;
     float* LossHost;
+
+    // temporary buffers
+    Tensor temp_alloc(ETensorDType dtype, const std::vector<long>& shape);
+    void temp_acquire(Tensor& target);
+    void temp_free(Tensor& tensor);
+
+    DeviceMemoryStack mTempStack;
 
     // cached GPU info
     cudaDeviceProp DeviceProp;
