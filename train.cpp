@@ -168,11 +168,13 @@ void TrainingRunner::load_training_config(int argc, const char** argv) {
     }
 
     if (!std::filesystem::exists(ModelRootPath)) {
-        std::string hf_path = get_hf_model_files(ModelRootPath);
-        if (hf_path.empty()) {
-            throw std::runtime_error("Could not find model files for " + ModelRootPath);
+        if (ModelRootPath.find("/") != std::string::npos) {
+            std::string hf_path = get_hf_model_files(ModelRootPath);
+            if (hf_path.empty()) {
+                throw std::runtime_error("Could not find model files for " + ModelRootPath);
+            }
+            ModelRootPath = hf_path;
         }
-        ModelRootPath = hf_path;
     }
 
     Options.MatmulType = matmul_dtype.empty() ? std::optional<ETensorDType>{} : dtype_from_str(matmul_dtype);
