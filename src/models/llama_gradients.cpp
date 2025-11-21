@@ -147,6 +147,7 @@ void LLamaGradientsUnsharded::notify_embeddings(cudaStream_t stream, NCCLCommuni
 void LLamaGradientsUnsharded::notify_lmhead(cudaStream_t stream, NCCLCommunicator& comm) {
     if(!mIsLastMicroStep) return;
     if(mFullGradient.NonBlocks.LMHead.Data == mFullGradient.NonBlocks.Embeddings.Data) return;    // sync lmhead with embeddings
+    NvtxRange r{"notify_lmhead"};
     scatter_reduce(mFullGradient.NonBlocks.LMHead, stream, mGradEvent, comm);
 }
 
@@ -292,6 +293,7 @@ void LLamaGradientsBlockShardedBase::notify_embeddings(cudaStream_t stream, NCCL
 void LLamaGradientsBlockShardedBase::notify_lmhead(cudaStream_t stream, NCCLCommunicator& comm) {
     if(!mIsLastMicroStep) return;
     if(mFullNonBlock.LMHead.Data == mFullNonBlock.Embeddings.Data) return;    // sync lmhead with embeddings
+    NvtxRange r{"notify_lmhead"};
     scatter_reduce(mFullNonBlock.LMHead, stream, mNonBlockEvent, comm);
 }
 

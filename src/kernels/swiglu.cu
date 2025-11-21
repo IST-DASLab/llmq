@@ -202,8 +202,6 @@ void swiglu_backward_impl(floatX* dinp, const floatX* dout, const floatX* inp, f
     // input is (B, T, 2C), output is (B, T, C)
     // we have that inp[b, t, :] = [fc1, fc2] (i.e. they are concatenated in each C-fiber)
 
-    NVTX_RANGE_FN();
-
     if (abs_max)
         CUDA_CHECK(cudaMemsetAsync(abs_max, 0, sizeof(float), stream));
 

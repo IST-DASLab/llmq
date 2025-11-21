@@ -100,8 +100,11 @@ void LLamaModel::forward(Tensor inputs, NCCLCommunicator& comm, int micro_step) 
     assert(rs->Inputs.Sizes[0] >= B);
     assert(rs->Inputs.Sizes[1] >= T);
     assert(inputs.Device == -1);
-    CUDA_CHECK(cudaMemcpyAsync(rs->Inputs.Data, inputs.Data, inputs.bytes(), cudaMemcpyHostToDevice, main_stream));
-    CUDA_CHECK(cudaEventRecord(rs->TransferDone, main_stream));
+    {
+        NvtxRange r{"copy-input"};
+        CUDA_CHECK(cudaMemcpyAsync(rs->Inputs.Data, inputs.Data, inputs.bytes(), cudaMemcpyHostToDevice, main_stream));
+        CUDA_CHECK(cudaEventRecord(rs->TransferDone, main_stream));
+    }
 
     {
         NvtxRange emb_range("embedding");
@@ -153,6 +156,7 @@ void LLamaModel::forward(Tensor inputs, NCCLCommunicator& comm, int micro_step) 
     }
 
     {
+        NvtxRange r{"LNF"};
         auto& acts = rs->Acts[Config.NumLayers-1];
         Parameters->gather_lnf(comm);
         fused_residual_rmsnorm_forward(rs->get_res_ffn(Config.NumLayers - 1, main_stream), rs->LNF, rs->LNF_Rstd, acts.ResidualAtt,
