@@ -344,10 +344,10 @@ NB_MODULE(_pyllmq, m) {
             new (d) DataLoader(file_list, chunk_size, 0, 1, seed);
         }, nb::arg("file_list"), nb::arg("chunk_size"), nb::arg("seed") = 42)
         .def("load_batch", [](DataLoader* d, TokenArray inputs, TokenArray targets) {
-            Tensor inp_t{ETensorDType::INT32, {static_cast<long>(inputs.shape(0)), static_cast<long>(inputs.shape(1)), 1, 1, 1},
-                        reinterpret_cast<std::byte*>(inputs.data())};
-            Tensor tgt_t{ETensorDType::INT32, {static_cast<long>(targets.shape(0)), static_cast<long>(targets.shape(1)), 1, 1, 1},
-                        reinterpret_cast<std::byte*>(targets.data())};
+            Tensor inp_t{ETensorDType::INT32, {static_cast<long>(inputs.shape(0)), static_cast<long>(inputs.shape(1))},
+                        reinterpret_cast<std::byte*>(inputs.data()), nullptr, 2, inputs.device_id()};
+            Tensor tgt_t{ETensorDType::INT32, {static_cast<long>(targets.shape(0)), static_cast<long>(targets.shape(1))},
+                        reinterpret_cast<std::byte*>(targets.data()), nullptr, 2, inputs.device_id()};
             d->load_batch(inp_t, tgt_t);
         }, nb::arg("inputs"), nb::arg("targets"),
              "Fill inputs and targets with the next batch of data")
