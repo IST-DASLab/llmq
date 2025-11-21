@@ -195,7 +195,6 @@ void attention_forward_cudnn(nv_bfloat16* out,  // output: (B, T, Hq, HS)
                              const nv_bfloat16* inp,  // input: (B, T, Hq + Hk + Hv, HS) QKV
                              std::byte* workspace, cudnnHandle_t handle,
                              int B, int T, int Hq, int Hkv, int HS, cudaStream_t stream) {
-    NVTX_RANGE_FN();
     bool is_inference_only = (stats == nullptr);
 
     cuDNNCheck(cudnnSetStream(handle, stream));
@@ -229,8 +228,6 @@ void attention_backward_cudnn(nv_bfloat16* dqkvr,                               
                               const nv_bfloat16* dout, const nv_bfloat16* qkvr, const nv_bfloat16* o, // inputs
                               std::byte* workspace, cudnnHandle_t handle,
                               int B, int T, int Hq, int Hkv, int HS, cudaStream_t stream) {
-    NVTX_RANGE_FN();
-
     // Get graph and tensors from cache (or generate it on first use)
     auto graph = lookup_cache_or_build_graph_bwd(B, Hq, Hkv, T, HS, handle);
 

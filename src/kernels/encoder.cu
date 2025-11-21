@@ -75,7 +75,6 @@ void encoder_forward_imp(floatX* out,
                          const int* inp, const floatX* wte, const floatX* wpe,
                          int B, int T, int C, int V, cudaStream_t stream) {
     using x128 = GenericVector<floatX, 16/sizeof(floatX)>;
-    NVTX_RANGE_FN();
     constexpr int block_size = 256;
     const int N = B * T * C;
     const int grid_size = div_ceil(N, (int)(block_size * x128::size));
@@ -181,7 +180,6 @@ void encoder_backward_imp(floatX* dwte, int* scratch, // gpu outputs & scratch
                       const floatX* dout, const int* inp, const int* inputs_cpu, // cpu/gpu inputs
                       int B, int T, int C, unsigned int seed, cudaStream_t stream) {
     using x128 = GenericVector<floatX, 16/sizeof(floatX)>;
-    NVTX_RANGE_FN();
 
     int num_c_groups = div_ceil((size_t)C, x128::size * 32);
     assert(B*T*num_c_groups * (sizeof(int4)+sizeof(int)) <= B*T*3*C * sizeof(floatX));

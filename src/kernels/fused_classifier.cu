@@ -185,7 +185,6 @@ template <typename Type>
 void fused_classifier_imp(Type* logits, float* losses,
                       const float dloss, const int* targets,
                       int BT, int V, int P, bool write_dlogits, cudaStream_t stream) {
-    NVTX_RANGE_FN();
     const int block_size = 1024;
     const int grid_size = BT;
     if(write_dlogits) {
