@@ -254,10 +254,10 @@ void LLamaRunState::release_res_ffn(int layer_idx, cudaStream_t main_stream) {
     CUDA_CHECK(cudaEventRecord(status.Event, main_stream));
 }
 
-LLamaRunState allocate_run_state(LLamaConfig config, LLamaOptions options, long B, long T, std::shared_ptr<TensorAllocator> alloc) {
-    // we are *not* handling this as a single giant allocation
-    // by using independent allocations, we give sanitizers a better chance of catching errors,
-    // and we never have to worry about tensor alignment
+void LLamaRunState::init(LLamaConfig config, LLamaOptions options, long B, long T, std::shared_ptr<TensorAllocator> alloc) {
+    Options = options;
+    Allocator = alloc;
+
     long V = config.VocabSize;
     long C = config.HiddenSize;
     long H = config.IntermediateSize;
@@ -266,147 +266,131 @@ LLamaRunState allocate_run_state(LLamaConfig config, LLamaOptions options, long 
 
     int did;
     CUDA_CHECK(cudaGetDevice(&did));
-    cudaDeviceProp deviceProp;
-    CUDA_CHECK(cudaGetDeviceProperties(&deviceProp, did));
+    CUDA_CHECK(cudaGetDeviceProperties(&DeviceProp, did));
 
-    Tensor inputs = alloc->allocate(ETensorDType::INT32, "inputs", {B, T});
-    Tensor targets = alloc->allocate(ETensorDType::INT32, "targets", {B, T});
-    Tensor inputs_cpu = alloc->allocate(ETensorDType::INT32, "inputs_cpu", EAllocationType::PINNED, {B, T});
-    Tensor targets_cpu = alloc->allocate(ETensorDType::INT32, "targets_cpu", EAllocationType::PINNED, {B, T});
-    Tensor losses = alloc->allocate(ETensorDType::FP32, "losses", {B, T});
-    Tensor encoded = alloc->allocate(config.DType, "encoded", {B, T, C});
-    Tensor freq_cis = builder.generate_frequencies();
+    Inputs = alloc->allocate(ETensorDType::INT32, "inputs", {B, T});
+    Targets = alloc->allocate(ETensorDType::INT32, "targets", {B, T});
+    Inputs_CPU = alloc->allocate(ETensorDType::INT32, "inputs_cpu", EAllocationType::PINNED, {B, T});
+    Targets_CPU = alloc->allocate(ETensorDType::INT32, "targets_cpu", EAllocationType::PINNED, {B, T});
+    Losses = alloc->allocate(ETensorDType::FP32, "losses", {B, T});
+    Encoded = alloc->allocate(config.DType, "encoded", {B, T, C});
+    FreqCis = builder.generate_frequencies();
     // We're chunking the logit computation, so we can allocate a much smaller tensor.
     long out_size = div_exact(B*T, (long)options.LMHeadChunks);
-    Tensor output = alloc->allocate(config.DType, "output", {out_size, V});
-    Tensor lnf = alloc->allocate(config.DType, "lnf", {B, T, C});
-    Tensor lnf_rstd = alloc->allocate(ETensorDType::FP32, "lnf_rstd", {B, T});
-    Tensor d_lnf = alloc->allocate(config.DType, "d_lnf", {B, T, C});
-    long rms_scratch_size = get_rmsnorm_backward_scratch_size(C, deviceProp);
-    long bias_scratch_size = get_bias_backward_scratch_size(config.DType, config.qkv_channels(), deviceProp);
-    cudnnHandle_t cudnn_handle = create_cudnn_handle();
+    Output = alloc->allocate(config.DType, "output", {out_size, V});
+    LNF = alloc->allocate(config.DType, "lnf", {B, T, C});
+    LNF_Rstd = alloc->allocate(ETensorDType::FP32, "lnf_rstd", {B, T});
+    DLNF = alloc->allocate(config.DType, "d_lnf", {B, T, C});
+    long rms_scratch_size = get_rmsnorm_backward_scratch_size(C, DeviceProp);
+    long bias_scratch_size = get_bias_backward_scratch_size(config.DType, config.qkv_channels(), DeviceProp);
+    CudnnHandle = create_cudnn_handle();
 
     // batch size for chunked attention backward
     long chunk_batch_size = div_exact(B, (long)options.AttBwdChunks);
-    long ws_size = cudnn_get_workspace_size(chunk_batch_size, T, config.NumQueryHeads, config.NumKeyValHeads, config.head_size(), cudnn_handle);
+    long ws_size = cudnn_get_workspace_size(chunk_batch_size, T, config.NumQueryHeads, config.NumKeyValHeads, config.head_size(), CudnnHandle);
     ws_size = std::max(ws_size, 32l * 1024 * 1024); // Hardcoding workspace to 32MiB but only Hopper needs 32 (for others 4 is OK)
-    cublasLtHandle_t cublas_handle = create_cublaslt_handle();
-    Tensor rms_scratch = alloc->allocate(ETensorDType::BYTE, "rms_scratch", {rms_scratch_size});
-    Tensor bias_scratch = alloc->allocate(ETensorDType::FP32, "bias_scratch", {bias_scratch_size / (long)sizeof(float)});
-    Tensor cudnn_ws = alloc->allocate(ETensorDType::BYTE, "workspace", {ws_size});
-    Tensor d_emb = alloc->allocate(config.DType, "d_emb", {B, T, C});
+    CublasLtHandle = create_cublaslt_handle();
+    RMSNormScratch = alloc->allocate(ETensorDType::BYTE, "rms_scratch", {rms_scratch_size});
+    MatmulBiasScratch = alloc->allocate(ETensorDType::FP32, "bias_scratch", {bias_scratch_size / (long)sizeof(float)});
+    Workspace = alloc->allocate(ETensorDType::BYTE, "workspace", {ws_size});
+    DEmb = alloc->allocate(config.DType, "d_emb", {B, T, C});
 
-    auto layers = builder.allocate_forward_buffers(lnf);
-    std::vector<Tensor> device_residuals;
-    std::vector<Tensor> offloaded_residuals;
-    std::vector<LLamaRunState::sOffloadedResidualState> offloaded_residual_states;
-    cudaEvent_t residual_ready_event = create_named_event("residual_ready");
+    Acts = builder.allocate_forward_buffers(LNF);
+    ResidualsAreReady = create_named_event("residual_ready");
     if(options.OffloadResidual) {
-        device_residuals.reserve(2);
-        offloaded_residuals.reserve(config.NumLayers);
+        DeviceResiduals.reserve(2);
+        OffloadedResiduals.reserve(config.NumLayers);
         for(int i = 0; i < 2; ++i) {
-            device_residuals.emplace_back(alloc->allocate(config.DType, "res_ffn", {B, T, C}));
-            offloaded_residual_states.emplace_back(
+            DeviceResiduals.emplace_back(alloc->allocate(config.DType, "res_ffn", {B, T, C}));
+            OffloadedResidualState.emplace_back(
                 create_named_event((std::string("offload_res_ffn_") + std::to_string(i)).c_str()),
                 -1, false
-                );
+            );
         }
         for(int i = 0; i < config.NumLayers; ++i) {
-            offloaded_residuals.push_back(
+            OffloadedResiduals.push_back(
                 alloc->allocate(config.DType, "ffn-res-off", EAllocationType::PINNED, {B, T, C}));
         }
     } else {
-        device_residuals.reserve(config.NumLayers);
+        DeviceResiduals.reserve(config.NumLayers);
         for(int i = 0; i < config.NumLayers; ++i) {
-            device_residuals.emplace_back(alloc->allocate(config.DType, "res_ffn", {B, T, C}));
+            DeviceResiduals.emplace_back(alloc->allocate(config.DType, "res_ffn", {B, T, C}));
         }
     }
 
     long num_c_groups = div_ceil(C, (long)(16 / get_dtype_size(config.DType) * 32));
-    Tensor enc_bw_scratch = alloc->allocate(ETensorDType::INT32, "enc_bw_scratch", {B, T, num_c_groups * 5});
-    Tensor enc_bw_idx = alloc->allocate(ETensorDType::INT32, "enc_bw_idx", EAllocationType::PINNED, {B, T, num_c_groups});
-    Tensor env_bw_info = alloc->allocate(ETensorDType::INT32, "env_bw_info", EAllocationType::PINNED, {B, T, 4 * num_c_groups});
+    EncoderBwdScratch = alloc->allocate(ETensorDType::INT32, "enc_bw_scratch", {B, T, num_c_groups * 5});
+    EncoderBwdIndices = alloc->allocate(ETensorDType::INT32, "enc_bw_idx", EAllocationType::PINNED, {B, T, num_c_groups});
+    EncoderBwdInfo = alloc->allocate(ETensorDType::INT32, "env_bw_info", EAllocationType::PINNED, {B, T, 4 * num_c_groups});
 
-    Tensor wgt_tp_buffer;
-    Tensor act_tp_buffer;
-    Tensor grd_tp_buffer;
     if(options.grad_dtype() == ETensorDType::FP8_E4M3 || options.grad_dtype() == ETensorDType::FP8_E5M2) {
-        wgt_tp_buffer = alloc->allocate(ETensorDType::FP8_E4M3, "wgt_tp_buffer", {config.HiddenSize, 2 * config.IntermediateSize});
-        act_tp_buffer = alloc->allocate(ETensorDType::FP8_E4M3, "act_tp_buffer", {H, B, T});
-        grd_tp_buffer = alloc->allocate(options.grad_dtype(), "grd_tp_buffer", {2*H, B, T});
-    } else {
-        // no TP buffers needed
+        WeightTranspose = alloc->allocate(ETensorDType::FP8_E4M3, "wgt_tp_buffer", {config.HiddenSize, 2 * config.IntermediateSize});
+        ActivationTranspose = alloc->allocate(ETensorDType::FP8_E4M3, "act_tp_buffer", {H, B, T});
+        GradientTranspose = alloc->allocate(options.grad_dtype(), "grd_tp_buffer", {2*H, B, T});
     }
 
-    Tensor norm_buffer = alloc->allocate(ETensorDType::FP32, "norm_buffer", {get_max_num_block_sums(deviceProp)});
+    NormBuffer = alloc->allocate(ETensorDType::FP32, "norm_buffer", {get_max_num_block_sums(DeviceProp)});;
     Tensor host_buffer = alloc->allocate(ETensorDType::FP32, "host_buffer", EAllocationType::PINNED, {2});
+    NormHost = host_buffer.get<float>();
+    LossHost = host_buffer.get<float>() + 1;
 
-    cudaStream_t main_stream = create_named_stream("main stream");
-    cudaStream_t side_stream = create_named_stream("side stream");
+    MainStream = create_named_stream("main stream");
+    SideStream = create_named_stream("side stream");
 
-    cudaEvent_t side_stream_event = create_named_event("side stream event");
+    SideStreamEvent = create_named_event("side stream event");
 
-    cudaEvent_t forward_done_event = create_named_event("forward done");
-    cudaEvent_t backward_done_event = create_named_event("backward done");
-    cudaEvent_t norm_done_event = create_named_event("norm done");
-    cudaEvent_t lmhead_done = create_named_event("optimizer lmhead done");
-    cudaEvent_t optimizer_done_event = create_named_event("optimizer done");
-    cudaEvent_t transfer_done_event = create_named_event("transfer done");
+    ForwardDone = create_named_event("forward done");
+    BackwardDone = create_named_event("backward done");
+    NormDone = create_named_event("norm done");
+    OptEmbeddingsDone = create_named_event("optimizer lmhead done");
+    OptimizerDone = create_named_event("optimizer done");
+    TransferDone = create_named_event("transfer done");
 
-    std::vector<cudaEvent_t> optimizer_events;
     for(int i = 0; i < config.NumLayers + 1; ++i) {
-        optimizer_events.push_back(create_named_event(("opt " + std::to_string(i) + " done").c_str()));
+        LayerUpdateDone.push_back(create_named_event(("opt " + std::to_string(i) + " done").c_str()));
     }
 
-    std::vector<LLamaRunState::LayerGradients> grads = builder.allocate_backward_buffers(d_lnf);
+    DActs = builder.allocate_backward_buffers(DLNF);
     for (int i = 0; i < config.NumLayers; ++i) {
         // DMlpUp is handled in-place
-        grads[i].DMlpUp.Value = layers[i].MlpUp;
+        DActs[i].DMlpUp.Value = Acts[i].MlpUp;
     }
 
-    std::optional<Tensor> abs_maxes;
     if(options.matmul_dtype() != config.DType) {
-        abs_maxes = alloc->allocate(ETensorDType::FP32, "abs_max", {config.NumLayers, 6l*QWEN2_NUM_LINEAR_OPS});
-        float* abs_max_ptr = abs_maxes->get<float>();
+        AbsMaxes = alloc->allocate(ETensorDType::FP32, "abs_max", {config.NumLayers, 6l*QWEN2_NUM_LINEAR_OPS});
+        float* abs_max_ptr = AbsMaxes->get<float>();
         for(int i = 0; i < config.NumLayers; ++i) {
             float* layer_abs_maxes = abs_max_ptr + 6 * QWEN2_NUM_LINEAR_OPS * i;
 
-            layers[i].LN1.Quant->Scales = layer_abs_maxes + 0;
-            layers[i].QKV.Scales = layer_abs_maxes + 2;
-            grads.at(i).DQKV.Quant->Scales = layer_abs_maxes + 3;
-            grads.at(i).DLN1.Scales = layer_abs_maxes + 4;
+            Acts[i].LN1.Quant->Scales = layer_abs_maxes + 0;
+            Acts[i].QKV.Scales = layer_abs_maxes + 2;
+            DActs.at(i).DQKV.Quant->Scales = layer_abs_maxes + 3;
+            DActs.at(i).DLN1.Scales = layer_abs_maxes + 4;
 
-            layers[i].Att.Quant->Scales = layer_abs_maxes + 6;
-            layers[i].AttO.Scales = layer_abs_maxes + 8;
-            grads.at(i).DResAtt.Quant->Scales = layer_abs_maxes + 9;
-            grads.at(i).DAttY.Scales = layer_abs_maxes + 10;
+            Acts[i].Att.Quant->Scales = layer_abs_maxes + 6;
+            Acts[i].AttO.Scales = layer_abs_maxes + 8;
+            DActs.at(i).DResAtt.Quant->Scales = layer_abs_maxes + 9;
+            DActs.at(i).DAttY.Scales = layer_abs_maxes + 10;
 
-            layers[i].LN2.Quant->Scales = layer_abs_maxes + 12;
-            layers[i].MlpUp.Scales = layer_abs_maxes + 14;
-            grads.at(i).DMlpUp.Quant->Scales = layer_abs_maxes + 15;
-            grads.at(i).DLN2.Scales = layer_abs_maxes + 16;
+            Acts[i].LN2.Quant->Scales = layer_abs_maxes + 12;
+            Acts[i].MlpUp.Scales = layer_abs_maxes + 14;
+            DActs.at(i).DMlpUp.Quant->Scales = layer_abs_maxes + 15;
+            DActs.at(i).DLN2.Scales = layer_abs_maxes + 16;
 
-            layers[i].SwiGLu.Quant->Scales = layer_abs_maxes + 18;
-            layers[i].MlpDown.Scales = layer_abs_maxes + 20;
-            grads.at(i).DResFFN.Quant->Scales = layer_abs_maxes + 21;
-            grads.at(i).DSwiGLU.Scales = layer_abs_maxes + 22;
+            Acts[i].SwiGLu.Quant->Scales = layer_abs_maxes + 18;
+            Acts[i].MlpDown.Scales = layer_abs_maxes + 20;
+            DActs.at(i).DResFFN.Quant->Scales = layer_abs_maxes + 21;
+            DActs.at(i).DSwiGLU.Scales = layer_abs_maxes + 22;
         }
     }
 
-    Tensor mm_scales = alloc->allocate(ETensorDType::FP32, "mm_scales", {2});
+    MatmulScales = alloc->allocate(ETensorDType::FP32, "mm_scales", {2});
+}
 
-    return LLamaRunState{inputs, targets, inputs_cpu, targets_cpu, losses,
-                         encoded, freq_cis, output, lnf, lnf_rstd, std::move(layers),
-                         std::move(device_residuals), std::move(offloaded_residuals), std::move(offloaded_residual_states),
-                         std::move(grads),
-                         d_lnf, d_emb, rms_scratch, bias_scratch, cudnn_ws, enc_bw_scratch, enc_bw_idx, env_bw_info,
-                         wgt_tp_buffer, act_tp_buffer, grd_tp_buffer,
-                         abs_maxes, mm_scales,
-                         norm_buffer, host_buffer.get<float>(), host_buffer.get<float>() + 1,
-                         options, std::move(alloc), deviceProp, main_stream, side_stream, side_stream_event,
-                         forward_done_event, backward_done_event, transfer_done_event, norm_done_event, lmhead_done,
-                         std::move(optimizer_events), optimizer_done_event, residual_ready_event,
-                         nullptr, nullptr, nullptr, cudnn_handle, cublas_handle};
+LLamaRunState allocate_run_state(LLamaConfig config, LLamaOptions options, long B, long T, std::shared_ptr<TensorAllocator> alloc) {
+    LLamaRunState state;
+    state.init(config, options, B, T, alloc);
+    return state;
 }
 
 float get_loss(LLamaRunState& acts) {
