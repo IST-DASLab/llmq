@@ -321,12 +321,6 @@ void LLamaRunState::init(LLamaConfig config, long B, long T) {
     EncoderBwdIndices = alloc->allocate(ETensorDType::INT32, "enc_bw_idx", EAllocationType::PINNED, {B, T, num_c_groups});
     EncoderBwdInfo = alloc->allocate(ETensorDType::INT32, "env_bw_info", EAllocationType::PINNED, {B, T, 4 * num_c_groups});
 
-    if(Options.grad_dtype() == ETensorDType::FP8_E4M3 || Options.grad_dtype() == ETensorDType::FP8_E5M2) {
-        WeightTranspose = alloc->allocate(ETensorDType::FP8_E4M3, "wgt_tp_buffer", {config.HiddenSize, 2 * config.IntermediateSize});
-        ActivationTranspose = alloc->allocate(ETensorDType::FP8_E4M3, "act_tp_buffer", {H, B, T});
-        GradientTranspose = alloc->allocate(Options.grad_dtype(), "grd_tp_buffer", {2*H, B, T});
-    }
-
     NormBuffer = alloc->allocate(ETensorDType::FP32, "norm_buffer", {get_max_num_block_sums(DeviceProp)});;
     Tensor host_buffer = alloc->allocate(ETensorDType::FP32, "host_buffer", EAllocationType::PINNED, {2});
     NormHost = host_buffer.get<float>();
@@ -382,6 +376,27 @@ void LLamaRunState::init(LLamaConfig config, long B, long T) {
         }
     }
 
+    // create a dummy stack and simulate the way we're going to use temporaries later, to determine how much we need to allocate
+    DeviceMemoryStack activation_stack(nullptr, 1024*1024*1024*1024ll, Inputs.Device);
+
+    auto bw_qmm = [&](int B, int T, int C, int OC) {
+        if(Options.grad_dtype() == ETensorDType::FP8_E4M3 || Options.grad_dtype() == ETensorDType::FP8_E5M2) {
+            auto wgt_tp = activation_stack.allocate(ETensorDType::FP8_E4M3, {C, OC});
+            activation_stack.free(wgt_tp.Data);
+            auto act_tp = activation_stack.allocate(ETensorDType::FP8_E4M3, {C, B * T});
+            auto grd_tp = activation_stack.allocate(Options.grad_dtype(), {OC, B * T});
+            activation_stack.free(grd_tp.Data);
+            activation_stack.free(act_tp.Data);
+        }
+    };
+
+    // simulate to determine required stack size
+    bw_qmm(B, T, H, C);         // backward qmm swiglu
+    bw_qmm(B, T, C, 2 * H);     // backward qmm up
+
+    long required_size = activation_stack.max_utilization();
+    mTempStack = DeviceMemoryStack{alloc->allocate(ETensorDType::BYTE, "temporaries", {required_size}).Data, (std::size_t)required_size, Inputs.Device};
+
     MatmulScales = alloc->allocate(ETensorDType::FP32, "mm_scales", {2});
 }
 
@@ -392,7 +407,7 @@ LLamaRunState allocate_run_state(LLamaConfig config, LLamaOptions options, long 
 }
 
 Tensor LLamaRunState::temp_alloc(ETensorDType dtype, const std::vector<long>& shape) {
-    return mTempStack.allocate(dtype, shape);
+    return  mTempStack.allocate(dtype, shape);
 }
 
 void LLamaRunState::temp_acquire(Tensor& target) {
@@ -424,4 +439,3 @@ Tensor& get_input_buffer(LLamaRunState& acts) {
 Tensor& get_target_buffer(LLamaRunState& acts) {
     return acts.Targets_CPU;
 }
-
