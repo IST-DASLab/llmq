@@ -53,7 +53,6 @@ struct sLLamaLayerGradients {
 };
 
 struct LLamaRunState {
-    using QTensor = QuantizableTensor;
     using LayerActivations = ::sLLamaLayerActivations;
     using LayerGradients = ::sLLamaLayerGradients;
 
@@ -132,12 +131,14 @@ struct LLamaRunState {
     cudaEvent_t OptimizerDone;      //!< recorded after the optimizer completes
     cudaEvent_t ResidualsAreReady;  //!< recorded after the residuals have been calculated in forward, indicating that they may be offloaded
 
-    cudaGraphExec_t GlobalNormGraph;
-    cudaGraphExec_t ForwardBlockGraph;
-    cudaGraphExec_t BackwardBlockGraph;
+    cudaGraphExec_t GlobalNormGraph = nullptr;
+    cudaGraphExec_t ForwardBlockGraph = nullptr;
+    cudaGraphExec_t BackwardBlockGraph = nullptr;
 
     cudnnHandle_t CudnnHandle;
     cublasLtHandle_t CublasLtHandle;
+
+    void init(LLamaConfig config, LLamaOptions options, long B, long T, std::shared_ptr<TensorAllocator> alloc);
 };
 
 LLamaRunState allocate_run_state(LLamaConfig config, LLamaOptions options, long B, long T, std::shared_ptr<TensorAllocator> alloc);
