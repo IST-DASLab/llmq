@@ -105,10 +105,6 @@ struct LLamaRunState {
     Tensor EncoderBwdIndices;   // (B, T, 1 * C / (x128::size * 32)) [on CPU!]
     Tensor EncoderBwdInfo;      // (B, T, 4 * C / (x128::size * 32)) [on CPU!]
 
-    Tensor WeightTranspose;
-    Tensor ActivationTranspose;
-    Tensor GradientTranspose;
-
     std::optional<Tensor> AbsMaxes; // (L, ...)
     Tensor MatmulScales;        // 2 floats
 

@@ -298,15 +298,9 @@ void backward_qmm(Tensor& dinp, Tensor& dweight, std::optional<Tensor> dbias,
 
         quantize_with_abs_max(dout.Quant.value(), dout.Value, dout_scale, B*T*OC, rs.DeviceProp, stream);
 
-        if(reuse_inp) {
-            // inp is already quantized from the forward pass, so just transpose here
-            transpose(rs.ActivationTranspose, inp.Quant.value(), B*T, C, stream);
-        } else {
-            // even though we're re-using (and overwriting) the main tensor, each tensor still has its own version
-            // of the absmax-scale, so we can reuse the existing scale from the forward pass
-            quantize_and_transpose_with_abs_max(rs.ActivationTranspose, inp.Value, act_scale, B*T, C, rs.DeviceProp, stream);
-        }
-        transpose(rs.WeightTranspose, weight, OC, C, stream);
+        auto& inp_q = inp.Quant.value();
+        auto weight_tp = rs.temp_alloc(inp_q.DType, {C, OC});
+        transpose(weight_tp, weight, OC, C, stream);
 
         float scale = 1.f;
         switch(weight.DType) {
@@ -317,13 +311,26 @@ void backward_qmm(Tensor& dinp, Tensor& dweight, std::optional<Tensor> dbias,
         matmul_out_scale(dinp_scale, dout_scale, wgt_scale, 1.f / scale / scale, stream);
         matmul_out_scale(dwgt_scale, dout_scale, act_scale, 1.f / scale / scale, stream);
 
-        matmul(dinp, rs.WeightTranspose, dout.Quant.value(), std::nullopt, dinp_scale, rs.CublasLtHandle, rs.Workspace, C, B*T, OC, EMMTranspose::TN, false, stream);
+        matmul(dinp, weight_tp, dout.Quant.value(), std::nullopt, dinp_scale, rs.CublasLtHandle, rs.Workspace, C, B*T, OC, EMMTranspose::TN, false, stream);
+        rs.temp_free(weight_tp);
 
-        transpose(rs.GradientTranspose, dout.Quant.value(), B*T, OC, stream);
-        matmul(dweight, rs.ActivationTranspose, rs.GradientTranspose, std::nullopt, dwgt_scale, rs.CublasLtHandle, rs.Workspace, C, OC, B*T, EMMTranspose::TN, accumulate_gradient, stream);
+        auto activation_tp = rs.temp_alloc(inp_q.DType, {C, B*T});
+        auto grad_tp = rs.temp_alloc(rs.Options.grad_dtype(), {OC, B*T});
+        if(reuse_inp) {
+            // inp is already quantized from the forward pass, so just transpose here
+            transpose(activation_tp, inp_q, B*T, C, stream);
+        } else {
+            // even though we're re-using (and overwriting) the main tensor, each tensor still has its own version
+            // of the absmax-scale, so we can reuse the existing scale from the forward pass
+            quantize_and_transpose_with_abs_max(activation_tp, inp.Value, act_scale, B*T, C, rs.DeviceProp, stream);
+        }
+        transpose(grad_tp, dout.Quant.value(), B*T, OC, stream);
+        matmul(dweight, activation_tp, grad_tp, std::nullopt, dwgt_scale, rs.CublasLtHandle, rs.Workspace, C, OC, B*T, EMMTranspose::TN, accumulate_gradient, stream);
         if (dbias.has_value()) {
             backward_bias(dbias.value(), dout.Quant.value(), dout_scale, bias_buffer.value(), B, T, OC, rs.DeviceProp, stream);
         }
+        rs.temp_free(grad_tp);
+        rs.temp_free(activation_tp);
     }
 }
 
