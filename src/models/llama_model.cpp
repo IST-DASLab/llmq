@@ -181,20 +181,20 @@ void LLamaModel::_forward_block(sLLamaBlockWeights<Tensor>& weights, sLLamaLayer
 
     // 1) projection to QKV vectors (note k,v may be fewer heads than q)
     forward_qmm(acts.QKV, acts.LN1, weights.Attn_QKV_w, weights.Attn_QKV_b,
-                rs->CublasLtHandle, rs->Workspace,
+                rs->CublasLtHandle, rs->CuBlasWorkspace,
                 B, T, C, Config.qkv_channels(),
                 rs->DeviceProp, false, main_stream);
     // 2) apply RoPE to q,k (potentially in place)
     rope_forward(acts.QKV, acts.QKV, rs->FreqCis, B, T, Hq, Hkv, Hs, main_stream);
     // 3) attention: att <- softmax(qk^T)v
-    attention_forward_cudnn(acts.Att.Value, acts.LSE, acts.QKV, rs->Workspace, rs->CudnnHandle, B, T, Hq, Hkv, Hs, main_stream);
+    attention_forward_cudnn(acts.Att.Value, acts.LSE, acts.QKV, rs->CuBlasWorkspace, rs->CudnnHandle, B, T, Hq, Hkv, Hs, main_stream);
     // quantize attention if necessary
     if(acts.Att.Quant.has_value()) {
         abs_max(acts.Att.Quant->Scales, acts.Att.Value, acts.Att.Value.nelem(), rs->DeviceProp, main_stream);
     }
 
     forward_qmm(acts.AttO, acts.Att, weights.Attn_Out_w, std::nullopt,
-                rs->CublasLtHandle, rs->Workspace,
+                rs->CublasLtHandle, rs->CuBlasWorkspace,
                 B, T, C, C,
                 rs->DeviceProp, false, main_stream);
 
@@ -202,13 +202,13 @@ void LLamaModel::_forward_block(sLLamaBlockWeights<Tensor>& weights, sLLamaLayer
                                    quant_abs_max_ptr(acts.LN2), Config.RmsNormEps, B * T, C, main_stream);
 
     forward_qmm(acts.MlpUp, acts.LN2, weights.MLP_Up_w, std::nullopt,
-                rs->CublasLtHandle, rs->Workspace,
+                rs->CublasLtHandle, rs->CuBlasWorkspace,
                 B, T, C, 2 * D,
                 rs->DeviceProp, false, main_stream);
     swiglu_forward(acts.SwiGLu.Value, acts.MlpUp, quant_abs_max_ptr(acts.SwiGLu), B, T, D, main_stream);
 
     forward_qmm(acts.MlpDown, acts.SwiGLu, weights.MLP_Down_w, std::nullopt,
-                rs->CublasLtHandle, rs->Workspace,
+                rs->CublasLtHandle, rs->CuBlasWorkspace,
                 B, T, D, C,
                 rs->DeviceProp, false, main_stream);
 }
@@ -251,7 +251,7 @@ float LLamaModel::validate(Tensor inputs, Tensor targets, NCCLCommunicator& comm
         losses.Data += nano_step * nano_batch_size * get_dtype_size(losses.DType);
 
         matmul(rs->Output, Parameters->get_head(main_stream), lnf_slice,
-               std::nullopt, nullptr, rs->CublasLtHandle, rs->Workspace, V, nano_batch_size, C, EMMTranspose::TN, false, main_stream);
+               std::nullopt, nullptr, rs->CublasLtHandle, rs->CuBlasWorkspace, V, nano_batch_size, C, EMMTranspose::TN, false, main_stream);
 
         // accumulate the losses inside rs->losses, and kick off the backward pass inside the fused classifier
         fused_classifier(rs->Output, losses, d_loss, tgt, nano_batch_size, V, Vp, true, main_stream);
@@ -271,8 +271,8 @@ void backward_qmm(Tensor& dinp, Tensor& dweight, std::optional<Tensor> dbias,
                   int B, int T, int C, int OC,
                   bool reuse_inp, cudaStream_t stream) {
     if (weight.DType == inp.Value.DType) {
-        matmul(dinp, weight, dout.Value, std::nullopt, nullptr, rs.CublasLtHandle, rs.Workspace, C, B*T, OC, EMMTranspose::NN, false, stream);
-        matmul(dweight, inp.Value, dout.Value, std::nullopt, nullptr, rs.CublasLtHandle, rs.Workspace, C, OC, B*T, EMMTranspose::NT, accumulate_gradient, stream);
+        matmul(dinp, weight, dout.Value, std::nullopt, nullptr, rs.CublasLtHandle, rs.CuBlasWorkspace, C, B*T, OC, EMMTranspose::NN, false, stream);
+        matmul(dweight, inp.Value, dout.Value, std::nullopt, nullptr, rs.CublasLtHandle, rs.CuBlasWorkspace, C, OC, B*T, EMMTranspose::NT, accumulate_gradient, stream);
 
         if (dbias.has_value()) {
             backward_bias(dbias.value(), dout.Value, nullptr, bias_buffer.value(), B, T, OC, rs.DeviceProp, stream);
@@ -283,8 +283,8 @@ void backward_qmm(Tensor& dinp, Tensor& dweight, std::optional<Tensor> dbias,
             quantize_with_abs_max(inp.Quant.value(), inp.Value, nullptr, B*T*C, rs.DeviceProp, stream);
         }
 
-        matmul(dinp, weight, dout.Quant.value(), std::nullopt, nullptr, rs.CublasLtHandle, rs.Workspace, C, B*T, OC, EMMTranspose::NN, false, stream);
-        matmul(dweight, inp.Quant.value(), dout.Quant.value(), std::nullopt, nullptr, rs.CublasLtHandle, rs.Workspace, C, OC, B*T, EMMTranspose::NT, accumulate_gradient, stream);
+        matmul(dinp, weight, dout.Quant.value(), std::nullopt, nullptr, rs.CublasLtHandle, rs.CuBlasWorkspace, C, B*T, OC, EMMTranspose::NN, false, stream);
+        matmul(dweight, inp.Quant.value(), dout.Quant.value(), std::nullopt, nullptr, rs.CublasLtHandle, rs.CuBlasWorkspace, C, OC, B*T, EMMTranspose::NT, accumulate_gradient, stream);
 
         if (dbias.has_value()) {
             backward_bias(dbias.value(), dout.Value, nullptr, bias_buffer.value(), B, T, OC, rs.DeviceProp, stream);
@@ -311,7 +311,7 @@ void backward_qmm(Tensor& dinp, Tensor& dweight, std::optional<Tensor> dbias,
         matmul_out_scale(dinp_scale, dout_scale, wgt_scale, 1.f / scale / scale, stream);
         matmul_out_scale(dwgt_scale, dout_scale, act_scale, 1.f / scale / scale, stream);
 
-        matmul(dinp, weight_tp, dout.Quant.value(), std::nullopt, dinp_scale, rs.CublasLtHandle, rs.Workspace, C, B*T, OC, EMMTranspose::TN, false, stream);
+        matmul(dinp, weight_tp, dout.Quant.value(), std::nullopt, dinp_scale, rs.CublasLtHandle, rs.CuBlasWorkspace, C, B*T, OC, EMMTranspose::TN, false, stream);
         rs.temp_free(weight_tp);
 
         auto activation_tp = rs.temp_alloc(inp_q.DType, {C, B*T});
@@ -325,7 +325,7 @@ void backward_qmm(Tensor& dinp, Tensor& dweight, std::optional<Tensor> dbias,
             quantize_and_transpose_with_abs_max(activation_tp, inp.Value, act_scale, B*T, C, rs.DeviceProp, stream);
         }
         transpose(grad_tp, dout.Quant.value(), B*T, OC, stream);
-        matmul(dweight, activation_tp, grad_tp, std::nullopt, dwgt_scale, rs.CublasLtHandle, rs.Workspace, C, OC, B*T, EMMTranspose::TN, accumulate_gradient, stream);
+        matmul(dweight, activation_tp, grad_tp, std::nullopt, dwgt_scale, rs.CublasLtHandle, rs.CuBlasWorkspace, C, OC, B*T, EMMTranspose::TN, accumulate_gradient, stream);
         if (dbias.has_value()) {
             backward_bias(dbias.value(), dout.Quant.value(), dout_scale, bias_buffer.value(), B, T, OC, rs.DeviceProp, stream);
         }
@@ -461,7 +461,7 @@ void LLamaModel::_backward_lmhead(long B, long T, int micro_step, int grad_accum
         dlnf_slice.Data += nano_step * nano_batch_size * C * get_dtype_size(dlnf_slice.DType);
 
         matmul(rs->Output, Parameters->get_head(main_stream), lnf_slice,
-               std::nullopt, nullptr, rs->CublasLtHandle, rs->Workspace, V, nano_batch_size, C, EMMTranspose::TN,
+               std::nullopt, nullptr, rs->CublasLtHandle, rs->CuBlasWorkspace, V, nano_batch_size, C, EMMTranspose::TN,
                false, main_stream);
 
         // accumulate the losses inside rs->losses, and kick off the backward pass inside the fused classifier
@@ -482,7 +482,7 @@ void LLamaModel::_backward_lmhead(long B, long T, int micro_step, int grad_accum
         auto& d_lmhead = Grads->get_lmhead_full(main_stream, comm, accumulate);
         accumulate |= nano_step != 0;
         matmul(d_lmhead, lnf_slice, rs->Output, std::nullopt, get_device_one(),
-               rs->CublasLtHandle, rs->Workspace, C, V, nano_batch_size, EMMTranspose::NT, accumulate, main_stream);
+               rs->CublasLtHandle, rs->CuBlasWorkspace, C, V, nano_batch_size, EMMTranspose::NT, accumulate, main_stream);
         if (nano_step == nano_batches - 1) {
             Grads->notify_lmhead(main_stream, comm);
         }
@@ -490,7 +490,7 @@ void LLamaModel::_backward_lmhead(long B, long T, int micro_step, int grad_accum
         // for some reason, we cannot set scale == nullptr here ?!
         // so instead supply the value one (get_device_one())
         matmul(dlnf_slice, Parameters->get_head(main_stream), rs->Output, std::nullopt, get_device_one(),
-               rs->CublasLtHandle, rs->Workspace, C, nano_batch_size, V, EMMTranspose::NN, false, main_stream);
+               rs->CublasLtHandle, rs->CuBlasWorkspace, C, nano_batch_size, V, EMMTranspose::NN, false, main_stream);
 
     }
     Parameters->release_head(main_stream);
@@ -529,19 +529,19 @@ void LLamaModel::_recompute_block(sLLamaBlockWeights<Tensor>& weights, sLLamaLay
         //                2) we recompute RMSNorm; then, acts.LN1 will be correct, but its quantized version will not, so
         //                   we have to re-quantize
         forward_qmm(acts.QKV, acts.LN1, weights.Attn_QKV_w, weights.Attn_QKV_b,
-                     rs->CublasLtHandle, rs->Workspace,
+                     rs->CublasLtHandle, rs->CuBlasWorkspace,
                      B, T, C, Config.qkv_channels(),
                      rs->DeviceProp, !recompute_ln1, main_stream);
         rope_forward(acts.QKV, acts.QKV, rs->FreqCis, B, T, Hq, Hkv, Hs, main_stream);
     }
 
     if (recompute_att) {
-        attention_forward_cudnn(acts.Att.Value, acts.LSE, acts.QKV, rs->Workspace, rs->CudnnHandle, B, T, Hq, Hkv, Hs, main_stream);
+        attention_forward_cudnn(acts.Att.Value, acts.LSE, acts.QKV, rs->CuBlasWorkspace, rs->CudnnHandle, B, T, Hq, Hkv, Hs, main_stream);
         // AttO not needed in backward pass; but if we want to recompute the entire transformer block, we need its output
         // to recompute the FFN part
         if (opt.RecomputeBlock) {
             forward_qmm(acts.AttO, acts.Att, weights.Attn_Out_w, std::nullopt,
-                         rs->CublasLtHandle, rs->Workspace,
+                         rs->CublasLtHandle, rs->CuBlasWorkspace,
                          B, T, C, C,
                          rs->DeviceProp, false, main_stream);
         }
@@ -560,7 +560,7 @@ void LLamaModel::_recompute_block(sLLamaBlockWeights<Tensor>& weights, sLLamaLay
 
     if(opt.RecomputeFFN) {
         forward_qmm(acts.MlpUp, acts.LN2, weights.MLP_Up_w, std::nullopt,
-                         rs->CublasLtHandle, rs->Workspace,
+                         rs->CublasLtHandle, rs->CuBlasWorkspace,
                          B, T, C, 2 * D,
                          rs->DeviceProp, false, main_stream);
     }
@@ -605,6 +605,7 @@ void LLamaModel::_backward_block(bool accumulate, sLLamaBlockWeights<Tensor>& we
     backward_qmm(d_acts.DAttY, d_weights.Attn_Out_w, std::nullopt, d_acts.DResAtt, acts.Att, weights.Attn_Out_w, std::nullopt,
                  accumulate, *rs, B, T, C, C, false, main_stream);
 
+    rs->temp_acquire(rs->CuDNNWorkspace);
     for (int i=0; i < Options.AttBwdChunks; ++i) {
         long chunk_batch_size = div_exact(B, (long)Options.AttBwdChunks);
         Tensor d_qkv = shard_view(d_acts.DQKV.Value, i, Options.AttBwdChunks);
@@ -612,9 +613,10 @@ void LLamaModel::_backward_block(bool accumulate, sLLamaBlockWeights<Tensor>& we
         Tensor att = shard_view(acts.Att.Value, i, Options.AttBwdChunks);
         Tensor d_atty = shard_view(d_acts.DAttY, i, Options.AttBwdChunks);
         Tensor qkv = shard_view(acts.QKV, i, Options.AttBwdChunks);
-        attention_backward_cudnn(d_qkv, lse, att, d_atty, qkv, rs->Workspace, rs->CudnnHandle,
+        attention_backward_cudnn(d_qkv, lse, att, d_atty, qkv, rs->CuDNNWorkspace, rs->CudnnHandle,
             chunk_batch_size, T, Hq, Hkv, Hs, main_stream);
     }
+    rs->temp_free(rs->CuDNNWorkspace);
     rope_backward(d_acts.DQKV.Value, d_acts.DQKV.Value, rs->FreqCis, B, T, Hq, Hkv, Hs, main_stream);
 
     if (d_acts.DQKV.Quant.has_value()) {
