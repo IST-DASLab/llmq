@@ -593,13 +593,21 @@ void LLamaModel::_backward_block(bool accumulate, sLLamaBlockWeights<Tensor>& we
 
     // backward the 2nd matmul of MLP
     // note that _recompute_block guarantees that if SwiGLu is already quantized (if necessary)
+    rs->temp_acquire(d_acts.DSwiGLU);
     backward_qmm(d_acts.DSwiGLU, d_weights.MLP_Down_w, std::nullopt, d_acts.DResFFN, acts.SwiGLu, weights.MLP_Down_w, std::nullopt,
                  accumulate, *rs, B, T, D, C, true, main_stream);
 
     swiglu_backward(d_acts.DMlpUp.Value, d_acts.DSwiGLU, acts.MlpUp, quant_abs_max_ptr(d_acts.DMlpUp), B, T, D, main_stream);
+    rs->temp_free(d_acts.DSwiGLU);
 
+    if(d_acts.DMlpUp.Quant.has_value()) {
+        rs->temp_acquire(d_acts.DMlpUp.Quant.value());
+    }
     backward_qmm(d_acts.DLN2, d_weights.MLP_Up_w, std::nullopt, d_acts.DMlpUp, acts.LN2, weights.MLP_Up_w, std::nullopt,
                  accumulate, *rs, B, T, C, 2 * D, !rs->Options.RecomputeRMSNorm, main_stream);
+    if(d_acts.DMlpUp.Quant.has_value()) {
+        rs->temp_free(d_acts.DMlpUp.Quant.value());
+    }
 
     // rmsnorm backward does += to the dresidual, so it correctly accumulates grad from the MLP block above
     rmsnorm_backward(d_acts.DResAtt.Value, d_weights.LN2_w, rs->RMSNormScratch, d_acts.DResFFN.Value, d_acts.DLN2,
@@ -609,6 +617,7 @@ void LLamaModel::_backward_block(bool accumulate, sLLamaBlockWeights<Tensor>& we
     backward_qmm(d_acts.DAttY, d_weights.Attn_Out_w, std::nullopt, d_acts.DResAtt, acts.Att, weights.Attn_Out_w, std::nullopt,
                  accumulate, *rs, B, T, C, C, false, main_stream);
 
+    rs->temp_acquire(d_acts.DQKV.Value);
     rs->temp_acquire(rs->CuDNNWorkspace);
     for (int i=0; i < Options.AttBwdChunks; ++i) {
         long chunk_batch_size = div_exact(B, (long)Options.AttBwdChunks);
@@ -629,6 +638,7 @@ void LLamaModel::_backward_block(bool accumulate, sLLamaBlockWeights<Tensor>& we
 
     backward_qmm(d_acts.DLN1, d_weights.Attn_QKV_w, d_weights.Attn_QKV_b, d_acts.DQKV, acts.LN1, weights.Attn_QKV_w, rs->MatmulBiasScratch,
                  accumulate, *rs, B, T, C, Config.qkv_channels(), !recompute_ln1, main_stream);
+    rs->temp_free(d_acts.DQKV.Value);
 }
 
 void LLamaModel::_reduce_loss(LLamaRunState& acts, NCCLCommunicator& comm, int B, int T) {

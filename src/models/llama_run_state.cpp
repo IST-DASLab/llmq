@@ -154,11 +154,11 @@ std::vector<LLamaRunState::LayerActivations> RunStateBuilder::allocate_forward_b
 
 LLamaRunState::LayerGradients RunStateBuilder::allocate_basic_bwd_tensors(Tensor d_lnf) {
     QuantizableTensor d_res_ffn{allocate(Config.DType, "d_res_ffn", B, T, C)};
-    Tensor d_swiglu = allocate(Config.DType, "d_swiglu", B, T, H);
+    Tensor d_swiglu = Tensor{Config.DType, {B, T, H}, nullptr, nullptr, 3, d_lnf.Device};
     QuantizableTensor d_mlp_up{};   // this will be handled in-place
     Tensor d_ln2 = Options.KeepAllActivations ? allocate(Config.DType, "d_ln2", B, T, C) : d_lnf;
     Tensor d_att_y = Options.KeepAllActivations ? allocate(Config.DType, "d_att_y", B, T, C) : d_lnf;
-    QuantizableTensor d_qkv{allocate(Config.DType, "d_qkv", B, T, Config.qkv_channels())};
+    QuantizableTensor d_qkv{Tensor{Config.DType, {B, T, Config.qkv_channels()}, nullptr, nullptr, 3, d_lnf.Device}};
     Tensor d_ln1 = Options.KeepAllActivations ? allocate(Config.DType, "d_ln1", B, T, C) : d_lnf;
     QuantizableTensor d_res_att = Options.KeepAllActivations ? QuantizableTensor{allocate(Config.DType, "d_res_att", B, T, C)} : d_res_ffn;
 
@@ -177,7 +177,7 @@ std::vector<LLamaRunState::LayerGradients> RunStateBuilder::allocate_backward_bu
             if(grad_dtype != Config.DType) {
                 grads.DResFFN.Quant = allocate(grad_dtype, "d_res_ffn.q", B, T, C);
                 grads.DResAtt.Quant = Options.KeepAllActivations ? allocate(grad_dtype, "d_res_att.q", B, T, C) : grads.DResFFN.Quant;
-                grads.DMlpUp.Quant = allocate(grad_dtype, "d_mlp_up.q", B, T, 2 * Config.IntermediateSize);
+                grads.DMlpUp.Quant = {grad_dtype, {B, T, 2 * Config.IntermediateSize}, nullptr, nullptr, 3, d_lnf.Device};
                 grads.DQKV.Quant = allocate(grad_dtype, "d_qkv.q", Config.qkv_channels(), B, T);
             }
             LGrads.push_back(grads);
@@ -378,8 +378,9 @@ void LLamaRunState::init(LLamaConfig config, long B, long T) {
     // create a dummy stack and simulate the way we're going to use temporaries later, to determine how much we need to allocate
     DeviceMemoryStack activation_stack(nullptr, 1024*1024*1024*1024ll, Inputs.Device);
 
+    bool use_fp8 = Options.grad_dtype() == ETensorDType::FP8_E4M3 || Options.grad_dtype() == ETensorDType::FP8_E5M2;
     auto bw_qmm = [&](int B, int T, int C, int OC) {
-        if(Options.grad_dtype() == ETensorDType::FP8_E4M3 || Options.grad_dtype() == ETensorDType::FP8_E5M2) {
+        if(use_fp8) {
             auto wgt_tp = activation_stack.allocate(ETensorDType::FP8_E4M3, {C, OC});
             activation_stack.free(wgt_tp.Data);
             auto act_tp = activation_stack.allocate(ETensorDType::FP8_E4M3, {C, B * T});
@@ -390,9 +391,19 @@ void LLamaRunState::init(LLamaConfig config, long B, long T) {
     };
 
     // simulate to determine required stack size
-    activation_stack.free(activation_stack.allocate(CuDNNWorkspace.bytes()));   // attention
+    auto ws = activation_stack.allocate(CuDNNWorkspace.bytes());
+    activation_stack.free(activation_stack.allocate(DActs[0].DQKV.Value.bytes()));   // attention
+    activation_stack.free(ws);   // attention
+
+    auto dswi = activation_stack.allocate(DActs[0].DSwiGLU.bytes());
     bw_qmm(B, T, H, C);         // backward qmm swiglu
-    bw_qmm(B, T, C, 2 * H);     // backward qmm up
+    activation_stack.free(dswi);
+
+    if(use_fp8) {
+        auto dupq = activation_stack.allocate(DActs[0].DMlpUp.Quant->bytes());
+        bw_qmm(B, T, C, 2 * H);     // backward qmm up
+        activation_stack.free(dupq);
+    }
     activation_stack.free(activation_stack.allocate(Output.bytes()));  // lm-head
 
     long required_size = activation_stack.max_utilization();
