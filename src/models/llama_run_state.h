@@ -100,7 +100,8 @@ struct LLamaRunState {
     // scratch buffers
     Tensor RMSNormScratch;      // (#Blocks*C+128)
     Tensor MatmulBiasScratch;   // TODO
-    Tensor Workspace;           // shared workspace for cudnn and cublas
+    Tensor CuBlasWorkspace;
+    Tensor CuDNNWorkspace;
     Tensor EncoderBwdScratch;   // (B, T, 5 * C / (x128::size * 32))
     Tensor EncoderBwdIndices;   // (B, T, 1 * C / (x128::size * 32)) [on CPU!]
     Tensor EncoderBwdInfo;      // (B, T, 4 * C / (x128::size * 32)) [on CPU!]

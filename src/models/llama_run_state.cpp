@@ -282,15 +282,14 @@ void LLamaRunState::init(LLamaConfig config, long B, long T) {
     long rms_scratch_size = get_rmsnorm_backward_scratch_size(C, DeviceProp);
     long bias_scratch_size = get_bias_backward_scratch_size(config.DType, config.qkv_channels(), DeviceProp);
     CudnnHandle = create_cudnn_handle();
+    long cudnn_ws_size = cudnn_get_workspace_size(B, T, config.NumQueryHeads, config.NumKeyValHeads, config.head_size(), CudnnHandle);
 
     // batch size for chunked attention backward
     long chunk_batch_size = div_exact(B, (long)Options.AttBwdChunks);
-    long ws_size = cudnn_get_workspace_size(chunk_batch_size, T, config.NumQueryHeads, config.NumKeyValHeads, config.head_size(), CudnnHandle);
-    ws_size = std::max(ws_size, 32l * 1024 * 1024); // Hardcoding workspace to 32MiB but only Hopper needs 32 (for others 4 is OK)
     CublasLtHandle = create_cublaslt_handle();
     RMSNormScratch = alloc->allocate(ETensorDType::BYTE, "rms_scratch", {rms_scratch_size});
     MatmulBiasScratch = alloc->allocate(ETensorDType::FP32, "bias_scratch", {bias_scratch_size / (long)sizeof(float)});
-    Workspace = alloc->allocate(ETensorDType::BYTE, "workspace", {ws_size});
+    CuBlasWorkspace = alloc->allocate(ETensorDType::BYTE, "cublas_ws", {32*1024*1024});
     DEmb = alloc->allocate(config.DType, "d_emb", {B, T, C});
 
     Acts = builder.allocate_forward_buffers(LNF);
@@ -391,6 +390,12 @@ void LLamaRunState::init(LLamaConfig config, long B, long T) {
     };
 
     // simulate to determine required stack size
+    // attention
+    {
+        auto ws = activation_stack.allocate(ETensorDType::BYTE, {cudnn_ws_size});
+        activation_stack.free(ws.Data);
+    }
+    CuDNNWorkspace = Tensor{ETensorDType::BYTE, {cudnn_ws_size}, nullptr, nullptr, 1, Inputs.Device};
     bw_qmm(B, T, H, C);         // backward qmm swiglu
     bw_qmm(B, T, C, 2 * H);     // backward qmm up
 
