@@ -56,6 +56,9 @@ struct LLamaRunState {
     using LayerActivations = ::sLLamaLayerActivations;
     using LayerGradients = ::sLLamaLayerGradients;
 
+    LLamaOptions Options;
+    std::shared_ptr<TensorAllocator> Allocator;
+
     Tensor Inputs;          // (B, T) Int32
     Tensor Targets;         // (B, T) Int32
     Tensor Inputs_CPU;      // (B, T) Int32
@@ -113,9 +116,6 @@ struct LLamaRunState {
     float* NormHost;
     float* LossHost;
 
-    LLamaOptions Options;
-    std::shared_ptr<TensorAllocator> Allocator;
-
     // cached GPU info
     cudaDeviceProp DeviceProp;
 
@@ -138,7 +138,7 @@ struct LLamaRunState {
     cudnnHandle_t CudnnHandle;
     cublasLtHandle_t CublasLtHandle;
 
-    void init(LLamaConfig config, LLamaOptions options, long B, long T, std::shared_ptr<TensorAllocator> alloc);
+    void init(LLamaConfig config, long B, long T);
 };
 
 LLamaRunState allocate_run_state(LLamaConfig config, LLamaOptions options, long B, long T, std::shared_ptr<TensorAllocator> alloc);

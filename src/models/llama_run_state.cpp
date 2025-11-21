@@ -254,15 +254,13 @@ void LLamaRunState::release_res_ffn(int layer_idx, cudaStream_t main_stream) {
     CUDA_CHECK(cudaEventRecord(status.Event, main_stream));
 }
 
-void LLamaRunState::init(LLamaConfig config, LLamaOptions options, long B, long T, std::shared_ptr<TensorAllocator> alloc) {
-    Options = options;
-    Allocator = alloc;
-
+void LLamaRunState::init(LLamaConfig config, long B, long T) {
     long V = config.VocabSize;
     long C = config.HiddenSize;
     long H = config.IntermediateSize;
+    auto& alloc = Allocator;
 
-    RunStateBuilder builder(config, options, B, T, alloc);
+    RunStateBuilder builder(config, Options, B, T, alloc);
 
     int did;
     CUDA_CHECK(cudaGetDevice(&did));
@@ -276,7 +274,7 @@ void LLamaRunState::init(LLamaConfig config, LLamaOptions options, long B, long 
     Encoded = alloc->allocate(config.DType, "encoded", {B, T, C});
     FreqCis = builder.generate_frequencies();
     // We're chunking the logit computation, so we can allocate a much smaller tensor.
-    long out_size = div_exact(B*T, (long)options.LMHeadChunks);
+    long out_size = div_exact(B*T, (long)Options.LMHeadChunks);
     Output = alloc->allocate(config.DType, "output", {out_size, V});
     LNF = alloc->allocate(config.DType, "lnf", {B, T, C});
     LNF_Rstd = alloc->allocate(ETensorDType::FP32, "lnf_rstd", {B, T});
@@ -286,7 +284,7 @@ void LLamaRunState::init(LLamaConfig config, LLamaOptions options, long B, long 
     CudnnHandle = create_cudnn_handle();
 
     // batch size for chunked attention backward
-    long chunk_batch_size = div_exact(B, (long)options.AttBwdChunks);
+    long chunk_batch_size = div_exact(B, (long)Options.AttBwdChunks);
     long ws_size = cudnn_get_workspace_size(chunk_batch_size, T, config.NumQueryHeads, config.NumKeyValHeads, config.head_size(), CudnnHandle);
     ws_size = std::max(ws_size, 32l * 1024 * 1024); // Hardcoding workspace to 32MiB but only Hopper needs 32 (for others 4 is OK)
     CublasLtHandle = create_cublaslt_handle();
@@ -297,7 +295,7 @@ void LLamaRunState::init(LLamaConfig config, LLamaOptions options, long B, long 
 
     Acts = builder.allocate_forward_buffers(LNF);
     ResidualsAreReady = create_named_event("residual_ready");
-    if(options.OffloadResidual) {
+    if(Options.OffloadResidual) {
         DeviceResiduals.reserve(2);
         OffloadedResiduals.reserve(config.NumLayers);
         for(int i = 0; i < 2; ++i) {
@@ -323,10 +321,10 @@ void LLamaRunState::init(LLamaConfig config, LLamaOptions options, long B, long 
     EncoderBwdIndices = alloc->allocate(ETensorDType::INT32, "enc_bw_idx", EAllocationType::PINNED, {B, T, num_c_groups});
     EncoderBwdInfo = alloc->allocate(ETensorDType::INT32, "env_bw_info", EAllocationType::PINNED, {B, T, 4 * num_c_groups});
 
-    if(options.grad_dtype() == ETensorDType::FP8_E4M3 || options.grad_dtype() == ETensorDType::FP8_E5M2) {
+    if(Options.grad_dtype() == ETensorDType::FP8_E4M3 || Options.grad_dtype() == ETensorDType::FP8_E5M2) {
         WeightTranspose = alloc->allocate(ETensorDType::FP8_E4M3, "wgt_tp_buffer", {config.HiddenSize, 2 * config.IntermediateSize});
         ActivationTranspose = alloc->allocate(ETensorDType::FP8_E4M3, "act_tp_buffer", {H, B, T});
-        GradientTranspose = alloc->allocate(options.grad_dtype(), "grd_tp_buffer", {2*H, B, T});
+        GradientTranspose = alloc->allocate(Options.grad_dtype(), "grd_tp_buffer", {2*H, B, T});
     }
 
     NormBuffer = alloc->allocate(ETensorDType::FP32, "norm_buffer", {get_max_num_block_sums(DeviceProp)});;
@@ -356,7 +354,7 @@ void LLamaRunState::init(LLamaConfig config, LLamaOptions options, long B, long 
         DActs[i].DMlpUp.Value = Acts[i].MlpUp;
     }
 
-    if(options.matmul_dtype() != config.DType) {
+    if(Options.matmul_dtype() != config.DType) {
         AbsMaxes = alloc->allocate(ETensorDType::FP32, "abs_max", {config.NumLayers, 6l*QWEN2_NUM_LINEAR_OPS});
         float* abs_max_ptr = AbsMaxes->get<float>();
         for(int i = 0; i < config.NumLayers; ++i) {
@@ -388,8 +386,8 @@ void LLamaRunState::init(LLamaConfig config, LLamaOptions options, long B, long 
 }
 
 LLamaRunState allocate_run_state(LLamaConfig config, LLamaOptions options, long B, long T, std::shared_ptr<TensorAllocator> alloc) {
-    LLamaRunState state;
-    state.init(config, options, B, T, alloc);
+    LLamaRunState state{options, std::move(alloc)};
+    state.init(config, B, T);
     return state;
 }
 
