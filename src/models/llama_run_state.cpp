@@ -275,7 +275,7 @@ void LLamaRunState::init(LLamaConfig config, long B, long T) {
     FreqCis = builder.generate_frequencies();
     // We're chunking the logit computation, so we can allocate a much smaller tensor.
     long out_size = div_exact(B*T, (long)Options.LMHeadChunks);
-    Output = alloc->allocate(config.DType, "output", {out_size, V});
+    Output = Tensor{config.DType,{out_size, V}, nullptr, nullptr, 2, Inputs.Device};
     LNF = alloc->allocate(config.DType, "lnf", {B, T, C});
     LNF_Rstd = alloc->allocate(ETensorDType::FP32, "lnf_rstd", {B, T});
     DLNF = alloc->allocate(config.DType, "d_lnf", {B, T, C});
@@ -393,6 +393,7 @@ void LLamaRunState::init(LLamaConfig config, long B, long T) {
     activation_stack.free(activation_stack.allocate(CuDNNWorkspace.bytes()));   // attention
     bw_qmm(B, T, H, C);         // backward qmm swiglu
     bw_qmm(B, T, C, 2 * H);     // backward qmm up
+    activation_stack.free(activation_stack.allocate(Output.bytes()));  // lm-head
 
     long required_size = activation_stack.max_utilization();
     mTempStack = DeviceMemoryStack{alloc->allocate(ETensorDType::BYTE, "temporaries", {required_size}).Data, (std::size_t)required_size, Inputs.Device};

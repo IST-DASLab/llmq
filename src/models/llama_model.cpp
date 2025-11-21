@@ -242,6 +242,7 @@ float LLamaModel::validate(Tensor inputs, Tensor targets, NCCLCommunicator& comm
     long nano_batches = Options.LMHeadChunks;
     int nano_batch_size = div_exact(B * T, nano_batches);
     Parameters->gather_head(comm);
+    rs->temp_acquire(rs->Output);
     for(int nano_step = 0; nano_step < nano_batches; nano_step++) {
         Tensor lnf_slice = rs->LNF;
         lnf_slice.Data += nano_step * nano_batch_size * C * get_dtype_size(lnf_slice.DType);
@@ -256,6 +257,7 @@ float LLamaModel::validate(Tensor inputs, Tensor targets, NCCLCommunicator& comm
         // accumulate the losses inside rs->losses, and kick off the backward pass inside the fused classifier
         fused_classifier(rs->Output, losses, d_loss, tgt, nano_batch_size, V, Vp, true, main_stream);
     }
+    rs->temp_free(rs->Output);
     Parameters->release_head(main_stream);
     _reduce_loss(*rs, comm, B, T);
 
@@ -450,6 +452,7 @@ void LLamaModel::_backward_lmhead(long B, long T, int micro_step, int grad_accum
 
     NvtxRange classifier_and_loss_range("lm-head");
     Parameters->gather_head(comm);
+    rs->temp_acquire(rs->Output);
     for (int nano_step = 0; nano_step < nano_batches; nano_step++) {
         Tensor lnf_slice = rs->LNF;
         lnf_slice.Data += nano_step * nano_batch_size * C * get_dtype_size(lnf_slice.DType);
@@ -493,6 +496,7 @@ void LLamaModel::_backward_lmhead(long B, long T, int micro_step, int grad_accum
                rs->CublasLtHandle, rs->CuBlasWorkspace, C, nano_batch_size, V, EMMTranspose::NN, false, main_stream);
 
     }
+    rs->temp_free(rs->Output);
     Parameters->release_head(main_stream);
 }
 
