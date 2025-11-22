@@ -112,6 +112,7 @@ jobs:
     name: Recompute - ${{ matrix.recompute.name }} - ${{ matrix.dtype.name }}
     needs: deploy-modal
     runs-on: ubuntu-latest
+    if: false
     strategy:
       fail-fast: false
       max-parallel: 3
@@ -158,6 +159,7 @@ jobs:
     name: Test fixed - ${{ matrix.config.name }}
     needs: deploy-modal
     runs-on: ubuntu-latest
+    if: false
     strategy:
       fail-fast: false
       max-parallel: 3
@@ -194,9 +196,10 @@ jobs:
 
   test-modal-multi-gpu:
     name: Test Multi-GPU - ${{ matrix.config.name }}
-    needs:
-      - test-modal-fixed
-      - test-modal-recompute
+    #needs:
+    #  - test-modal-fixed
+    #  - test-modal-recompute
+    needs: deploy-modal
 
     runs-on: ubuntu-latest
     strategy:

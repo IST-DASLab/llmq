@@ -46,6 +46,7 @@ def create_image(cuda_version: str = "12.8.1"):
         )
         .add_local_file(str(wheel_file), f"/tmp/{wheel_file.name}", copy=True)
         .pip_install(f"/tmp/{wheel_file.name}")
+        .env({"CUDA_LAUNCH_BLOCKING": "1"})
     )
 
 
