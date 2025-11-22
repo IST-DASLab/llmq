@@ -397,7 +397,6 @@ void LLamaModel::backward(Tensor inputs, Tensor targets, NCCLCommunicator& comm,
         auto& dw = Grads->get_block_full(l, main_stream, comm, accumulate);
 
         // prefetch previous layer
-        CUDA_CHECK(cudaDeviceSynchronize());
         if(l > 1) {
             rs->fetch_res_ffn(l-2, comm.stream());
         }
