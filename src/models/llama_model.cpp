@@ -351,6 +351,7 @@ void LLamaModel::backward(Tensor inputs, Tensor targets, NCCLCommunicator& comm,
 
     CUDA_CHECK(cudaMemcpyAsync(rs->Targets.Data, targets.Data, targets.bytes(), cudaMemcpyHostToDevice, main_stream));
     CUDA_CHECK(cudaEventRecord(rs->TransferDone, main_stream));
+    CUDA_CHECK(cudaDeviceSynchronize());
 
     bool last_step = micro_step == grad_accum_steps - 1;
     // on the first micro-step zero the gradients, as we're about to += accumulate into them
@@ -365,29 +366,37 @@ void LLamaModel::backward(Tensor inputs, Tensor targets, NCCLCommunicator& comm,
     } else {
         Grads->start_micro_step(main_stream, micro_step, grad_accum_steps);
     }
+    CUDA_CHECK(cudaDeviceSynchronize());
 
     // reset residual stream gradients (put here to work with gradient accumulation)
     fill_zero(rs->DLNF, main_stream);
     fill_zero(rs->DActs[L-1].DResFFN.Value, main_stream);
+    CUDA_CHECK(cudaDeviceSynchronize());
     _backward_lmhead(B, T, micro_step, grad_accum_steps, comm);
-
+    CUDA_CHECK(cudaDeviceSynchronize());
     // ok, now reduce the loss across all ranks
     if (last_step) {
         _reduce_loss(*rs, comm, B, T);
     }
+    CUDA_CHECK(cudaDeviceSynchronize());
 
     bool accumulate;
     auto& d_lnf_w = Grads->get_lnf_w_full(main_stream, comm, accumulate);
     Parameters->gather_lnf(comm);
     // backward the final layernorm
+    CUDA_CHECK(cudaDeviceSynchronize());
     rmsnorm_backward(rs->DActs[L-1].DResFFN.Value, d_lnf_w, rs->RMSNormScratch, rs->DActs[L - 1].DResFFN.Value, rs->DLNF,
                      rs->get_res_ffn(L-1, main_stream), Parameters->get_lnf(main_stream), rs->LNF_Rstd,
                      quant_abs_max_ptr(rs->DActs[L-1].DResFFN), B, T, C, rs->DeviceProp, main_stream);
+    CUDA_CHECK(cudaDeviceSynchronize());
     rs->release_res_ffn(L-1, main_stream);
 
     Parameters->release_lnf(main_stream);
+    CUDA_CHECK(cudaDeviceSynchronize());
     Grads->notify_lnf_w(main_stream, comm);
+    CUDA_CHECK(cudaDeviceSynchronize());
     rs->fetch_res_ffn(L-2, comm.stream());
+    CUDA_CHECK(cudaDeviceSynchronize());
     Parameters->gather_block(L - 1, comm, *rs);
     // now backward all the layers
     for (int l = L-1; l >= 0; l--) {
@@ -395,41 +404,52 @@ void LLamaModel::backward(Tensor inputs, Tensor targets, NCCLCommunicator& comm,
         auto& dw = Grads->get_block_full(l, main_stream, comm, accumulate);
 
         // prefetch previous layer
+        CUDA_CHECK(cudaDeviceSynchronize());
         if(l > 1) {
             rs->fetch_res_ffn(l-2, comm.stream());
         }
+        CUDA_CHECK(cudaDeviceSynchronize());
         if(l > 0) {
             Parameters->gather_block(l - 1, comm, *rs);
         }
 
         auto& weights = Parameters->get_block(l, main_stream);
+        CUDA_CHECK(cudaDeviceSynchronize());
         auto& d_acts = rs->DActs.at(l);
         Tensor residual = l == 0 ? rs->Encoded : rs->get_res_ffn(l - 1, main_stream);
         trace_or_execute_cuda_graph([&]() {
             _recompute_block(weights, rs->Acts[l], residual);
             _backward_block(accumulate, weights, dw, rs->Acts[l], rs->DActs[l]);
             }, main_stream, rs->BackwardBlockGraph, rs->Options.UseCudaGraphs);
-
+        CUDA_CHECK(cudaDeviceSynchronize());
         if(l > 0) {
             auto& prev_dacts = rs->DActs.at(l - 1);
             rmsnorm_backward(prev_dacts.DResFFN.Value, dw.LN1_w, rs->RMSNormScratch, prev_dacts.DResAtt.Value, d_acts.DLN1,
                              rs->get_res_ffn(l-1, main_stream), weights.LN1_w, rs->Acts[l].LN1_Rstd, quant_abs_max_ptr(prev_dacts.DResFFN),
                              B, T, C, rs->DeviceProp, main_stream);
+            CUDA_CHECK(cudaDeviceSynchronize());
             rs->release_res_ffn(l - 1, main_stream);
         } else {
+            CUDA_CHECK(cudaDeviceSynchronize());
             rmsnorm_backward(rs->DEmb, dw.LN1_w, rs->RMSNormScratch, d_acts.DResAtt.Value, d_acts.DLN1,
                              rs->Encoded, weights.LN1_w, rs->Acts[l].LN1_Rstd, nullptr, B, T, C, rs->DeviceProp, main_stream);
         }
+        CUDA_CHECK(cudaDeviceSynchronize());
         Parameters->release_block(l, main_stream);
+        CUDA_CHECK(cudaDeviceSynchronize());
         Grads->notify_block(l, main_stream, comm);
     }
 
+    CUDA_CHECK(cudaDeviceSynchronize());
     auto& d_emb = Grads->get_embeddings_full(main_stream, comm, accumulate);
+    CUDA_CHECK(cudaDeviceSynchronize());
     encoder_backward(d_emb, rs->EncoderBwdScratch, rs->EncoderBwdIndices, rs->EncoderBwdInfo,
                      rs->DEmb, rs->Inputs, inputs, B, T, C, OptimizerRNG(), main_stream);
+    CUDA_CHECK(cudaDeviceSynchronize());
     Grads->notify_embeddings(main_stream, comm);
 
     // make sure all gradients are communicated before we go to the update step.
+    CUDA_CHECK(cudaDeviceSynchronize());
     Grads->end_micro_step(main_stream, comm);
     CUDA_CHECK(cudaEventRecord(rs->BackwardDone, main_stream));
 
