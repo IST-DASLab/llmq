@@ -85,6 +85,7 @@ private:
     std::vector<sThreadContext> mContexts;
     std::mutex mGlobalMutex;
     std::atomic<bool> mIsRunning = false;
+    std::atomic<bool> mHasCrashed = false;
     std::atomic<int> mIsReady = 0;
     std::atomic<int> mWorkDone = 0;
 
