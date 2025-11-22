@@ -351,7 +351,6 @@ void LLamaModel::backward(Tensor inputs, Tensor targets, NCCLCommunicator& comm,
 
     CUDA_CHECK(cudaMemcpyAsync(rs->Targets.Data, targets.Data, targets.bytes(), cudaMemcpyHostToDevice, main_stream));
     CUDA_CHECK(cudaEventRecord(rs->TransferDone, main_stream));
-    CUDA_CHECK(cudaDeviceSynchronize());
 
     bool last_step = micro_step == grad_accum_steps - 1;
     // on the first micro-step zero the gradients, as we're about to += accumulate into them
@@ -366,19 +365,16 @@ void LLamaModel::backward(Tensor inputs, Tensor targets, NCCLCommunicator& comm,
     } else {
         Grads->start_micro_step(main_stream, micro_step, grad_accum_steps);
     }
-    CUDA_CHECK(cudaDeviceSynchronize());
 
     // reset residual stream gradients (put here to work with gradient accumulation)
     fill_zero(rs->DLNF, main_stream);
     fill_zero(rs->DActs[L-1].DResFFN.Value, main_stream);
-    CUDA_CHECK(cudaDeviceSynchronize());
     _backward_lmhead(B, T, micro_step, grad_accum_steps, comm);
-    CUDA_CHECK(cudaDeviceSynchronize());
+
     // ok, now reduce the loss across all ranks
     if (last_step) {
         _reduce_loss(*rs, comm, B, T);
     }
-    CUDA_CHECK(cudaDeviceSynchronize());
 
     bool accumulate;
     auto& d_lnf_w = Grads->get_lnf_w_full(main_stream, comm, accumulate);
