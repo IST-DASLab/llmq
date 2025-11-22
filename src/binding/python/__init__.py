@@ -1,2 +1,2 @@
 from ._pyllmq import *
-from .training import TrainingConfig, CosineLRSchedule, training_logger_context
+from .training import TrainingConfig, CosineLRSchedule, training_logger_context, add_training_args

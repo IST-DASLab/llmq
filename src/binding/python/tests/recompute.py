@@ -17,10 +17,11 @@ Then compares losses and gradient norms to ensure they match exactly.
 import copy
 import sys
 
-from pyllmq.tests.run import RunConfig, run_training, parse_args, compare_results
+from pyllmq.training import TrainingConfig
+from pyllmq.tests.run import run_training, parse_args, compare_results
 
 
-def disable_recompute(config: RunConfig):
+def disable_recompute(config: TrainingConfig):
     baseline_config = copy.deepcopy(config)
     baseline_config.recompute_swiglu = False
     baseline_config.recompute_rms_norm = False
@@ -30,9 +31,13 @@ def disable_recompute(config: RunConfig):
     baseline_config.recompute_block = False
     baseline_config.use_cuda_graphs = False
     baseline_config.offload_master = False
+    baseline_config.offload_quants = False
     baseline_config.offload_opt_v = False
     baseline_config.offload_opt_m = False
     baseline_config.attn_bwd_chunks = 1
+    baseline_config.memcpy_all_gather = False
+    baseline_config.shard_weights = False
+    baseline_config.persistent_quants = False
     return baseline_config
 
 
