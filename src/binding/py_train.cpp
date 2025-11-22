@@ -22,10 +22,15 @@ MultiGPUPyTrainer::MultiGPUPyTrainer(int ngpus, LLamaConfig config, LLamaOptions
     mThreads = NCCLCommunicator::launch_threads_communicators(
        ngpus, memcpy_all_gather, memcpy_send_recv,
        [&](NCCLCommunicator& comm) {
-           this->main_loop(comm);
+           try {
+               this->main_loop(comm);
+           } catch (...) {
+               mHasCrashed = true;
+               throw;
+           }
        });
 
-    while(!mIsRunning) {
+    while(!mIsRunning && !mHasCrashed) {
         std::this_thread::yield();
     }
 }
@@ -207,12 +212,13 @@ void MultiGPUPyTrainer::main_loop(NCCLCommunicator& comm) {
     ctx.Model = std::make_unique<LLamaModel>(mConfig, mOptions, comm.rank(), comm.world_size());
     ctx.Model->allocate_run_state(mOptions, comm, B, T);
 
-    if(mIsReady.fetch_add(1) == comm.world_size() - 1) {
+    if (mIsReady.fetch_add(1) == comm.world_size() - 1) {
         mIsRunning = true;
     };
 
     while (!mIsRunning.load()) {
         std::this_thread::yield();
+        if(mHasCrashed.load()) throw std::runtime_error("Another worker has crashed, exiting.");
     }
 
     while (mIsRunning.load()) {
@@ -225,7 +231,7 @@ void MultiGPUPyTrainer::main_loop(NCCLCommunicator& comm) {
     }
     CUDA_CHECK(cudaDeviceSynchronize());
     comm.barrier();
-    
+
     // free resources
     ctx.Model.reset();
     ctx.GPUUtil.reset();
