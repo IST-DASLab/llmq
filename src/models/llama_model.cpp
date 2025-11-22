@@ -388,11 +388,8 @@ void LLamaModel::backward(Tensor inputs, Tensor targets, NCCLCommunicator& comm,
     rs->release_res_ffn(L-1, main_stream);
 
     Parameters->release_lnf(main_stream);
-    CUDA_CHECK(cudaDeviceSynchronize());
     Grads->notify_lnf_w(main_stream, comm);
-    CUDA_CHECK(cudaDeviceSynchronize());
     rs->fetch_res_ffn(L-2, comm.stream());
-    CUDA_CHECK(cudaDeviceSynchronize());
     Parameters->gather_block(L - 1, comm, *rs);
     // now backward all the layers
     for (int l = L-1; l >= 0; l--) {
