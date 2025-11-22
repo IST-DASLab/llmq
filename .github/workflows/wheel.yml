@@ -192,11 +192,58 @@ jobs:
       - name: Run test on Modal
         run: python3 scripts/modal_test_ci.py ${{ matrix.config.args }}
 
+  test-modal-multi-gpu:
+    name: Test Multi-GPU - ${{ matrix.config.name }}
+    needs:
+      - test-modal-fixed
+      - test-modal-recompute
+
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      max-parallel: 3
+      matrix:
+        config:
+          - name: "BF16 weight sharding"
+            func: "recompute"
+            args: "--matmul-dtype bf16 --shard-weights"
+          - name: "FP8 + memcpy"
+            func: "recompute"
+            args: "--matmul-dtype e4m3 --shard-weights --memcpy-all-gather"
+          - name: "FP8 + persistent quants"
+            func: "recompute"
+            args: "--matmul-dtype e4m3 --shard-weights --persistent-quants --offload-quants"
+          - name: "Fixed BF16"
+            func: "fixed"
+            args: "bf16"
+          - name: "Fixed FP8"
+            func: "fixed"
+            args: "e4m3"
+          - name: "Fixed BF16 Shard gradient"
+            func: "fixed"
+            args: "bf16 --shard-gradients"
+          - name: "Fixed FP8 Shard gradient"
+            func: "fixed"
+            args: "e4m3 --shard-gradients"
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # Note: No need to download wheel again, it's already in the deployed image
+
+      - name: Install Modal
+        run: pip install modal
+
+      - name: Set Modal token
+        run: modal token set --token-id ${{ secrets.MODAL_TOKEN_ID }} --token-secret ${{ secrets.MODAL_TOKEN_SECRET }}
+
+      - name: Run test on Modal
+        run: python3 scripts/modal_test_ci.py ${{ matrix.config.func }} ${{ matrix.config.args }} --gpus 2
+
   release:
     if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/heads/release-') || startsWith(github.ref, 'refs/tags/')
     needs:
-      - test-modal-recompute
-      - test-modal-fixed
+      - test-modal-multi-gpu
 
     runs-on: ubuntu-latest
     permissions:

@@ -97,7 +97,7 @@ def run_training(config: TrainingConfig) -> RunResult:
     # Create trainer
     trainer = pyllmq.LLMQTrainer.from_pretrained(
         name=config.model,
-        ngpu=1,
+        ngpu=config.gpus,
         dtype=config.model_dtype,
         options=options,
         batch_size=config.batch_size,
@@ -110,13 +110,13 @@ def run_training(config: TrainingConfig) -> RunResult:
     # Create data loader
     train_loader = pyllmq.DataLoader(
         [config.train_file],
-        config.batch_size * config.seq_len,
+        config.batch_size * config.seq_len * config.gpus,
         seed=0x83b45442
     )
 
     # Prepare input/output buffers
-    in_tokens = np.empty((config.batch_size, config.seq_len), dtype=np.int32)
-    out_tokens = np.empty((config.batch_size, config.seq_len), dtype=np.int32)
+    in_tokens = np.empty((config.batch_size * config.gpus, config.seq_len), dtype=np.int32)
+    out_tokens = np.empty((config.batch_size * config.gpus, config.seq_len), dtype=np.int32)
 
     losses = []
     norms = []
