@@ -380,11 +380,9 @@ void LLamaModel::backward(Tensor inputs, Tensor targets, NCCLCommunicator& comm,
     auto& d_lnf_w = Grads->get_lnf_w_full(main_stream, comm, accumulate);
     Parameters->gather_lnf(comm);
     // backward the final layernorm
-    CUDA_CHECK(cudaDeviceSynchronize());
     rmsnorm_backward(rs->DActs[L-1].DResFFN.Value, d_lnf_w, rs->RMSNormScratch, rs->DActs[L - 1].DResFFN.Value, rs->DLNF,
                      rs->get_res_ffn(L-1, main_stream), Parameters->get_lnf(main_stream), rs->LNF_Rstd,
                      quant_abs_max_ptr(rs->DActs[L-1].DResFFN), B, T, C, rs->DeviceProp, main_stream);
-    CUDA_CHECK(cudaDeviceSynchronize());
     rs->release_res_ffn(L-1, main_stream);
 
     Parameters->release_lnf(main_stream);
