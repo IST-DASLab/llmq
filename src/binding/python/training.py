@@ -1,3 +1,4 @@
+import argparse
 import contextlib
 import sys
 from dataclasses import dataclass, asdict
@@ -69,6 +70,7 @@ class TrainingConfig:
     recompute_qkv: bool = False
     recompute_att: bool = False
     recompute_block: bool = False
+    offload_residual: bool = False
 
     # Distributed training options
     zero_level: int = 1
@@ -86,6 +88,7 @@ class TrainingConfig:
     memcpy_send_recv: bool = False
     all_to_all_reduce: bool = False
     write_combined: bool = False
+    use_zero_copy: bool = False
 
     # Logging verbosity
     verbosity: str = _pyllmq.LogVerbosity.DEFAULT
@@ -94,6 +97,91 @@ class TrainingConfig:
     use_wandb: bool = False
     wandb_project: str = ""
     wandb_name: str = "llmq"
+
+
+def add_training_args(parser: argparse.ArgumentParser, default: Optional[TrainingConfig] = None):
+    default = TrainingConfig() if default is None else default
+
+    # Model configuration
+    parser.add_argument("--model", default=default.model, help="Path to model directory or HuggingFace model name")
+    parser.add_argument("--from-scratch", action="store_true", help="Train from random initialization")
+    parser.add_argument("--init-proj-to-zero", action="store_true", help="Initialize projections to zero")
+    parser.add_argument("--model-dtype", default=default.model_dtype, help="Model dtype")
+    parser.add_argument("--matmul-dtype", help="Matmul dtype (defaults to model-dtype)")
+    parser.add_argument("--gradient-dtype", help="Gradient dtype (defaults to matmul-dtype, except e4m3 matmul uses m5m2 gradients)")
+
+    # Batch configuration
+    parser.add_argument("--batch-size", "--batch", type=int, default=default.batch_size, help="Micro-batch size")
+    parser.add_argument("--seq-len", "--seq-length", type=int, default=default.seq_len, help="Sequence length")
+    parser.add_argument("--grad-accumulation", type=int, default=default.grad_accumulation, help="Gradient accumulation steps")
+    parser.add_argument("--lmhead-chunks", type=int, default=default.lmhead_chunks, help="Run LM-head in smaller chunks")
+    parser.add_argument("--attn-bwd-chunks", type=int, default=default.attn_bwd_chunks, help="Run attention backward in smaller chunks")
+
+    # Optimizer
+    parser.add_argument("--learning-rate", "--lr", type=float, default=default.learning_rate, help="Learning rate")
+    parser.add_argument("--warmup", type=int, default=default.warmup_steps, dest="warmup_steps", help="Warmup steps")
+    parser.add_argument("--final-lr-fraction", type=float, default=default.final_lr_fraction, help="Final LR fraction")
+    parser.add_argument("--beta-1", type=float, default=default.beta_1, help="Adam beta 1")
+    parser.add_argument("--beta-2", type=float, default=default.beta_2, help="Adam beta 2")
+    parser.add_argument("--opt-m-dtype", default=default.opt_m_dtype, help="First-order momentum dtype")
+    parser.add_argument("--opt-v-dtype", default=default.opt_v_dtype, help="Second-order momentum dtype")
+    parser.add_argument("--grad-clip", type=float, default=default.grad_clip, help="Gradient clipping")
+    parser.add_argument("--weight-decay", type=float, default=default.weight_decay, help="Weight decay")
+
+    # Training
+    parser.add_argument("--steps", type=int, default=default.steps, help="Training steps")
+    parser.add_argument("--eval-every-n-steps", type=int, default=default.eval_every, dest="eval_every", help="Evaluation interval")
+    parser.add_argument("--eval-num-steps", type=int, default=default.eval_num_steps, help="Number of eval batches")
+    parser.add_argument("--log-gpu-util", type=int, default=default.log_gpu_util, help="GPU logging interval (0 to disable)")
+
+    # Data
+    parser.add_argument("--train-file", default=default.train_file, help="Training data file")
+    parser.add_argument("--eval-file", default=default.eval_file, help="Evaluation data file")
+
+    # Output
+    parser.add_argument("--out-dir", default=default.out_dir, help="Output directory")
+    parser.add_argument("--checkpoint-dir", default=default.checkpoint_dir, help="Checkpoint directory")
+    parser.add_argument("--log-file", default=default.log_file, help="Log file")
+    parser.add_argument("--ckpt-interval", type=int, default=default.ckpt_interval, help="Checkpoint interval")
+    parser.add_argument("--ckpt-keep-n", type=int, default=default.ckpt_keep_n, help="Number of checkpoints to keep")
+    parser.add_argument("--ckpt-major", type=int, default=default.ckpt_major, help="Major checkpoint interval")
+    parser.add_argument("--continue", dest="continue_from_checkpoint", action="store_true",
+                        help="Continue from checkpoint")
+
+    # Multi-GPU
+    parser.add_argument("--gpus", type=int, default=_pyllmq.get_num_gpus(), help="Number of GPUs")
+
+    # Memory optimization
+    parser.add_argument("--recompute-swiglu", action="store_true", help="Recompute SwiGLU")
+    parser.add_argument("--recompute-norm", action="store_true", help="Recompute RMSNorm")
+    parser.add_argument("--recompute-ffn", action="store_true", help="Recompute FFN")
+    parser.add_argument("--recompute-qkv", action="store_true", help="Recompute QKV")
+    parser.add_argument("--recompute-att", action="store_true", help="Recompute attention")
+    parser.add_argument("--recompute-block", action="store_true", help="Recompute entire block")
+    parser.add_argument("--offload-residual", action="store_true", help="Offload residual activations")
+
+    # Distributed training
+    parser.add_argument("--zero-level", type=int, default=1, help="ZeRO optimization level (1-3)")
+    parser.add_argument("--shard-weights", action="store_true", help="Shard weights across GPUs")
+    parser.add_argument("--shard-gradients", action="store_true", help="Shard gradients across GPUs")
+    parser.add_argument("--offload-master", action="store_true", help="Offload master weights to CPU")
+    parser.add_argument("--offload-quants", action="store_true", help="Offload quantized weights")
+    parser.add_argument("--offload-opt-m", action="store_true", help="Offload first-order momentum")
+    parser.add_argument("--offload-opt-v", action="store_true", help="Offload second-order momentum")
+    parser.add_argument("--persistent-quants", action="store_true", help="Keep quantized weights")
+    parser.add_argument("--use-zero-copy", action="store_true", help="Use zero-copy DMA for offloaded optimizer states")
+
+    # Logging
+    parser.add_argument("-qq", "--silent", dest="verbosity", action="store_const", const=_pyllmq.LogVerbosity.SILENT,
+                        help="Silent mode (no output)")
+    parser.add_argument("-q", "--quiet", dest="verbosity", action="store_const", const=_pyllmq.LogVerbosity.QUIET,
+                        help="Quiet mode (minimal output)")
+    parser.add_argument("-v", "--verbose", dest="verbosity", action="store_const", const=_pyllmq.LogVerbosity.VERBOSE,
+                        help="Verbose mode (detailed output)")
+    parser.set_defaults(verbosity=default.verbosity)
+    parser.add_argument("--use-wandb", action="store_true", help="Enable Weights & Biases logging")
+    parser.add_argument("--wandb-project", default=default.wandb_project, help="W&B project name (defaults to 'LLMQ')")
+    parser.add_argument("--wandb-name", default=default.wandb_name, help="W&B run name")
 
 
 class CosineLRSchedule:

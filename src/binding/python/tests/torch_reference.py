@@ -9,16 +9,17 @@ import torch
 import transformers
 
 import pyllmq
-from pyllmq.tests.run import RunConfig, parse_args, _create_options
+from pyllmq.tests.run import parse_args, _create_options
+from pyllmq.training import TrainingConfig
 
 
-def torch_grad_one_step(config: RunConfig):
+def torch_grad_one_step(config: TrainingConfig):
     torch_model = transformers.AutoModelForCausalLM.from_pretrained(config.model, device_map="cuda", torch_dtype=torch.float32)
 
     data_loader = pyllmq.DataLoader(
         [config.train_file],
         config.batch_size * config.seq_len,
-        seed=config.seed
+        seed=0x83b45442
     )
 
     in_tokens = np.empty((config.batch_size, config.seq_len), dtype=np.int32)
@@ -27,14 +28,14 @@ def torch_grad_one_step(config: RunConfig):
     result = {}
 
     torch_model.zero_grad()
-    for j in range(config.grad_accum):
+    for j in range(config.grad_accumulation):
         data_loader.load_batch(in_tokens, out_tokens)
         logits = torch_model(torch.tensor(in_tokens).to("cuda")).logits
         loss = torch.nn.functional.cross_entropy(logits.reshape(-1, logits[0].shape[-1]).to(torch.float32),
                                                  torch.tensor(out_tokens).to("cuda").to(torch.int64).reshape(-1),
                                                  reduction="none")
         loss = loss.reshape(out_tokens.shape)
-        loss = loss.sum() / (out_tokens.shape[0] * out_tokens.shape[1] * config.grad_accum)
+        loss = loss.sum() / (out_tokens.shape[0] * out_tokens.shape[1] * config.grad_accumulation)
         loss.backward()
 
     for k, v in torch_model.named_parameters():
@@ -43,18 +44,18 @@ def torch_grad_one_step(config: RunConfig):
     return result
 
 
-def llmq_grad_one_step(config: RunConfig):
+def llmq_grad_one_step(config: TrainingConfig):
     options = _create_options(config)
 
     # Create trainer
     trainer = pyllmq.LLMQTrainer.from_pretrained(
         name=config.model,
-        ngpu=1,
+        ngpu=config.gpus,
         dtype=config.model_dtype,
         options=options,
         batch_size=config.batch_size,
         seq_len=config.seq_len,
-        grad_accum=config.grad_accum,
+        grad_accum=config.grad_accumulation,
         memcpy_all_gather=config.memcpy_all_gather,
         memcpy_send_recv=config.memcpy_send_recv
     )
@@ -63,21 +64,21 @@ def llmq_grad_one_step(config: RunConfig):
     train_loader = pyllmq.DataLoader(
         [config.train_file],
         config.batch_size * config.seq_len,
-        seed=config.seed
+        seed=0x83b45442
     )
 
     # Prepare input/output buffers
     in_tokens = np.empty((config.batch_size, config.seq_len), dtype=np.int32)
     out_tokens = np.empty((config.batch_size, config.seq_len), dtype=np.int32)
 
-    for j in range(config.grad_accum):
+    for j in range(config.grad_accumulation):
         train_loader.load_batch(in_tokens, out_tokens)
         trainer.step(in_tokens, out_tokens)
     return {k: torch.from_dlpack(v).cpu().to(torch.float32).numpy() for k, v in trainer.get_gradients(0).items()}
 
 
 def compare_single_step(config, file=None):
-    config.max_steps = 1
+    config.steps = 1
 
     torch_grads = torch_grad_one_step(config)
     torch.cuda.empty_cache()
