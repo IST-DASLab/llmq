@@ -408,6 +408,7 @@ void LLamaModel::backward(Tensor inputs, Tensor targets, NCCLCommunicator& comm,
         auto& weights = Parameters->get_block(l, main_stream);
         auto& d_acts = rs->DActs.at(l);
         Tensor residual = l == 0 ? rs->Encoded : rs->get_res_ffn(l - 1, main_stream);
+        CUDA_CHECK(cudaStreamWaitEvent(main_stream, test_event, 0));
         trace_or_execute_cuda_graph([&]() {
             _recompute_block(weights, rs->Acts[l], residual);
             _backward_block(accumulate, weights, dw, rs->Acts[l], rs->DActs[l]);
@@ -423,9 +424,8 @@ void LLamaModel::backward(Tensor inputs, Tensor targets, NCCLCommunicator& comm,
                              rs->Encoded, weights.LN1_w, rs->Acts[l].LN1_Rstd, nullptr, B, T, C, rs->DeviceProp, main_stream);
         }
         Parameters->release_block(l, main_stream);
-        CUDA_CHECK(cudaEventRecord(test_event, comm.stream()));
-        CUDA_CHECK(cudaStreamWaitEvent(main_stream, test_event, 0));
         Grads->notify_block(l, main_stream, comm);
+        CUDA_CHECK(cudaEventRecord(test_event, comm.stream()));
     }
 
     auto& d_emb = Grads->get_embeddings_full(main_stream, comm, accumulate);
