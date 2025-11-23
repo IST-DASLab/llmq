@@ -402,7 +402,6 @@ void LLamaModel::backward(Tensor inputs, Tensor targets, NCCLCommunicator& comm,
             Parameters->gather_block(l - 1, comm, *rs);
         }
 
-        CUDA_CHECK(cudaDeviceSynchronize());
         auto& weights = Parameters->get_block(l, main_stream);
         auto& d_acts = rs->DActs.at(l);
         Tensor residual = l == 0 ? rs->Encoded : rs->get_res_ffn(l - 1, main_stream);
@@ -410,7 +409,7 @@ void LLamaModel::backward(Tensor inputs, Tensor targets, NCCLCommunicator& comm,
             _recompute_block(weights, rs->Acts[l], residual);
             _backward_block(accumulate, weights, dw, rs->Acts[l], rs->DActs[l]);
             }, main_stream, rs->BackwardBlockGraph, rs->Options.UseCudaGraphs);
-
+        CUDA_CHECK(cudaDeviceSynchronize());
         if(l > 0) {
             auto& prev_dacts = rs->DActs.at(l - 1);
             rmsnorm_backward(prev_dacts.DResFFN.Value, dw.LN1_w, rs->RMSNormScratch, prev_dacts.DResAtt.Value, d_acts.DLN1,
