@@ -423,9 +423,9 @@ void LLamaModel::backward(Tensor inputs, Tensor targets, NCCLCommunicator& comm,
                              rs->Encoded, weights.LN1_w, rs->Acts[l].LN1_Rstd, nullptr, B, T, C, rs->DeviceProp, main_stream);
         }
         Parameters->release_block(l, main_stream);
-        Grads->notify_block(l, main_stream, comm);
         CUDA_CHECK(cudaEventRecord(test_event, comm.stream()));
         CUDA_CHECK(cudaStreamWaitEvent(main_stream, test_event, 0));
+        Grads->notify_block(l, main_stream, comm);
     }
 
     auto& d_emb = Grads->get_embeddings_full(main_stream, comm, accumulate);
