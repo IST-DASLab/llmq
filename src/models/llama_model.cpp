@@ -405,7 +405,7 @@ void LLamaModel::backward(Tensor inputs, Tensor targets, NCCLCommunicator& comm,
         auto& weights = Parameters->get_block(l, main_stream);
         auto& d_acts = rs->DActs.at(l);
         Tensor residual = l == 0 ? rs->Encoded : rs->get_res_ffn(l - 1, main_stream);
-        CUDA_CHECK(cudaDeviceSynchronize());
+        CUDA_CHECK(cudaStreamSynchronize(comm.stream()));
         trace_or_execute_cuda_graph([&]() {
             _recompute_block(weights, rs->Acts[l], residual);
             _backward_block(accumulate, weights, dw, rs->Acts[l], rs->DActs[l]);
