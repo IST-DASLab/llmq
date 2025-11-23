@@ -391,6 +391,7 @@ void LLamaModel::backward(Tensor inputs, Tensor targets, NCCLCommunicator& comm,
     Parameters->gather_block(L - 1, comm, *rs);
     // now backward all the layers
     for (int l = L-1; l >= 0; l--) {
+        CUDA_CHECK(cudaStreamSynchronize(comm.stream()));
         NvtxRange layer_range("Layer", l);
         auto& dw = Grads->get_block_full(l, main_stream, comm, accumulate);
 
@@ -405,7 +406,6 @@ void LLamaModel::backward(Tensor inputs, Tensor targets, NCCLCommunicator& comm,
         auto& weights = Parameters->get_block(l, main_stream);
         auto& d_acts = rs->DActs.at(l);
         Tensor residual = l == 0 ? rs->Encoded : rs->get_res_ffn(l - 1, main_stream);
-        CUDA_CHECK(cudaStreamSynchronize(comm.stream()));
         trace_or_execute_cuda_graph([&]() {
             _recompute_block(weights, rs->Acts[l], residual);
             _backward_block(accumulate, weights, dw, rs->Acts[l], rs->DActs[l]);
