@@ -389,9 +389,13 @@ void LLamaModel::backward(Tensor inputs, Tensor targets, NCCLCommunicator& comm,
     Grads->notify_lnf_w(main_stream, comm);
     rs->fetch_res_ffn(L-2, comm.stream());
     Parameters->gather_block(L - 1, comm, *rs);
+
+    cudaEvent_t test_event;
+    CUDA_CHECK(cudaEventCreate(&test_event));
     // now backward all the layers
     for (int l = L-1; l >= 0; l--) {
-        CUDA_CHECK(cudaStreamSynchronize(comm.stream()));
+        CUDA_CHECK(cudaEventRecord(test_event, comm.stream()));
+        CUDA_CHECK(cudaStreamWaitEvent(main_stream, test_event, 0));
         NvtxRange layer_range("Layer", l);
         auto& dw = Grads->get_block_full(l, main_stream, comm, accumulate);
 
