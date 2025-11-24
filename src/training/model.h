@@ -59,6 +59,9 @@ public:
     //! (First order) momentum. Sharded.
     virtual ITensorContainer& opt_momentum() = 0;
 
+    //! (First order) momentum. Sharded.
+    virtual ITensorContainer& opt_momentum_scales() = 0;
+
     //! Second order moments. Sharded.
     virtual ITensorContainer& opt_variance() = 0;
 

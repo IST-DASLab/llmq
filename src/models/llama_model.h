@@ -108,6 +108,7 @@ public:
 
     ITensorContainer& weights() override;
     ITensorContainer& opt_momentum() override;
+    ITensorContainer& opt_momentum_scales() override;
     ITensorContainer& opt_variance() override;
     std::vector<std::byte> rng_state() const override;
     void set_rng_state(const std::vector<std::byte>& state) override;
