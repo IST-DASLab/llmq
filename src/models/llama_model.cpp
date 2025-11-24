@@ -737,16 +737,18 @@ void LLamaModel::update(NCCLCommunicator& comm, float learning_rate, float beta_
     calculate_gradient_norm(comm, grad_clip);
     float* grad_scale = rs->NormBuffer.get<float>() + 1;
 
-    auto run_update = [&](Tensor& val, Tensor& grad, Tensor& m, Tensor& v, float wd){
+    auto run_update = [&](Tensor& val, Tensor& grad, Tensor& m, Tensor& v, Tensor& scales, float wd) {
         adamw_update(val, grad, m, v, grad.nelem(),
-                     learning_rate, beta_1, beta_2, t, epsilon, wd, grad_scale, val.Scales, rng(), main_stream);
+                     learning_rate, beta_1, beta_2, t, epsilon, wd, grad_scale, scales, val.Scales, rng(), main_stream);
     };
 
+    auto& m_scales = OptimizerState->scales_m();
+
     run_update(Parameters->get_master_embeddings(), Grads->get_embeddings_shard(main_stream),
-               OptimizerState->non_block_m().Embeddings, OptimizerState->non_block_v().Embeddings, weight_decay);
+               OptimizerState->non_block_m().Embeddings, OptimizerState->non_block_v().Embeddings, m_scales.NonBlocks.Embeddings, weight_decay);
     comm.reduce_max(Parameters->get_master_embeddings().Scales);
     run_update(Parameters->get_master_lnf_w(), Grads->get_lnf_w_shard(main_stream),
-               OptimizerState->non_block_m().LNF_w, OptimizerState->non_block_v().LNF_w, 0.f);
+               OptimizerState->non_block_m().LNF_w, OptimizerState->non_block_v().LNF_w, m_scales.NonBlocks.LNF_w, 0.f);
     comm.reduce_max(Parameters->get_master_lnf_w().Scales);
     CUDA_CHECK(cudaEventRecord(rs->OptEmbeddingsDone, main_stream));
 
@@ -758,19 +760,21 @@ void LLamaModel::update(NCCLCommunicator& comm, float learning_rate, float beta_
         auto& bg = Grads->get_block_shard(i, main_stream);
         auto& bm = OptimizerState->get_block_m(i, main_stream);
         auto& bv = OptimizerState->get_block_v(i, main_stream);
-        run_update(bw.LN1_w, bg.LN1_w, bm.LN1_w, bv.LN1_w, 0.f);
-        run_update(bw.LN2_w, bg.LN2_w, bm.LN2_w, bv.LN2_w, 0.f);
+        auto& sm = m_scales.Blocks[i];
+        run_update(bw.LN1_w, bg.LN1_w, bm.LN1_w, bv.LN1_w, sm.LN1_w, 0.f);
+        run_update(bw.LN2_w, bg.LN2_w, bm.LN2_w, bv.LN2_w, sm.LN2_w, 0.f);
 
         run_update(bw.Attn_QKV_w, bg.Attn_QKV_w, bm.Attn_QKV_w, bv.Attn_QKV_w,
-                   weight_decay);
+                   sm.Attn_QKV_w, weight_decay);
         if(bm.Attn_QKV_b.has_value()) {
+            Tensor qkv_b_scales = sm.Attn_QKV_b.value_or(Tensor{});
             run_update(bw.Attn_QKV_b.value(), bg.Attn_QKV_b.value(), bm.Attn_QKV_b.value(),
-                         bv.Attn_QKV_b.value(), 0.f);
+                         bv.Attn_QKV_b.value(), qkv_b_scales, 0.f);
         }
-        run_update(bw.Attn_Out_w, bg.Attn_Out_w, bm.Attn_Out_w, bv.Attn_Out_w, weight_decay);
+        run_update(bw.Attn_Out_w, bg.Attn_Out_w, bm.Attn_Out_w, bv.Attn_Out_w, sm.Attn_Out_w, weight_decay);
 
-        run_update(bw.MLP_Up_w, bg.MLP_Up_w, bm.MLP_Up_w, bv.MLP_Up_w, weight_decay);
-        run_update(bw.MLP_Down_w, bg.MLP_Down_w, bm.MLP_Down_w, bv.MLP_Down_w, weight_decay);
+        run_update(bw.MLP_Up_w, bg.MLP_Up_w, bm.MLP_Up_w, bv.MLP_Up_w, sm.MLP_Up_w, weight_decay);
+        run_update(bw.MLP_Down_w, bg.MLP_Down_w, bm.MLP_Down_w, bv.MLP_Down_w, sm.MLP_Down_w, weight_decay);
         auto scales = Parameters->get_scales_for_block(i);
         // yes, we run this on main stream. Yes, this isn't nice because it prevents kernels from running in parallel.
         // the communication is tiny, though, so it doesn't matter, and this setup guarantees that the abs-maxes are
@@ -787,7 +791,7 @@ void LLamaModel::update(NCCLCommunicator& comm, float learning_rate, float beta_
 
     if(!Config.TiedWordEmbeddings) {
         run_update(Parameters->get_master_lmhead(), Grads->get_lmhead_shard(main_stream),
-                   OptimizerState->non_block_m().LMHead, OptimizerState->non_block_v().LMHead, weight_decay);
+                   OptimizerState->non_block_m().LMHead, OptimizerState->non_block_v().LMHead, m_scales.NonBlocks.LMHead, weight_decay);
         comm.reduce_max(Parameters->get_master_lmhead().Scales);
     }
     comm.wait_on_comms(main_stream);

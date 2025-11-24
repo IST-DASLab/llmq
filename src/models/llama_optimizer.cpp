@@ -7,6 +7,7 @@
 #include "llama_config.h"
 #include "llama_model.h"
 #include "utilities/comm.h"
+#include "kernels/kernels.h"
 
 void LLamaOptimizerStateManager::fetch_block(int layer_idx, cudaStream_t fetch_stream) {
     if((!mOffloadM && !mOffloadV) || mUseZeroCopy) return;
@@ -163,6 +164,50 @@ void zero_opt_state(sLLamaWeights& weights, cudaStream_t stream) {
     }
 }
 
+sLLamaWeights allocate_scales(LLamaConfig config, int shard_idx, int num_shards, TensorAllocator& alloc) {
+    long C = config.HiddenSize;
+    long V = config.VocabSize;
+    long H = config.IntermediateSize;
+    long head_size = C / config.NumQueryHeads;
+    long attn_intermediate_size = (config.NumQueryHeads + 2 * config.NumKeyValHeads) * head_size;
+
+    sLLamaWeights result;
+    result.Blocks.resize(config.NumLayers);
+    for(auto& block : result.Blocks) {
+        block.Attn_QKV_w = alloc.allocate_shard(ETensorDType::FP32, shard_idx, num_shards, "att_qkv_w", {div_exact(attn_intermediate_size * C, 128l)}, EAllocationType::ON_DEVICE);
+        block.Attn_Out_w = alloc.allocate_shard(ETensorDType::FP32, shard_idx, num_shards, "attproj_w", {div_exact(C * C, 128l)}, EAllocationType::ON_DEVICE);
+        block.MLP_Up_w = alloc.allocate_shard(ETensorDType::FP32, shard_idx, num_shards, "mlp_up_w", {div_exact(2 * H * C, 128l)}, EAllocationType::ON_DEVICE);
+        block.MLP_Down_w = alloc.allocate_shard(ETensorDType::FP32, shard_idx, num_shards, "mlp_down_w", {div_exact(C * H, 128l)}, EAllocationType::ON_DEVICE);
+
+        block.LN1_w = alloc.allocate_shard(ETensorDType::FP32, shard_idx, num_shards, "ln1_w", {div_exact(C, 128l)}, EAllocationType::ON_DEVICE);
+        block.LN2_w = alloc.allocate_shard(ETensorDType::FP32, shard_idx, num_shards, "ln2_w", {div_exact(C, 128l)}, EAllocationType::ON_DEVICE);
+        if(config.UseQKVBias) {
+            block.Attn_QKV_b = alloc.allocate_shard(ETensorDType::FP32, shard_idx, num_shards, "att_qkv_b", {div_exact(attn_intermediate_size, 128l)}, EAllocationType::ON_DEVICE);
+            fill_constant(block.Attn_QKV_b.value(), 1.f, block.Attn_QKV_b.value().nelem(), nullptr);
+        } else {
+            block.Attn_QKV_b = std::nullopt;
+        }
+
+        fill_constant(block.Attn_QKV_w, 1.f, block.Attn_QKV_w.nelem(), nullptr);
+        fill_constant(block.Attn_Out_w, 1.f, block.Attn_Out_w.nelem(), nullptr);
+        fill_constant(block.MLP_Up_w, 1.f, block.MLP_Up_w.nelem(), nullptr);
+        fill_constant(block.MLP_Down_w, 1.f, block.MLP_Down_w.nelem(), nullptr);
+        fill_constant(block.LN1_w, 1.f, block.LN1_w.nelem(), nullptr);
+        fill_constant(block.LN2_w, 1.f, block.LN2_w.nelem(), nullptr);
+    }
+    result.NonBlocks.Embeddings = alloc.allocate_shard(ETensorDType::FP32, shard_idx, num_shards, "embeddings", {div_exact(V * C, 128l)}, EAllocationType::ON_DEVICE);
+    result.NonBlocks.LNF_w      = alloc.allocate_shard(ETensorDType::FP32, shard_idx, num_shards,"lnf_w", {div_exact(C, 128l)}, EAllocationType::ON_DEVICE);
+    fill_constant(result.NonBlocks.Embeddings, 1.f, result.NonBlocks.Embeddings.nelem(), nullptr);
+    fill_constant(result.NonBlocks.LNF_w, 1.f, result.NonBlocks.LNF_w.nelem(), nullptr);
+    if(config.TiedWordEmbeddings) {
+        result.NonBlocks.LMHead = result.NonBlocks.Embeddings;
+    } else {
+        result.NonBlocks.LMHead = alloc.allocate_shard(ETensorDType::FP32, shard_idx, num_shards, "lmhead", {div_exact(V * C, 128l)}, EAllocationType::ON_DEVICE);
+        fill_constant(result.NonBlocks.LMHead, 1.f, result.NonBlocks.LMHead.nelem(), nullptr);
+    }
+    return result;
+}
+
 LLamaOptimizerStateManager::LLamaOptimizerStateManager(LLamaConfig cfg, LLamaOptions options, cudaStream_t stream, NCCLCommunicator& comm, TensorAllocator& alloc):
     mOffloadM(options.OffloadOptM), mOffloadV(options.OffloadOptV), mUseZeroCopy(options.UseZeroCopy)
 {
@@ -179,6 +224,12 @@ LLamaOptimizerStateManager::LLamaOptimizerStateManager(LLamaConfig cfg, LLamaOpt
                                                   EAllocationType::ON_DEVICE, comm.rank(), comm.world_size(), alloc);
             mOptMBuffer[1] = allocate_block_shard(c, options.OptMomentumType, options.OptMomentumType,
                                                   EAllocationType::ON_DEVICE, comm.rank(), comm.world_size(), alloc);
+        }
+
+        if(options.OptMomentumType == ETensorDType::FP8_E4M3) {
+            mOptMScales = allocate_scales(c, comm.rank(), comm.world_size(), alloc);
+        } else {
+            mOptMScales.Blocks.resize(c.NumLayers);
         }
     }
 
