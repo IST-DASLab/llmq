@@ -48,7 +48,7 @@ __device__ void store_vector(FloatOut* memory, const GenericVector<float, VecEle
         static_assert(Threads <= 32, "#threads > warp size");
         unsigned mask = __activemask();
         for(int i = 1; i <= Threads; i *= 2) {
-            abs_max = __shfl_xor_sync(mask, abs_max, i, Threads);
+            abs_max = std::max(abs_max, __shfl_xor_sync(mask, abs_max, i, Threads));
         }
         if(abs_max > 1e-10f) {
             factor = 448.f / abs_max;
