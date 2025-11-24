@@ -825,6 +825,10 @@ ITensorContainer& LLamaModel::opt_momentum() {
     return OptimizerState->full_m();
 }
 
+ITensorContainer& LLamaModel::opt_momentum_scales() {
+    return OptimizerState->scales_m();
+}
+
 ITensorContainer& LLamaModel::opt_variance() {
     return OptimizerState->full_v();
 }

@@ -13,6 +13,7 @@
 #include "model.h"
 #include "utilities/comm.h"
 #include "utilities/safetensors.h"
+#include "utilities/tensor.h"
 
 std::string get_checkpoint_path(std::string checkpoint_directory, int step) {
     checkpoint_directory += fmt::format("/step_{:08}", step);
@@ -34,6 +35,16 @@ std::string save_checkpoint(std::string target, int step, IModel& model, const D
     // sharded optimizer state
     write_safetensors(target + fmt::format("/adam.m.shard_{:03}_of_{:03}.safetensors", comm.rank(), comm.world_size()), model.opt_momentum());
     write_safetensors(target + fmt::format("/adam.v.shard_{:03}_of_{:03}.safetensors", comm.rank(), comm.world_size()), model.opt_variance());
+
+    bool has_scales = false;
+    model.opt_momentum_scales().iterate_tensors([&has_scales](const std::string& name, const TensorShard& tensor){
+        if(tensor.Data != nullptr) {
+            has_scales = true;
+        }
+    });
+    if(has_scales) {
+        write_safetensors(target + fmt::format("/adam.m.scales.shard_{:03}_of_{:03}.safetensors", comm.rank(), comm.world_size()), model.opt_momentum_scales());
+    }
 
     comm.barrier();  // only write checkpoint.json once we know all the shard files are saved
 
@@ -95,6 +106,16 @@ void load_checkpoint(std::string source, int step, IModel& model, DataLoader* lo
     // load optimizer shards
     load_safetensors(source + fmt::format("/adam.m.shard_{:03}_of_{:03}.safetensors", comm.rank(), comm.world_size()), model.opt_momentum(), false);
     load_safetensors(source + fmt::format("/adam.v.shard_{:03}_of_{:03}.safetensors", comm.rank(), comm.world_size()), model.opt_variance(), false);
+
+    bool has_scales = false;
+    model.opt_momentum_scales().iterate_tensors([&has_scales](const std::string& name, const TensorShard& tensor){
+        if(tensor.Data != nullptr) {
+            has_scales = true;
+        }
+    });
+    if(has_scales) {
+        load_safetensors(source + fmt::format("/adam.m.scales.shard_{:03}_of_{:03}.safetensors", comm.rank(), comm.world_size()), model.opt_momentum_scales(), false);
+    }
 
     model.on_restore_checkpoint(comm);
 }
