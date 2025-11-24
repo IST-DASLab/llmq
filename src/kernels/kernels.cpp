@@ -141,7 +141,7 @@ void global_norm_squared(Tensor& out, const Tensor& values, size_t count, const 
 
 void adamw_update(Tensor& params_memory, const Tensor& grads_memory, Tensor& m_memory, Tensor& v_memory, size_t num_parameters,
                   float learning_rate, float beta1, float beta2, int t, float eps, float weight_decay,
-                  const float* grad_scale, float* abs_max, unsigned int seed, cudaStream_t stream) {
+                  const float* grad_scale, Tensor& m_scales, float* abs_max, unsigned int seed, cudaStream_t stream) {
     if (params_memory.nelem() != grads_memory.nelem() || params_memory.nelem() != m_memory.nelem() || params_memory.nelem() != v_memory.nelem()) {
         throw std::runtime_error("adamw_update: shape mismatch");
     }
@@ -154,7 +154,7 @@ void adamw_update(Tensor& params_memory, const Tensor& grads_memory, Tensor& m_m
     } else if(params_memory.DType == ETensorDType::BF16 && m_memory.DType == ETensorDType::BF16 && v_memory.DType == ETensorDType::BF16) {
         adamw_update(params_memory.get<nv_bfloat16>(), grads_memory.get<nv_bfloat16>(), m_memory.get<nv_bfloat16>(), v_memory.get<nv_bfloat16>(), num_parameters, learning_rate, beta1, beta2, t, eps, weight_decay, grad_scale, abs_max, seed, stream);
     }  else if(params_memory.DType == ETensorDType::BF16 && m_memory.DType == ETensorDType::FP8_E4M3 && v_memory.DType == ETensorDType::BF16) {
-        adamw_update(params_memory.get<nv_bfloat16>(), grads_memory.get<nv_bfloat16>(), m_memory.get<__nv_fp8_e4m3>(), v_memory.get<nv_bfloat16>(), num_parameters, learning_rate, beta1, beta2, t, eps, weight_decay, grad_scale, abs_max, seed, stream);
+        adamw_update(params_memory.get<nv_bfloat16>(), grads_memory.get<nv_bfloat16>(), m_memory.get<__nv_fp8_e4m3>(), v_memory.get<nv_bfloat16>(), num_parameters, learning_rate, beta1, beta2, t, eps, weight_decay, grad_scale, m_scales.get<float>(), abs_max, seed, stream);
     } else {
         throw std::logic_error("adamw_update: unsupported dtype");
     }

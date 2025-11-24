@@ -16,6 +16,7 @@ public:
     sLLamaNonBlockWeights<TensorShard>& non_block_v();
 
     sLLamaWeights& full_m() { return mOptM; }
+    sLLamaWeights& scales_m() { return mOptMScales; }
     sLLamaWeights& full_v() { return mOptV; }
 
     void fetch_block(int layer_idx, cudaStream_t fetch_stream);
@@ -27,6 +28,8 @@ private:
     sLLamaWeights mOptV;
     std::array<sLLamaBlockWeights<TensorShard>, 2> mOptMBuffer;
     std::array<sLLamaBlockWeights<TensorShard>, 2> mOptVBuffer;
+
+    sLLamaWeights mOptMScales;
 
     struct sBufferStatus {
         int LayerIdx = -1;
