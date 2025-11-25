@@ -121,6 +121,15 @@ __global__ void __launch_bounds__(1024, 1)
     // are done is 64 bit
     int64_t idx = gridDim.x - (blockIdx.x+1); // reverse order for cache hits on matmul data
     int ix = targets[idx];
+    if(ix == -100) {
+        if (WriteDLogits){
+            x128 zero = x128::zeros();
+            for (int i = threadIdx.x; i < V/x128::size; i += blockDim.x) {
+                zero.store(logits + idx * P + i * x128::size);
+            }
+        }
+        return;     // mask
+    }
     assert(0 <= ix && ix < V);
 
     // softmax (reading B * T * V, same logits read again below, hopefully still in cache)
