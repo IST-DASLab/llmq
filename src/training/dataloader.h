@@ -81,6 +81,7 @@ private:
         std::int32_t Version;
         std::int32_t VocabSize;
         std::int32_t BytesPerToken;
+        bool HasMasks;
     };
 
     static TokenFileInfo parse_token_file_header(const std::string& file_name);
@@ -105,6 +106,9 @@ private:
     std::int32_t mEpoch = 0;
 
     unsigned long mSeed;
+
+    // buffers
+    std::vector<std::uint8_t> mMaskBuffer;
 };
 
 #endif //LLMQ_TRAINING_DATALOADER_H

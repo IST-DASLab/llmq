@@ -113,6 +113,7 @@ DataLoader::TokenFileInfo DataLoader::parse_token_file_header(const std::string&
     info.Version = version;
     info.BytesPerToken = bytes_per_token;
     info.NumTokens = header[4];
+    info.HasMasks = header[6] == 1;
     return info;
 }
 
@@ -198,7 +199,6 @@ void DataLoader::load_batch(Tensor& inputs, Tensor& targets) {
     }
 
     const long header_offset = 1024;
-    const long element_size = 4;
 
     if (mChunkIndex + mWorldSize - mRank >= mChunkOffsets.size()) {
         if (!advance_file()) {
@@ -207,8 +207,10 @@ void DataLoader::load_batch(Tensor& inputs, Tensor& targets) {
     }
 
     try {
+        const auto& file_info = mShuffledFiles.at(mFileIndex);
         const long input_bytes = inputs.bytes();
         const long target_bytes = targets.bytes();
+        const long element_size = file_info->BytesPerToken;
         const int chunk_pos = mChunkSize * mChunkOffsets[mChunkIndex];
         const long input_offset = element_size * chunk_pos + header_offset;
         const long target_offset = input_offset + element_size;
@@ -233,6 +235,26 @@ void DataLoader::load_batch(Tensor& inputs, Tensor& targets) {
             throw std::runtime_error("Incomplete read of target data: expected " +
                                      std::to_string(target_bytes) + " bytes, got " +
                                      std::to_string(mTokenFile.gcount()));
+        }
+
+        if(file_info->HasMasks) {
+            const long masks_start = element_size * file_info->NumTokens + header_offset;
+            const long mask_start = masks_start + chunk_pos / 8;
+            const long mask_end = masks_start + (chunk_pos + mChunkSize + 7) / 8;
+            mTokenFile.seekg(mask_start, std::ios::beg);
+            mMaskBuffer.resize(mask_end - mask_start);
+            mTokenFile.read(reinterpret_cast<char*>(mMaskBuffer.data()), mask_end - mask_start);
+            int start = chunk_pos % 8;
+            int end = start + mChunkSize;
+            int* target_tokens = targets.get<int>();
+            for(int i = start; i < end; ++i) {
+                int byte_id = i / 8;
+                int bit_id = i % 8;
+                bool mask_bit = (mMaskBuffer[byte_id] >> bit_id) & 1;
+                if(!mask_bit) {
+                    target_tokens[i - start] = -100;
+                }
+            }
         }
 
         // Update position only after successful reads
