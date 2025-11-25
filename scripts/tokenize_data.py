@@ -68,7 +68,7 @@ class TokenizedDataFileWriter:
         self.vocab_size = vocab_size
         self.has_masks = masking
         self.mask_list = []
-        self.mask_rest = []
+        self.mask_rest = None
 
     def __enter__(self):
         self.file_handle = open(self.file_name, "wb+")
@@ -102,11 +102,16 @@ class TokenizedDataFileWriter:
             raise RuntimeError("cannot have more than 2**31 tokens in a single file")
 
     def _record_mask(self, mask: np.ndarray):
-        full_mask = np.concatenate([self.mask_rest, mask])
+        mask = mask.astype(np.bool)
+        if self.mask_rest is not None:
+            full_mask = np.concatenate([self.mask_rest, mask], dtype=np.bool)
+        else:
+            full_mask = mask
+
         full_bytes = len(full_mask) // 8 * 8
-        mask_bytes = mask[:full_bytes]
-        self.mask_rest = mask[full_bytes:]
-        self.mask_list.append(np.packbits(mask_bytes))
+        mask_bytes = full_mask[:full_bytes]
+        self.mask_rest = full_mask[full_bytes:]
+        self.mask_list.append(np.packbits(mask_bytes, bitorder='little'))
 
     def _write_masks(self):
         if len(self.mask_rest) > 0:
