@@ -7,6 +7,7 @@
 
 # Note: naming this script tokenize.py *breaks* transformers
 from pathlib import Path
+from typing import Optional
 
 from transformers import AutoTokenizer
 import datasets
@@ -51,7 +52,7 @@ def load_or_create_dataset(name: str):
     elif name == "fineweb-10b":
         return datasets.load_dataset("HuggingFaceFW/fineweb", "sample-10BT", streaming=True)
     elif name == "limo":
-        return datasets.load_dataset("GAIR/LIMO").train_test_split(test_size=40, seed=42)
+        return datasets.load_dataset("GAIR/LIMO")["train"].train_test_split(test_size=40, seed=42)
 
     raise ValueError(f"unknown dataset {name}")
 
@@ -60,11 +61,14 @@ def tokenize_example(example):
 
 
 class TokenizedDataFileWriter:
-    def __init__(self, file_name: str,  vocab_size: int):
+    def __init__(self, file_name: str,  vocab_size: int, masking: bool = False):
         self.file_name = file_name
         self.file_handle = None
         self.n_tokens = 0
         self.vocab_size = vocab_size
+        self.has_masks = masking
+        self.mask_list = []
+        self.mask_rest = []
 
     def __enter__(self):
         self.file_handle = open(self.file_name, "wb+")
@@ -73,20 +77,42 @@ class TokenizedDataFileWriter:
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
+        if self.has_masks:
+            self._write_masks()
         self._write_header()
         self.file_handle.close()
         self.file_handle = None
 
-    def add_document(self, tokens: np.ndarray):
+    def add_document(self, tokens: np.ndarray, mask: Optional[np.ndarray] = None):
         assert self.file_handle is not None
+        if mask is not None and self.has_masks is False:
+            raise ValueError("Cannot add masking to a file that was not created with masking enabled")
+        elif mask is None and self.has_masks is True:
+            raise ValueError("Cannot add maskless tokens to a file that was created with masking enabled")
 
         tokens = np.array(tokens , dtype=np.int32)
         assert tokens.ndim == 1
+
+        if mask is not None:
+            self._record_mask(mask)
 
         self.file_handle.write(tokens.tobytes())
         self.n_tokens += len(tokens)
         if self.n_tokens >= 2**31:
             raise RuntimeError("cannot have more than 2**31 tokens in a single file")
+
+    def _record_mask(self, mask: np.ndarray):
+        full_mask = np.concatenate([self.mask_rest, mask])
+        full_bytes = len(full_mask) // 8 * 8
+        mask_bytes = mask[:full_bytes]
+        self.mask_rest = mask[full_bytes:]
+        self.mask_list.append(np.packbits(mask_bytes))
+
+    def _write_masks(self):
+        if len(self.mask_rest) > 0:
+            self.mask_list.append(np.packbits(self.mask_rest, bitorder='little'))
+        for part in self.mask_list:
+            self.file_handle.write(part.tobytes())
 
     def _write_header(self):
         assert self.file_handle is not None
@@ -95,7 +121,7 @@ class TokenizedDataFileWriter:
         version = 2
         bytes_per_token = 4
         self.file_handle.write(header_str.encode("ascii"))
-        self.file_handle.write(np.array([version, bytes_per_token, self.n_tokens, self.vocab_size], dtype=np.int32).tobytes())
+        self.file_handle.write(np.array([version, bytes_per_token, self.n_tokens, self.vocab_size, self.has_masks], dtype=np.int32).tobytes())
         self.file_handle.seek(256*4)
 
 
@@ -105,17 +131,24 @@ def init_worker(model_name_arg):
     worker_tokenizer = AutoTokenizer.from_pretrained(model_name_arg)
 
 
-def tokenize_example_worker(args: tuple):
+def tokenize_example_worker(args: tuple) -> dict:
     example, key_func = args
     """Worker function for multiprocessing"""
     if callable(key_func):
         example = key_func(example)
     else:
         example = example[key_func]
-    return worker_tokenizer(example, return_tensors='np', split_special_tokens=True).input_ids[0, ...]
+    if isinstance(example, str):
+        return {"tokens": worker_tokenizer(example, return_tensors='np', split_special_tokens=True).input_ids[0, ...]}
+    elif isinstance(example, tuple):
+        assert len(example) == 2
+        prompt = worker_tokenizer(example[0], return_tensors='np', split_special_tokens=True).input_ids[0, ...]
+        response = worker_tokenizer(example[1], return_tensors='np', split_special_tokens=True).input_ids[0, ...]
+        tokens = np.concatenate([prompt, response])
+        mask = np.concatenate([np.zeros_like(prompt), np.ones_like(response)])
+        return {"tokens": tokens, "mask": mask}
 
-
-def process_single_file(ds_iter, key, file_name: str, vocab_size: int, max_tokens: int, pool) -> tuple[bool, int]:
+def process_single_file(ds_iter, key, file_name: str, vocab_size: int, max_tokens: int, masking: bool, pool) -> tuple[bool, int]:
     def example_generator(f: TokenizedDataFileWriter):
         try:
             while f.n_tokens < max_tokens:
@@ -124,7 +157,7 @@ def process_single_file(ds_iter, key, file_name: str, vocab_size: int, max_token
             return
 
     has_more_data = False
-    with TokenizedDataFileWriter(file_name, vocab_size) as f:
+    with TokenizedDataFileWriter(file_name, vocab_size, masking=masking) as f:
         tokenized_examples = pool.imap(
             tokenize_example_worker,
             example_generator(f),
@@ -132,7 +165,7 @@ def process_single_file(ds_iter, key, file_name: str, vocab_size: int, max_token
         )
 
         for tokens in tokenized_examples:
-            f.add_document(tokens)
+            f.add_document(**tokens)
 
             if f.n_tokens >= max_tokens:
                 has_more_data = True
@@ -141,7 +174,7 @@ def process_single_file(ds_iter, key, file_name: str, vocab_size: int, max_token
         return has_more_data, f.n_tokens
 
 
-def process_dataset(file_name: str, ds, tokenizer, key, split_name: str, max_tokens: int = None, *, model_name: str, is_tiny: bool = False, first_is_eval: int = -1):
+def process_dataset(file_name: str, ds, tokenizer, key, split_name: str, max_tokens: int = None, *, model_name: str, is_tiny: bool = False, first_is_eval: int = -1, masking: bool = False):
     num_processes = max(1, min(mp.cpu_count() // 2, 8))
 
     ds_iter = iter(ds)
@@ -167,7 +200,7 @@ def process_dataset(file_name: str, ds, tokenizer, key, split_name: str, max_tok
             else:
                 output_filename = f"{file_name}/{split_name}-{file_index:03d}.bin"
 
-            has_more_data, tokens_written = process_single_file(ds_iter, key, output_filename, tokenizer.vocab_size, max_size, pool)
+            has_more_data, tokens_written = process_single_file(ds_iter, key, output_filename, tokenizer.vocab_size, max_size, masking, pool)
 
             total_tokens += tokens_written
             print(f"Completed file {output_filename} with {tokens_written:,} tokens")
@@ -179,10 +212,18 @@ def process_dataset(file_name: str, ds, tokenizer, key, split_name: str, max_tok
             if max_tokens and total_tokens >= max_tokens:
                 break
 
+def _extract_gsm8k_example(example):
+    return example["question"], example["answer"]
+
+
+def _extract_limo_example(example):
+    return example["question"], example["solution"]
+
 
 def generate_tokenized_dataset(dataset: str, model: str, out_dir: str = "data"):
     subsample = None
     is_tiny = False
+    masking = False
 
     if dataset == "tiny-shakespeare":
         dst = "tiny-shakespeare"
@@ -195,11 +236,10 @@ def generate_tokenized_dataset(dataset: str, model: str, out_dir: str = "data"):
         test_split = "validation"
     elif dataset == "gsm8k":
         dst = "gsm8k"
-        def extract_example(example):
-            return example["question"] + "\n" + example["answer"]
-        key = extract_example
+        key = _extract_gsm8k_example
         test_split = "test"
         is_tiny = True
+        masking = True
     elif dataset == "fineweb-1b":
         dst = "fineweb-1b"
         key = "text"
@@ -226,11 +266,10 @@ def generate_tokenized_dataset(dataset: str, model: str, out_dir: str = "data"):
         subsample = 20_000_000_000
     elif dataset == "limo":
         dst = "limo"
-        def extract_example(example):
-            return example["question"] + "\n" + example["solution"]
-        key = extract_example
+        key = _extract_limo_example
         test_split = "test"
         is_tiny = True
+        masking = True
     else:
         assert False, f"unknown dataset {dataset}"
 
@@ -248,10 +287,10 @@ def generate_tokenized_dataset(dataset: str, model: str, out_dir: str = "data"):
     dst = out_dir + "/" + dst
 
     if isinstance(test_split, int):
-        process_dataset(dst, d["train"], tokenizer, key, "train", subsample, is_tiny=is_tiny, first_is_eval=test_split, model_name=model_name)
+        process_dataset(dst, d["train"], tokenizer, key, "train", subsample, is_tiny=is_tiny, first_is_eval=test_split, model_name=model_name, masking=masking)
     else:
-        process_dataset(dst, d["train"], tokenizer, key, "train", subsample, is_tiny=is_tiny, model_name=model_name)
-        process_dataset(dst, d[test_split], tokenizer, key, "eval", None, is_tiny=True, model_name=model_name)
+        process_dataset(dst, d["train"], tokenizer, key, "train", subsample, is_tiny=is_tiny, model_name=model_name, masking=masking)
+        process_dataset(dst, d[test_split], tokenizer, key, "eval", None, is_tiny=True, model_name=model_name, masking=masking)
 
 
 def main():
