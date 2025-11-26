@@ -18,6 +18,7 @@
 #include "models/llama_model.h"
 #include <chrono>
 #include <CLI/CLI.hpp>
+#include <fmt/chrono.h>
 
 float run_evaluation(DataLoader& test_loader, LLamaModel& model, TrainingRunLogger& logger, float epoch, int step,
                      NCCLCommunicator& comm, int max_steps, Tensor& inputs, Tensor& targets);
@@ -59,7 +60,7 @@ struct TrainingRunner {
     std::string EvalFile = "tiny-shakespeare-test.bin";
     std::string OutDir = "output";
     std::string CkptDir = "ckpt";
-    std::string LogFile = "log.json";
+    std::string LogFile = fmt::format("llmq-log-{:%FT%H_%M}.json", std::chrono::system_clock::now());
     int EvalEvery = 100;
     int EvalNumSteps = 100;
     int CkptEvery = 100;
