@@ -404,6 +404,8 @@ void LLamaModel::backward(Tensor inputs, Tensor targets, NCCLCommunicator& comm,
         }
         if(l > 0) {
             Parameters->gather_block(l - 1, comm, *rs);
+        } else if (!last_step) {
+            Parameters->gather_embeddings(comm);
         }
 
         auto& weights = Parameters->get_block(l, main_stream);
