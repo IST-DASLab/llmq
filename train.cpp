@@ -28,6 +28,15 @@ bool lexical_cast(const std::string& input, ETensorDType& output) {
     return true;
 }
 
+std::string replace(std::string haystack, const std::string& needle, const std::string& replacement) {
+    size_t pos = haystack.find(needle);
+    while (pos != std::string::npos) {
+        haystack.replace(pos, needle.size(), replacement);
+        pos = haystack.find(needle, pos + needle.size());
+    }
+    return std::move(haystack);
+}
+
 namespace CLI::detail {
     template<>
     constexpr const char* type_name<ETensorDType>() {
@@ -55,12 +64,13 @@ struct TrainingRunner {
 
     ETensorDType ModelDType = ETensorDType::BF16;
     std::string ModelRootPath = ".";
+    std::string RunName = "llmq";
 
     std::string TrainFile = "tiny-shakespeare-train.bin";
     std::string EvalFile = "tiny-shakespeare-test.bin";
-    std::string OutDir = "output";
-    std::string CkptDir = "ckpt";
-    std::string LogFile = fmt::format("llmq-log-{:%FT%H_%M}.json", std::chrono::system_clock::now());
+    std::string OutDir = "output/%n";
+    std::string CkptDir = "ckpt/%n";
+    std::string LogFile = fmt::format("logs/%n-{:%FT%H_%M}.json", std::chrono::system_clock::now());
     int EvalEvery = 100;
     int EvalNumSteps = 100;
     int CkptEvery = 100;
@@ -108,6 +118,7 @@ void TrainingRunner::load_training_config(int argc, const char** argv) {
     app.add_option("--attn-bwd-chunks", Options.AttBwdChunks, "Run the attention backward pass in chunks, to avoid having to materialize a large workspace tensor.");
 
     // debug
+    app.add_option("--name", RunName, "Associate a name with this run. This will not influence any computations. You can use %n as part of specifying log, output, and checkpoint file names.");
     app.add_option("--debug-log-allocations", LogAllocations, "Log all memory allocations larger than the given number (in MiB)");
 
     // optimizer
@@ -211,6 +222,10 @@ void TrainingRunner::load_training_config(int argc, const char** argv) {
     }
 
     LogAllocations *= 1024 * 1024;
+
+    LogFile = replace(LogFile, "%n", RunName);
+    OutDir = replace(OutDir, "%n", RunName);
+    CkptDir = replace(CkptDir, "%n", RunName);
 }
 
 void TrainingRunner::launch_training(int argc, const char** argv) {
@@ -276,6 +291,7 @@ void TrainingRunner::run_training(int argc, const char** argv, NCCLCommunicator&
     int steps_per_epoch = train_loader.num_tokens() / total_batch_size;
 
     logger.log_options({
+        {"name",               RunName},
         {"recompute-swiglu",   Options.RecomputeSwiGLu},
         {"recompute-norm",     Options.RecomputeRMSNorm},
         {"recompute-ffn",      Options.RecomputeFFN},

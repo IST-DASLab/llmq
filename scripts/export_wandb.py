@@ -16,6 +16,14 @@ import wandb
 def convert_log(file_name: str, *, name: Optional[str], project: str, notes: str="", tags: list[str] = None):
     log_data = json.load(file_name)
 
+    if name is None:
+        for entry in log_data:
+            if entry["log"] == "option":
+                opt_name = entry["name"]
+                opt_value = entry["value"]
+                if opt_name == "name":
+                    name = opt_value
+
     with wandb.init(
             project=project,
             name=name,
