@@ -356,7 +356,7 @@ NB_MODULE(_pyllmq, m) {
         .def("advance_epoch", &DataLoader::advance_epoch, "Advance to the next epoch, re-randomizing the order of chunks")
         .def("has_next", &DataLoader::has_next, nb::arg("chunks") = 1, "Check if there is another batch of data available")
         .def("set_state", &DataLoader::set_state, nb::arg("seed"), nb::arg("epoch"), nb::arg("file_index"), nb::arg("chunk_index"), "Sets the internal state of the dataloader.")
-        .def_prop_ro("chunk_size", &DataLoader::chunk_size)
+        .def_prop_ro("seq_len", &DataLoader::seq_len)
         .def_prop_ro("vocab_size", &DataLoader::vocab_size)
         .def_prop_ro("num_files", &DataLoader::num_files)
         .def_prop_ro("num_chunks", &DataLoader::num_chunks)

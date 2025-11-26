@@ -18,13 +18,13 @@
 #include "utilities/tensor.h"
 #include "utilities/philox.h"
 
-DataLoader::DataLoader(const std::string& file_pattern, int chunk_size, int rank, int world_size, unsigned long seed) :
-       DataLoader(match_files(file_pattern), chunk_size, rank, world_size, seed) {
+DataLoader::DataLoader(const std::string& file_pattern, int seq_len, int rank, int world_size, unsigned long seed) :
+       DataLoader(match_files(file_pattern), seq_len, rank, world_size, seed) {
 
 }
 
-DataLoader::DataLoader(const std::vector<std::string>& file_list, int chunk_size, int rank, int world_size, unsigned long seed) :
-        mChunkSize(chunk_size), mSeed(seed), mRank(rank), mWorldSize(world_size), mChunkIndex(rank) {
+DataLoader::DataLoader(const std::vector<std::string>& file_list, int seq_len, int rank, int world_size, unsigned long seed) :
+        mSeqLen(seq_len), mSeed(seed), mRank(rank), mWorldSize(world_size), mChunkIndex(rank) {
     if (file_list.empty()) {
         throw std::runtime_error("Empty list of token files provided");
     }
@@ -44,7 +44,7 @@ DataLoader::DataLoader(const std::vector<std::string>& file_list, int chunk_size
     std::int64_t total_tokens = 0;
     for (auto& info: mFileInfos) {
         total_tokens += info.NumTokens;
-        total_chunks += (info.NumTokens - 1) / mChunkSize;
+        total_chunks += (info.NumTokens - 1) / mSeqLen;
     }
 
     mTotalChunks = total_chunks;
@@ -122,7 +122,7 @@ float DataLoader::progress() const {
     for (int i = 0; i < mFileIndex; ++i) {
         epoch_tokens += mShuffledFiles.at(i)->NumTokens;
     }
-    epoch_tokens += mChunkIndex * mChunkSize;
+    epoch_tokens += mChunkIndex * mSeqLen;
 
     return 100.f * ((double)epoch_tokens / (double)mTotalTokens);
 }
@@ -139,7 +139,7 @@ void DataLoader::shuffle_files() {
 
 void DataLoader::shuffle_chunks() {
     int num_tokens = mShuffledFiles.at(mFileIndex)->NumTokens;
-    int num_chunks = (num_tokens - 1) / mChunkSize;
+    int num_chunks = (num_tokens - 1) / mSeqLen;
     std::ranges::iota_view ids(0, num_chunks);
     mChunkOffsets.assign(std::begin(ids), std::end(ids));
 
@@ -188,14 +188,14 @@ std::int32_t DataLoader::chunk_index() const {
     return mChunkIndex - mRank;
 }
 
-void DataLoader::load_batch(Tensor& inputs, Tensor& targets) {
+void DataLoader::load_seq(Tensor& inputs, Tensor& targets) {
     assert(inputs.Device == -1);
     assert(targets.Device == -1);
-    if(inputs.nelem() != mChunkSize) {
-        throw std::runtime_error(fmt::format("Expected inputs tensor of {} elements, got {}", mChunkSize, inputs.nelem()));
+    if(inputs.nelem() != mSeqLen) {
+        throw std::runtime_error(fmt::format("Expected inputs tensor of {} elements, got {}", mSeqLen, inputs.nelem()));
     }
-    if(targets.nelem() != mChunkSize) {
-        throw std::runtime_error(fmt::format("Expected targets tensor of {} elements, got {}", mChunkSize, targets.nelem()));
+    if(targets.nelem() != mSeqLen) {
+        throw std::runtime_error(fmt::format("Expected targets tensor of {} elements, got {}", mSeqLen, targets.nelem()));
     }
 
     const long header_offset = 1024;
@@ -211,7 +211,7 @@ void DataLoader::load_batch(Tensor& inputs, Tensor& targets) {
         const long input_bytes = inputs.bytes();
         const long target_bytes = targets.bytes();
         const long element_size = file_info->BytesPerToken;
-        const int chunk_pos = mChunkSize * mChunkOffsets[mChunkIndex];
+        const int chunk_pos = mSeqLen * mChunkOffsets[mChunkIndex];
         const long input_offset = element_size * chunk_pos + header_offset;
         const long target_offset = input_offset + element_size;
 
@@ -240,12 +240,12 @@ void DataLoader::load_batch(Tensor& inputs, Tensor& targets) {
         if(file_info->HasMasks) {
             const long masks_start = element_size * file_info->NumTokens + header_offset;
             const long mask_start = masks_start + chunk_pos / 8;
-            const long mask_end = masks_start + (chunk_pos + mChunkSize + 7) / 8;
+            const long mask_end = masks_start + (chunk_pos + mSeqLen + 7) / 8;
             mTokenFile.seekg(mask_start, std::ios::beg);
             mMaskBuffer.resize(mask_end - mask_start);
             mTokenFile.read(reinterpret_cast<char*>(mMaskBuffer.data()), mask_end - mask_start);
             int start = chunk_pos % 8;
-            int end = start + mChunkSize;
+            int end = start + mSeqLen;
             int* target_tokens = targets.get<int>();
             for(int i = start; i < end; ++i) {
                 int byte_id = i / 8;
@@ -262,6 +262,15 @@ void DataLoader::load_batch(Tensor& inputs, Tensor& targets) {
 
     } catch (const std::ios_base::failure& e) {
         throw std::runtime_error("File I/O error: " + std::string(e.what()));
+    }
+}
+
+void DataLoader::load_batch(Tensor& inputs, Tensor& targets) {
+    int batch_size = div_exact((int)inputs.nelem(), mSeqLen);
+    for (int i = 0; i < batch_size; ++i) {
+        Tensor bi = shard_view(inputs, i, batch_size);
+        Tensor bt = shard_view(targets, i, batch_size);
+        load_seq(bi, bt);
     }
 }
 

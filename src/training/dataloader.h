@@ -37,13 +37,16 @@ class Tensor;
  */
 class DataLoader {
 public:
-    DataLoader(const std::string& file_pattern, int chunk_size, int rank, int world_size, unsigned long seed = 42);
-    DataLoader(const std::vector<std::string>& file_list, int chunk_size, int rank, int world_size, unsigned long seed = 42);
+    DataLoader(const std::string& file_pattern, int seq_len, int rank, int world_size, unsigned long seed = 42);
+    DataLoader(const std::vector<std::string>& file_list, int seq_len, int rank, int world_size, unsigned long seed = 42);
 
     static std::vector<std::string> match_files(const std::string& pattern);
 
     //! Fills `inputs` and `targets` with the next chunk of token indices, where targets is shifted left by one position.
+    void load_seq(Tensor& inputs, Tensor& targets);
+    //! Fills `inputs` and `targets` with a batch of sequences
     void load_batch(Tensor& inputs, Tensor& targets);
+
     //! Increment the epoch counter, reset the iterators, and re-shuffle the files and chunks.
     void advance_epoch();
 
@@ -52,7 +55,7 @@ public:
 
     const std::string& file_name(int i) const { return mFileInfos.at(i).FileName; }
     std::int32_t file_tokens(int i) const { return mFileInfos.at(i).NumTokens; }
-    int chunk_size() const { return mChunkSize; }
+    int seq_len() const { return mSeqLen; }
 
     std::int32_t file_index() const { return mFileIndex; }
     std::int32_t chunk_index() const;
@@ -88,7 +91,7 @@ private:
 
     // immutable config
     std::int32_t mVocabSize = -1;
-    std::int32_t mChunkSize;
+    std::int32_t mSeqLen;
     std::vector<TokenFileInfo> mFileInfos;
 
     int mRank;

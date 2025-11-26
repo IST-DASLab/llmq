@@ -287,8 +287,8 @@ void TrainingRunner::run_training(int argc, const char** argv, NCCLCommunicator&
     TrainingRunLogger logger(LogFile, comm.rank(), TrainingRunLogger::DEFAULT);
     logger.log_cmd(argc, argv);
 
-    DataLoader train_loader({TrainFile}, B*T, comm.rank(), comm.world_size(), 0x83b45442ull);
-    DataLoader test_loader({EvalFile}, B*T, comm.rank(), comm.world_size(), 0x83b45442ull);
+    DataLoader train_loader({TrainFile}, T, comm.rank(), comm.world_size(), 0x83b45442ull);
+    DataLoader test_loader({EvalFile}, T, comm.rank(), comm.world_size(), 0x83b45442ull);
 
     int steps_per_epoch = train_loader.num_tokens() / total_batch_size;
 
@@ -442,7 +442,7 @@ void TrainingRunner::run_training(int argc, const char** argv, NCCLCommunicator&
 
     for (int step = latest_step; step < MaxSteps; ++step) {
         bool run_eval = false;
-        if (!train_loader.has_next(GradAccSteps)) {
+        if (!train_loader.has_next(GradAccSteps * B)) {
             train_loader.advance_epoch();
             run_eval = true;
         }
@@ -509,7 +509,7 @@ float run_evaluation(DataLoader& test_loader, LLamaModel& model, TrainingRunLogg
     test_loader.set_state(test_loader.seed(), 0, 0, 0);
     float loss = 0.f;
     int batches = 0;
-    while (test_loader.has_next(1) && batches < max_steps) {
+    while (test_loader.has_next(div_exact((int)inputs.nelem(), test_loader.seq_len())) && batches < max_steps) {
         test_loader.load_batch(inputs, targets);
         loss += model.validate(inputs, targets, comm, batches);
         batches++;
@@ -517,7 +517,7 @@ float run_evaluation(DataLoader& test_loader, LLamaModel& model, TrainingRunLogg
     static bool warning = true;
     if (warning && batches == 0) {
         std::cerr << "WARNING: insufficient validation data: " << test_loader.num_tokens() << " need at least "
-                  << comm.world_size() * test_loader.chunk_size() << std::endl;
+                  << comm.world_size() * test_loader.seq_len() << std::endl;
         warning = false;
         return 0.f;
     }
