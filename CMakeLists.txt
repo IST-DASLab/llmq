@@ -176,7 +176,7 @@ target_include_directories(llmq-common PUBLIC src)
 target_compile_options(llmq-common PUBLIC $<$<COMPILE_LANGUAGE:CUDA>:--expt-relaxed-constexpr> $<$<COMPILE_LANGUAGE:CUDA>:-lineinfo>)
 
 add_executable(train train.cpp)
-target_link_libraries(train PRIVATE llmq-common CLI11::CLI11)
+target_link_libraries(train PRIVATE llmq-common CLI11::CLI11 fmt::fmt-header-only)
 
 add_executable(export-checkpoint export-checkpoint.cpp)
 target_link_libraries(export-checkpoint PRIVATE llmq-common CLI11::CLI11)
