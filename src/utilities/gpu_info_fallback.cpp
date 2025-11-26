@@ -51,7 +51,7 @@ const GPUUtilInfo& GPUUtilTrackerFallback::update() {
 }
 
 std::size_t get_mem_reserved() {
-    return -1;
+    return 0;
 }
 
 std::string get_gpu_name() {
