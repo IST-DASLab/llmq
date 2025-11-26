@@ -150,6 +150,14 @@ sPerfSpecs RTX_3070 = {
 sPerfSpecs B200_HGX = {
     .Chip = "GB100", .SMs = 264, .CoresPerSM = 128, .TensorPerSM = 4, .BoostClock = 1837, .TF32_TFlops = 1100, .BF16_TFlops = 2200, .FP16_32_TFlops = 2200, .FP16_16_TFlops = 2200, .INT8_TFlops = 4500, .INT4_TFlops = -1, .FP8_32_TFlops = 4500, .FP8_16_TFlops = 4500, .FP4_32_TFlops = 9000};
 
+// These are mostly guesswork at this point!
+// the spec sheet claims 1 pFLOP fp4+sparsity; assume this is mostly like a 5090;
+// TODO get better estimates for these values
+sPerfSpecs GB10 = {
+    .Chip = "GB10", .SMs = 48, .CoresPerSM = 128, .TensorPerSM = 4, .BoostClock = 2418, .TF32_TFlops = 29.71, .BF16_TFlops = 59.42, .FP16_32_TFlops = 59.42, .FP16_16_TFlops = 118.84, .INT8_TFlops = 118.84, .INT4_TFlops = -1, .FP8_32_TFlops = 118.84, .FP8_16_TFlops = 237.68, .FP4_32_TFlops = 475.36
+};
+
+
 sPerfSpecs interpolate(const sPerfSpecs& src, int sms, int clock) {
     float scale_factor = static_cast<float>(sms) / src.SMs * static_cast<float>(clock) / src.BoostClock;
     return sPerfSpecs{
@@ -225,6 +233,7 @@ std::unordered_map<std::string_view, sPerfSpecs> create_device_map() {
     device_map["NVIDIA GeForce RTX 5060"] = interpolate(RTX_5070, 30, 2497);
 
     device_map["NVIDIA RTX PRO 6000 Blackwell Server Edition"] = B6000_WS;
+    device_map["NVIDIA GB10"] = GB10;
     return device_map;
 }
 
