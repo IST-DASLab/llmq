@@ -362,12 +362,12 @@ void TrainingRunner::run_training(int argc, const char** argv, NCCLCommunicator&
     LLamaModel model{config, Options, comm.rank(), comm.world_size(), allocator};
 
     // Note: cannot check for exact equality, because vocab_size differs in tokenizer vs model (implicit padding)
-    if (train_loader.vocab_size() > 0 && train_loader.vocab_size() >= config.VocabSize) {
+    if (train_loader.vocab_size() > 0 && train_loader.vocab_size() > config.VocabSize) {
         std::cerr << "\033[1;31mError: model vocab size " << config.VocabSize
                   << " does not match training data vocab size " << train_loader.vocab_size() << "\033[0m" << std::endl;
         std::exit(1);
     }
-    if (test_loader.vocab_size() > 0 && test_loader.vocab_size() >= config.VocabSize) {
+    if (test_loader.vocab_size() > 0 && test_loader.vocab_size() > config.VocabSize) {
         std::cerr << "\033[1;31mError: model vocab size " << config.VocabSize
                   << " does not match validation data vocab size " << test_loader.vocab_size() << "\033[0m"
                   << std::endl;
