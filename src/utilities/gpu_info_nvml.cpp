@@ -171,6 +171,8 @@ void GPUUtilTrackerNVML::setup_tracking_thread() {
     });
 }
 
+nvmlMemory_v2_t get_mem_info(nvmlDevice_t device);
+
 const GPUUtilInfo& GPUUtilTrackerNVML::update() {
     // set default values to indicate not-supported operations
     mInfo.clock = 0;
@@ -220,9 +222,7 @@ const GPUUtilInfo& GPUUtilTrackerNVML::update() {
         mInfo.mem_utilization = mem_utilization / (float)sample_count;
     }
 
-    nvmlMemory_v2_t mem_info;
-    mem_info.version = nvmlMemory_v2;
-    NVML_CHECK(nvmlDeviceGetMemoryInfo_v2(mDevice, &mem_info));
+    nvmlMemory_v2_t mem_info = get_mem_info(mDevice);
     mInfo.mem_free = mem_info.free;
     mInfo.mem_total = mem_info.total;
     mInfo.mem_reserved = mem_info.reserved;
@@ -251,11 +251,29 @@ const GPUUtilInfo& GPUUtilTrackerNVML::update() {
     return mInfo;
 }
 
-std::size_t get_mem_reserved() {
+nvmlMemory_v2_t get_mem_info(nvmlDevice_t device) {
+    static bool has_printed_warning = false;
     nvmlMemory_v2_t mem_info;
     mem_info.version = nvmlMemory_v2;
-    NVML_CHECK(nvmlDeviceGetMemoryInfo_v2(nvml_get_device(), &mem_info));
-    return mem_info.reserved;
+    auto status = nvmlDeviceGetMemoryInfo_v2(device, &mem_info);
+    if (status == NVML_ERROR_NOT_SUPPORTED) {
+        fprintf(stderr, "[NVML WARNING] nvmlDeviceGetMemoryInfo not supported.");
+        has_printed_warning = true;
+        std::size_t free, total;
+        // hail mary -- use cuda's basic interface instead
+        CUDA_CHECK(cudaMemGetInfo(&free, &total));
+        mem_info.reserved = 0;
+        mem_info.free = free;
+        mem_info.total = total;
+        mem_info.used = 0;
+    } else {
+        NVML_CHECK(status);
+    }
+    return mem_info;
+}
+
+std::size_t get_mem_reserved() {
+    return get_mem_info(nvml_get_device()).reserved;
 }
 
 std::string get_gpu_name() {
