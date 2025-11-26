@@ -53,6 +53,7 @@ struct TrainingRunner {
     float LearningRate = 1e-5f;
     int WarmupSteps = -1;
     float FinalLrFraction = 1.f;
+    std::string LrScheduleType = "cosine";
 
     float Beta1 = 0.9f;
     float Beta2 = 0.95f;
@@ -125,6 +126,7 @@ void TrainingRunner::load_training_config(int argc, const char** argv) {
     app.add_option("--lr,--learning-rate", LearningRate, "Base learning rate");
     app.add_option("--warmup", WarmupSteps, "Number of warmup steps.");
     app.add_option("--final-lr-fraction", FinalLrFraction, "Fraction of base lr to use for the final steps.");
+    app.add_option("--lr-schedule", LrScheduleType, "Learning rate schedule function: Cosine or Linear");
     app.add_option("--beta-1", Beta1, "Beta 1 for Adam");
     app.add_option("--beta-2", Beta2, "Beta 2 for Adam");
     app.add_option("--opt-m-dtype", Options.OptMomentumType, "DType for first-order momentum. FP32 or BF16");
@@ -322,6 +324,7 @@ void TrainingRunner::run_training(int argc, const char** argv, NCCLCommunicator&
         {"learning-rate",      LearningRate},
         {"warmup",             WarmupSteps},
         {"final-lr",           FinalLrFraction},
+        {"lr-schedule",        LrScheduleType},
         {"beta-1",             Beta1},
         {"beta-2",             Beta2},
         {"grad-clip",          GradClip},
@@ -428,7 +431,14 @@ void TrainingRunner::run_training(int argc, const char** argv, NCCLCommunicator&
     Tensor inputs = model.get_input_buffer();
     Tensor targets = model.get_target_buffer();
 
-    LRSchedule schedule(LearningRate, MaxSteps, WarmupSteps, LearningRate * FinalLrFraction);
+    std::unique_ptr<ISchedule> lr_schedule;
+    if (iequals(LrScheduleType, "cosine")) {
+        lr_schedule = std::make_unique<CosineSchedule>(LearningRate, MaxSteps, WarmupSteps, LearningRate * FinalLrFraction);
+    } else if (iequals(LrScheduleType, "linear")) {
+        lr_schedule = std::make_unique<LinearSchedule>(LearningRate, LearningRate * FinalLrFraction, MaxSteps, WarmupSteps);
+    } else {
+        throw std::invalid_argument("Unknown learning rate schedule: " + LrScheduleType);
+    }
 
     for (int step = latest_step; step < MaxSteps; ++step) {
         bool run_eval = false;
@@ -471,7 +481,7 @@ void TrainingRunner::run_training(int argc, const char** argv, NCCLCommunicator&
             logger.log_gpu_state(step, 0, gpu_util->update());
         }
 
-        float lr = schedule.get_lr(step);
+        float lr = lr_schedule->eval(step);
         model.update(comm, lr, Beta1, Beta2, step + 1, 1e-8f, WeightDecay, GradClip);
         CUDA_CHECK(cudaDeviceSynchronize());
         std::chrono::high_resolution_clock::time_point end = std::chrono::high_resolution_clock::now();
