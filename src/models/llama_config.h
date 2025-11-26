@@ -18,6 +18,7 @@ struct LLamaConfig {
     } Architecture;
     int BosTokenId;
     int EosTokenId;
+    int PadTokenId;
 
     int HiddenSize;
     int IntermediateSize;
