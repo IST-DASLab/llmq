@@ -15,7 +15,7 @@
 // CUDA kernels
 
 template<typename floatX>
-__global__ void swiglu_forward_kernel1(floatX* out, const floatX* inp, float* abs_max_ptr, int B, int T, int C) {
+__global__ void swiglu_forward_kernel(floatX* out, const floatX* inp, float* abs_max_ptr, int B, int T, int C) {
     using x128 = GenericVector<floatX, 16/sizeof(floatX)>;
 
     int idx = (blockIdx.x * blockDim.x + threadIdx.x) * x128::size;
@@ -174,7 +174,7 @@ void swiglu_forward_impl(floatX* out, const floatX* inp, float* abs_max_ptr, int
     assert(C % x128::size == 0);
     assert((B*T*C) % (block_size * x128::size) == 0);
     const int grid_size = div_ceil(B*T*C, (int)(block_size * x128::size));
-    swiglu_forward_kernel1<<<grid_size, block_size, 0, stream>>>(out, inp, abs_max_ptr, B, T, C);
+    swiglu_forward_kernel<<<grid_size, block_size, 0, stream>>>(out, inp, abs_max_ptr, B, T, C);
     CUDA_CHECK(cudaGetLastError());
 }
 

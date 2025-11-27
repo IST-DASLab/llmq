@@ -53,12 +53,21 @@ FetchContent_Declare(
         GIT_TAG        12.0.0
 )
 
+# Catch2 for tests
+FetchContent_Declare(
+        catch2
+        QUIET
+        GIT_REPOSITORY https://github.com/catchorg/Catch2.git
+        GIT_TAG v3.6.0
+)
+
 find_package(CUDAToolkit COMPONENTS cuBLAS REQUIRED)
 
 FetchContent_MakeAvailable(json)
 FetchContent_MakeAvailable(cudnn-fe)
 FetchContent_MakeAvailable(cli11)
 FetchContent_MakeAvailable(fmt)
+FetchContent_MakeAvailable(catch2)
 
 # optional cufile
 if(USE_CUFILE)
@@ -224,4 +233,21 @@ if (PYTHON_BINDING)
             DESTINATION pyllmq/scripts
             FILES_MATCHING PATTERN "*.py"
     )
+endif ()
+
+
+# ----------------------------------------------------------------------------
+# Tests
+option(BUILD_TESTS "Build unit tests" ON)
+if (BUILD_TESTS)
+    enable_testing()
+
+    add_executable(unit-tests
+            src/testing/test_main.cpp
+            src/testing/test-swiglu.cu
+    )
+    target_link_libraries(unit-tests PRIVATE llmq-common Catch2::Catch2 CLI11::CLI11)
+    target_compile_options(unit-tests PUBLIC $<$<COMPILE_LANGUAGE:CUDA>:--expt-relaxed-constexpr> $<$<COMPILE_LANGUAGE:CUDA>:-lineinfo>)
+
+    add_test(NAME unit-tests COMMAND unit-tests)
 endif ()
