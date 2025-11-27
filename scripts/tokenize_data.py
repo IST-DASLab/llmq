@@ -137,7 +137,7 @@ def init_worker(model_name_arg):
 
 
 def tokenize_example_worker(args: tuple) -> dict:
-    example, key_func = args
+    example, key_func, seq_len = args
     """Worker function for multiprocessing"""
     if callable(key_func):
         example = key_func(example)
@@ -151,13 +151,22 @@ def tokenize_example_worker(args: tuple) -> dict:
         response = worker_tokenizer(example[1], return_tensors='np', split_special_tokens=True).input_ids[0, ...]
         tokens = np.concatenate([prompt, response])
         mask = np.concatenate([np.zeros_like(prompt), np.ones_like(response)])
-        return {"tokens": tokens, "mask": mask}
+        if seq_len is not None:
+            if len(tokens) > seq_len:
+                tokens = tokens[:seq_len]
+                mask = mask[:seq_len]
+            else:
+                tokens = np.pad(tokens, (0, seq_len - len(tokens)), mode="constant")
+                mask = np.pad(mask, (0, seq_len - len(mask)), mode="constant")
+    else:
+        raise ValueError(f"unknown example type {type(example)}")
+    return {"tokens": tokens, "mask": mask}
 
-def process_single_file(ds_iter, key, file_name: str, vocab_size: int, max_tokens: int, masking: bool, pool) -> tuple[bool, int]:
+def process_single_file(ds_iter, key, file_name: str, vocab_size: int, max_tokens: int, masking: bool, seq_len: int, pool) -> tuple[bool, int]:
     def example_generator(f: TokenizedDataFileWriter):
         try:
             while f.n_tokens < max_tokens:
-                yield next(ds_iter), key
+                yield next(ds_iter), key, seq_len
         except StopIteration:
             return
 
@@ -179,7 +188,7 @@ def process_single_file(ds_iter, key, file_name: str, vocab_size: int, max_token
         return has_more_data, f.n_tokens
 
 
-def process_dataset(file_name: str, ds, tokenizer, key, split_name: str, max_tokens: int = None, *, model_name: str, is_tiny: bool = False, first_is_eval: int = -1, masking: bool = False):
+def process_dataset(file_name: str, ds, tokenizer, key, split_name: str, max_tokens: int = None, *, model_name: str, is_tiny: bool = False, first_is_eval: int = -1, masking: bool = False, seq_len: int = None):
     num_processes = max(1, min(mp.cpu_count() // 2, 8))
 
     ds_iter = iter(ds)
@@ -205,7 +214,7 @@ def process_dataset(file_name: str, ds, tokenizer, key, split_name: str, max_tok
             else:
                 output_filename = f"{file_name}/{split_name}-{file_index:03d}.bin"
 
-            has_more_data, tokens_written = process_single_file(ds_iter, key, output_filename, tokenizer.vocab_size, max_size, masking, pool)
+            has_more_data, tokens_written = process_single_file(ds_iter, key, output_filename, tokenizer.vocab_size, max_size, masking, seq_len, pool)
 
             total_tokens += tokens_written
             print(f"Completed file {output_filename} with {tokens_written:,} tokens")
@@ -229,6 +238,7 @@ def generate_tokenized_dataset(dataset: str, model: str, out_dir: str = "data"):
     subsample = None
     is_tiny = False
     masking = False
+    seq_len = None
 
     if dataset == "tiny-shakespeare":
         dst = "tiny-shakespeare"
@@ -245,6 +255,7 @@ def generate_tokenized_dataset(dataset: str, model: str, out_dir: str = "data"):
         test_split = "test"
         is_tiny = True
         masking = True
+        seq_len = 512
     elif dataset == "fineweb-1b":
         dst = "fineweb-1b"
         key = "text"
@@ -275,6 +286,7 @@ def generate_tokenized_dataset(dataset: str, model: str, out_dir: str = "data"):
         test_split = "test"
         is_tiny = True
         masking = True
+        seq_len = 8192
     else:
         assert False, f"unknown dataset {dataset}"
 
@@ -292,10 +304,10 @@ def generate_tokenized_dataset(dataset: str, model: str, out_dir: str = "data"):
     dst = out_dir + "/" + dst
 
     if isinstance(test_split, int):
-        process_dataset(dst, d["train"], tokenizer, key, "train", subsample, is_tiny=is_tiny, first_is_eval=test_split, model_name=model_name, masking=masking)
+        process_dataset(dst, d["train"], tokenizer, key, "train", subsample, is_tiny=is_tiny, first_is_eval=test_split, model_name=model_name, masking=masking, seq_len=seq_len)
     else:
-        process_dataset(dst, d["train"], tokenizer, key, "train", subsample, is_tiny=is_tiny, model_name=model_name, masking=masking)
-        process_dataset(dst, d[test_split], tokenizer, key, "eval", None, is_tiny=True, model_name=model_name, masking=masking)
+        process_dataset(dst, d["train"], tokenizer, key, "train", subsample, is_tiny=is_tiny, model_name=model_name, masking=masking, seq_len=seq_len)
+        process_dataset(dst, d[test_split], tokenizer, key, "eval", None, is_tiny=True, model_name=model_name, masking=masking, seq_len=seq_len)
 
 
 def main():
