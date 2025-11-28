@@ -39,7 +39,7 @@ void precompute_freqs_cis(nv_bfloat16 *freqs_cis, int dim, int end, float theta)
 template<bool Backward, typename floatX>
 __global__ void rope_kernel(floatX *out, const floatX *inp, const floatX *freqs_cis, int B, int T, int Nq, int Nkv, int head_dim, std::bool_constant<Backward> bw = {}) {
     using x64 = GenericVector<floatX, 8/sizeof(floatX)>;
-    using x128 = GenericVector<floatX, 128/sizeof(floatX)>;
+    using x128 = GenericVector<floatX, 16/sizeof(floatX)>;
 
     int idx = (blockIdx.x * blockDim.x + threadIdx.x) * x64::size;
     int head_dim_half = head_dim / 2;
