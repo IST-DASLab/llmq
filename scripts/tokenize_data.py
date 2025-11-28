@@ -56,10 +56,6 @@ def load_or_create_dataset(name: str):
 
     raise ValueError(f"unknown dataset {name}")
 
-def tokenize_example(example):
-    return tokenizer(example, return_tensors='np', split_special_tokens=True).input_ids[0, ...]
-
-
 class TokenizedDataFileWriter:
     def __init__(self, file_name: str,  vocab_size: int, masking: bool = False):
         self.file_name = file_name
@@ -114,7 +110,7 @@ class TokenizedDataFileWriter:
         self.mask_list.append(np.packbits(mask_bytes, bitorder='little'))
 
     def _write_masks(self):
-        if len(self.mask_rest) > 0:
+        if self.mask_rest is not None and len(self.mask_rest) > 0:
             self.mask_list.append(np.packbits(self.mask_rest, bitorder='little'))
         for part in self.mask_list:
             self.file_handle.write(part.tobytes())
@@ -144,17 +140,22 @@ def tokenize_example_worker(args: tuple) -> dict:
     else:
         example = example[key_func]
     if isinstance(example, str):
-        return {"tokens": worker_tokenizer(example, return_tensors='np', split_special_tokens=True).input_ids[0, ...]}
+        tokens = worker_tokenizer(example, return_tensors='np', split_special_tokens=True).input_ids[0, ...]
+        tokens = np.concatenate([tokens, [worker_tokenizer.eos_token_id]])
+        return {"tokens": tokens}
     elif isinstance(example, tuple):
         assert len(example) == 2
         prompt = worker_tokenizer(example[0], return_tensors='np', split_special_tokens=True).input_ids[0, ...]
         response = worker_tokenizer(example[1], return_tensors='np', split_special_tokens=True).input_ids[0, ...]
-        tokens = np.concatenate([prompt, response])
+        tokens = np.concatenate([prompt, response, [worker_tokenizer.eos_token_id]])
         mask = np.concatenate([np.zeros_like(prompt), np.ones_like(response)])
         if seq_len is not None:
             if len(tokens) > seq_len:
+                # truncate, but ensure last token remains EOS
                 tokens = tokens[:seq_len]
+                tokens[seq_len-1] = worker_tokenizer.eos_token_id
                 mask = mask[:seq_len]
+                mask[seq_len-1] = 1
             else:
                 tokens = np.pad(tokens, (0, seq_len - len(tokens)), mode="constant")
                 mask = np.pad(mask, (0, seq_len - len(mask)), mode="constant")
