@@ -17,6 +17,8 @@ int main(int argc, char** argv) {
     app.add_option("-B, --batch", cfg.B, "Batch size (B)");
     app.add_option("-T, --seq",   cfg.T, "Sequence length (T)");
     app.add_option("-C, --channels", cfg.C, "Channel size (C)");
+    app.add_option("--query-heads", cfg.Nq, "Query heads (Nq)");
+    app.add_option("--kv-heads", cfg.Nkv, "Key/Value heads (Nkv)");
 
     std::vector<std::string> remaining;
     try {
