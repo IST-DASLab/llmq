@@ -18,33 +18,11 @@
 
 #include "kernels/kernels.h"
 #include "test_config.h"
+#include "test_utils.h"
+
+using namespace testing_utils;
 
 namespace {
-
-// BF16 helper: round-to-nearest-even conversion (emulated on CPU)
-static inline uint16_t float_to_bf16_bits(float f) {
-    uint32_t u;
-    std::memcpy(&u, &f, sizeof(u));
-    // round to nearest even on the cut at 16 LSBs
-    uint32_t lsb = (u >> 16) & 1u;                // last bit that will remain
-    uint32_t rounding_bias = 0x7FFFu + lsb;       // RN-even
-    u += rounding_bias;
-    return static_cast<uint16_t>(u >> 16);
-}
-
-static inline float bf16_bits_to_float(uint16_t h) {
-    uint32_t u = static_cast<uint32_t>(h) << 16;
-    float f;
-    std::memcpy(&f, &u, sizeof(f));
-    return f;
-}
-
-static inline nv_bfloat16 make_nvbf16_from_float(float f) {
-    uint16_t b = float_to_bf16_bits(f);
-    nv_bfloat16 v{};
-    std::memcpy(&v, &b, sizeof(b));
-    return v;
-}
 
 // CPU baseline SWIGLU forward: out = (x1 * x2) / (1 + exp(-x2))
 static void swiglu_forward_cpu(float* out, const float* inp, int B, int T, int C) {
@@ -97,20 +75,7 @@ static float max_abs(const float* data, size_t n) {
     return m;
 }
 
-static void fill_inputs(std::vector<float>& inp, int B, int T, int C2) {
-    // Deterministic but varied pattern
-    for (int i = 0; i < B * T * C2; ++i) {
-        float x = std::sin(0.001f * (i + 1)) * 0.9f + std::cos(0.013f * (i + 7)) * 0.1f;
-        inp[i] = x;
-    }
-}
-
-static void fill_dout(std::vector<float>& dout, int B, int T, int C) {
-    for (int i = 0; i < B * T * C; ++i) {
-        float x = std::cos(0.002f * (i + 5)) * 0.5f;
-        dout[i] = x;
-    }
-}
+// Inputs and grads are now generated via shared deterministic fillers
 
 } // namespace
 
@@ -131,28 +96,22 @@ TEST_CASE("swiglu forward/backward fp32 matches CPU", "[swiglu][fp32]") {
     const size_t n_inp = static_cast<size_t>(B) * T * C2;
     const size_t n_out = static_cast<size_t>(B) * T * C;
 
-    std::vector<float> h_inp(n_inp);
-    fill_inputs(h_inp, B, T, C2);
+    std::vector<float> h_inp = uniform_host(n_inp, -1.f, 1.f, 1337ull);
 
     std::vector<float> h_out_cpu(n_out);
     swiglu_forward_cpu(h_out_cpu.data(), h_inp.data(), B, T, C);
     float cpu_absmax_fwd = max_abs(h_out_cpu.data(), n_out);
 
     // Device buffers
-    thrust::device_vector<float> d_inp(n_inp);
+    thrust::device_vector<float> d_inp = to_device(h_inp);
     thrust::device_vector<float> d_out(n_out);
-    thrust::device_vector<float> d_dout(n_out);
-    thrust::device_vector<float> d_dinp(n_inp);
     thrust::device_vector<float> d_absmax(1);
-
-    thrust::copy(h_inp.begin(), h_inp.end(), d_inp.begin());
 
     // Forward without absmax
     swiglu_forward(thrust::raw_pointer_cast(d_out.data()),
                    thrust::raw_pointer_cast(d_inp.data()),
                    nullptr, B, T, C, /*stream*/0);
-    std::vector<float> h_out(n_out, 0.f);
-    thrust::copy(d_out.begin(), d_out.end(), h_out.begin());
+    std::vector<float> h_out = from_device(d_out);
 
     for (size_t i = 0; i < n_out; ++i) {
         REQUIRE(h_out[i] == Catch::Approx(h_out_cpu[i]).margin(1e-6f));
@@ -167,9 +126,9 @@ TEST_CASE("swiglu forward/backward fp32 matches CPU", "[swiglu][fp32]") {
     REQUIRE(h_absmax == Catch::Approx(cpu_absmax_fwd).margin(1e-6f));
 
     // Backward: prepare dout
-    std::vector<float> h_dout(n_out);
-    fill_dout(h_dout, B, T, C);
-    thrust::copy(h_dout.begin(), h_dout.end(), d_dout.begin());
+    std::vector<float> h_dout = uniform_host(n_out, -0.5f, 0.5f, 424242ull);
+    thrust::device_vector<float> d_dout = to_device(h_dout);
+    thrust::device_vector<float> d_dinp(n_inp);
 
     // CPU backward
     std::vector<float> h_dinp_cpu(n_inp);
@@ -181,8 +140,7 @@ TEST_CASE("swiglu forward/backward fp32 matches CPU", "[swiglu][fp32]") {
                     thrust::raw_pointer_cast(d_dout.data()),
                     thrust::raw_pointer_cast(d_inp.data()),
                     nullptr, B, T, C, 0);
-    std::vector<float> h_dinp(n_inp, 0.f);
-    thrust::copy(d_dinp.begin(), d_dinp.end(), h_dinp.begin());
+    std::vector<float> h_dinp = from_device(d_dinp);
     for (size_t i = 0; i < n_inp; ++i) {
         REQUIRE(h_dinp[i] == Catch::Approx(h_dinp_cpu[i]).margin(1e-5f));
     }
@@ -214,40 +172,31 @@ TEST_CASE("swiglu forward/backward bfloat16 matches CPU (emulated)", "[swiglu][b
     const size_t n_out = static_cast<size_t>(B) * T * C;
 
     // Prepare float inputs and convert to bf16 storage for GPU
-    std::vector<float> h_inp_f(n_inp);
-    fill_inputs(h_inp_f, B, T, C2);
-
-    std::vector<nv_bfloat16> h_inp_bf16(n_inp);
-    for (size_t i = 0; i < n_inp; ++i) h_inp_bf16[i] = make_nvbf16_from_float(h_inp_f[i]);
+    std::vector<float> h_inp_f = uniform_host(n_inp, -1.f, 1.f, 1337ull);
+    std::vector<nv_bfloat16> h_inp_bf16 = to_bf16(h_inp_f);
 
     // CPU forward but quantized to bf16 first (to match kernel math in bf16)
     // Convert inputs to bf16 -> back to float to emulate bf16 arithmetic for x1, x2
-    std::vector<float> h_inp_q(n_inp);
-    for (size_t i = 0; i < n_inp; ++i) h_inp_q[i] = bf16_bits_to_float(float_to_bf16_bits(h_inp_f[i]));
+    std::vector<float> h_inp_q = round_bf16(h_inp_f);
 
     std::vector<float> h_out_cpu(n_out);
     swiglu_forward_cpu(h_out_cpu.data(), h_inp_q.data(), B, T, C);
 
     // Quantize output to bf16 too, since kernel stores bf16
-    std::vector<float> h_out_cpu_q(n_out);
-    for (size_t i = 0; i < n_out; ++i) h_out_cpu_q[i] = bf16_bits_to_float(float_to_bf16_bits(h_out_cpu[i]));
+    std::vector<float> h_out_cpu_q = round_bf16(h_out_cpu);
     float cpu_absmax_fwd = max_abs(h_out_cpu_q.data(), n_out);
 
     // Device allocations via Thrust
-    thrust::device_vector<nv_bfloat16> d_inp(n_inp);
+    thrust::device_vector<nv_bfloat16> d_inp = to_device(h_inp_bf16);
     thrust::device_vector<nv_bfloat16> d_out(n_out);
-    thrust::device_vector<nv_bfloat16> d_dout(n_out);
     thrust::device_vector<nv_bfloat16> d_dinp(n_inp);
     thrust::device_vector<float> d_absmax(1);
-
-    thrust::copy(h_inp_bf16.begin(), h_inp_bf16.end(), d_inp.begin());
 
     // Forward with absmax (also validates without by comparing values)
     swiglu_forward(thrust::raw_pointer_cast(d_out.data()),
                    thrust::raw_pointer_cast(d_inp.data()),
                    thrust::raw_pointer_cast(d_absmax.data()), B, T, C, 0);
-    std::vector<nv_bfloat16> h_out_bf16(n_out);
-    thrust::copy(d_out.begin(), d_out.end(), h_out_bf16.begin());
+    std::vector<nv_bfloat16> h_out_bf16 = from_device(d_out);
 
     std::vector<float> h_out(n_out);
     for (size_t i = 0; i < n_out; ++i) {
@@ -261,30 +210,24 @@ TEST_CASE("swiglu forward/backward bfloat16 matches CPU (emulated)", "[swiglu][b
     REQUIRE(h_absmax == Catch::Approx(cpu_absmax_fwd).margin(5e-3f));
 
     // Backward
-    std::vector<float> h_dout_f(n_out);
-    fill_dout(h_dout_f, B, T, C);
+    std::vector<float> h_dout_f = uniform_host(n_out, -0.5f, 0.5f, 424242ull);
     // Quantize dout to bf16 for GPU input and for CPU emulation
-    std::vector<nv_bfloat16> h_dout_bf16(n_out);
-    std::vector<float> h_dout_q(n_out);
-    for (size_t i = 0; i < n_out; ++i) {
-        h_dout_bf16[i] = make_nvbf16_from_float(h_dout_f[i]);
-        h_dout_q[i] = bf16_bits_to_float(float_to_bf16_bits(h_dout_f[i]));
-    }
-    thrust::copy(h_dout_bf16.begin(), h_dout_bf16.end(), d_dout.begin());
+    std::vector<nv_bfloat16> h_dout_bf16 = to_bf16(h_dout_f);
+    std::vector<float> h_dout_q = round_bf16(h_dout_f);
+    thrust::device_vector<nv_bfloat16> d_dout = to_device(h_dout_bf16);
 
     // CPU backward on quantized inputs/grad
     std::vector<float> h_dinp_cpu(n_inp);
     swiglu_backward_cpu(h_dinp_cpu.data(), h_dout_q.data(), h_inp_q.data(), B, T, C);
     // Quantize gradients as kernel outputs bf16
-    for (size_t i = 0; i < n_inp; ++i) h_dinp_cpu[i] = bf16_bits_to_float(float_to_bf16_bits(h_dinp_cpu[i]));
+    h_dinp_cpu = round_bf16(h_dinp_cpu);
     float cpu_absmax_bwd = max_abs(h_dinp_cpu.data(), n_inp);
 
     swiglu_backward(thrust::raw_pointer_cast(d_dinp.data()),
                     thrust::raw_pointer_cast(d_dout.data()),
                     thrust::raw_pointer_cast(d_inp.data()),
                     thrust::raw_pointer_cast(d_absmax.data()), B, T, C, 0);
-    std::vector<nv_bfloat16> h_dinp_bf16(n_inp);
-    thrust::copy(d_dinp.begin(), d_dinp.end(), h_dinp_bf16.begin());
+    std::vector<nv_bfloat16> h_dinp_bf16 = from_device(d_dinp);
 
     for (size_t i = 0; i < n_inp; ++i) {
         uint16_t bits;
@@ -295,4 +238,3 @@ TEST_CASE("swiglu forward/backward bfloat16 matches CPU (emulated)", "[swiglu][b
     thrust::copy(d_absmax.begin(), d_absmax.end(), &h_absmax);
     REQUIRE(h_absmax == Catch::Approx(cpu_absmax_bwd).margin(5e-3f));
 }
-
