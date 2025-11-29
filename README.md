@@ -63,10 +63,10 @@ The program will print some logging information, such as the following:
   Device 0: NVIDIA GeForce RTX 4090
   CUDA version: driver 13000, runtime 13000
   Memory: 906 MiB / 24080 MiB
-  
+
 Loading model from `/huggingface/hub/models--Qwen--Qwen2.5-0.5B/snapshots/060db6499f32faf8b98477b0a26969ef7d8b9987/model.safetensors`
  done
- 
+
 [Dataset]
  train:  329k tokens
    data/tiny-shakespeare-qwen/train.bin :     329663
@@ -117,7 +117,7 @@ uv run scripts/export_wandb.py --log-file log.json --project <ProjectName>
 Finally, we want to evaluate the produced model, which by default is placed in `output/model.safetensors`. This
 file is [transformers](https://huggingface.co/docs/transformers) compatible, in contrast to checkpoints that get generated
 at intermediate steps of longer training runs. However, as `llmq` does not include any tokenization, in order to run this
-with transformers we still need the tokenizers. A simple way to get them is to just copy them over from the original HF 
+with transformers we still need the tokenizers. A simple way to get them is to just copy them over from the original HF
 checkpoint, in this example:
 ```shell
 cp /huggingface/hub/models--Qwen--Qwen2.5-0.5B/snapshots/060db6499f32faf8b98477b0a26969ef7d8b9987/tokenizer* output/
@@ -180,12 +180,12 @@ After about 40 hours, the training finishes, and we can run evaluations as above
 |               |         | none   |      0 | acc_norm | ↑ | | 0.7269 | 0.7617       | 0.7356    |
 | winogrande    |       1 | none   |      0 | acc      | ↑ | | 0.5485 | 0.6377       | 0.5943    |
 
-Unsurprisingly, the model performs worse than the official Qwen2.5-1.5B model, 
+Unsurprisingly, the model performs worse than the official Qwen2.5-1.5B model,
 which has been trained on 1000x as much data. Pitted against TinyLLama, the model does manage to
 hold its own, in particular the higher-quality climb data seems to have helped with tasks like arc.
 Not bad form something that can be done on a single workstation in a reasonable amount of time.
 If you were to rent the corresponding compute on [vast.ai](https://vast.ai), at \$0.31 per GPU-hour (Sept 26, 2025),
-this training run would have cost less than \$50. 
+this training run would have cost less than \$50.
 
 
 
@@ -248,7 +248,7 @@ Additional memory savings, especially for larger models, can be achieved by the 
     - 1: Sharded optimizer states (default)
     - 2: Sharded gradients + optimizer states
     - 3: Sharded weights + gradients + optimizer states
-  
+
   You can also configure weights and gradients individually, using the `--shard-weights` and `--shard-gradients` flags. When training in fp8, for example, it makes sense to enable weight sharding before gradient sharding, as weights need only half the amount of bandwidth.
 
 ### Offloading
@@ -277,7 +277,7 @@ using `uv build --wheel`.
 The [demo.py](scripts/demo.py) script provides an example of how to use the bindings. Running it with `uv run pyllmq-demo` will trigger the wheel build automatically.
 
 Pre-built wheels are available from [GitHub Releases](https://github.com/IST-DASLab/llmq/releases) for convenience.
-Download the latest `.whl` file and install it with `uv pip install 'pyllmq-0.2.0-cp312-abi3-linux_x86_64.whl[scripts]'`, 
+Download the latest `.whl` file and install it with `uv pip install 'pyllmq-0.2.0-cp312-abi3-linux_x86_64.whl[scripts]'`,
 or run example scripts directly: `uv run --with 'pyllmq-0.2.0+cu128-cp312-abi3-linux_x86_64.whl[scripts]' pyllmq-demo`, replacing the file name as appropriate. The `[scripts]` extra installs additional packages that aren't strictly required for pyllmq, but are used in the utility scripts, such as `datasets` and `matplotlib`.
 The wheels are built against CUDA 12.8 and 13.0 and support compute capabilities 89, 90, 100f, and 120f.
 
@@ -287,14 +287,14 @@ it allows benefiting from the full optimization of the C++ backend, and there ar
 synchronizations until the `update` call.
 
 You can also use the fully-fledged training script in [scripts/train.py](scripts/train.py), which
-has mostly feature-parity with the C++ version. It is a bit less debuggable, 
-but does support directly logging to weights and biases, which can be very convenient. 
+has mostly feature-parity with the C++ version. It is a bit less debuggable,
+but does support directly logging to weights and biases, which can be very convenient.
 The python version supports only multi-threaded mode, but not multi-process.
 
 Note that the pre-built wheel files declare dependencies on specific cuda version packages, but the
 `pyproject.toml` does no such declaration; during development, it is expected that you manage
 the cuda version yourself/use the system installation of cude, not a pip-provided one.
-The [wheel build-script](.github/workflows/wheel.yml) [modifies](.github/scripts/add_cuda_deps.py) the 
+The [wheel build-script](.github/workflows/wheel.yml) [modifies](.github/scripts/add_cuda_deps.py) the
 toml file just before building the wheel.
 
 ## Code organization
@@ -383,15 +383,15 @@ All settings use `--lmhead-chunks=${BATCH_SIZE}`
 | Qwen2.5-14B⁹  | 4    | bf16  | 16    | 5.1k | 66% | 54h   |
 
 
-^1: `--offload-opt-m --offload-opt-v --recompute-swiglu --offload-master`  
-^2: `--offload-opt-m --offload-opt-v --recompute-swiglu --recompute-norm`  
-^3: `--offload-opt-m --offload-opt-v --recompute-ffn --recompute-norm --recompute-att --offload-master --shard-weights --persistent-quants --offload-quants --memcpy-all-gather`  
-^4: `--offload-opt-m --offload-opt-v --recompute-ffn --recompute-norm --recompute-att --offload-master --shard-weights --memcpy-all-gather`  
-^5: `--recompute-norm --recompute-swiglu` 
-^6: `--offload-opt-m --offload-opt-v --recompute-ffn --recompute-norm --recompute-att --offload-master --shard-weights --memcpy-all-gather --shard-gradients --memcpy-send-recv --all-to-all-reduce --persistent-quants --offload-quants`  
-^7: `--offload-opt-m --offload-opt-v --recompute-ffn --recompute-norm --recompute-att --offload-master --shard-weights --memcpy-all-gather --shard-gradients --memcpy-send-recv --all-to-all-reduce` 
-^8: `--offload-opt-m --offload-opt-v --recompute-block --offload-master --offload-residual --shard-weights --memcpy-all-gather --shard-gradients --memcpy-send-recv --all-to-all-reduce --persistent-quants --offload-quants`  
-^9: `--offload-opt-m --offload-opt-v --recompute-block --offload-master --offload-residual --shard-weights --memcpy-all-gather --shard-gradients --memcpy-send-recv --all-to-all-reduce`  
+^1: `--offload-opt-m --offload-opt-v --recompute-swiglu --offload-master`
+^2: `--offload-opt-m --offload-opt-v --recompute-swiglu --recompute-norm`
+^3: `--offload-opt-m --offload-opt-v --recompute-ffn --recompute-norm --recompute-att --offload-master --shard-weights --persistent-quants --offload-quants --memcpy-all-gather`
+^4: `--offload-opt-m --offload-opt-v --recompute-ffn --recompute-norm --recompute-att --offload-master --shard-weights --memcpy-all-gather`
+^5: `--recompute-norm --recompute-swiglu`
+^6: `--offload-opt-m --offload-opt-v --recompute-ffn --recompute-norm --recompute-att --offload-master --shard-weights --memcpy-all-gather --shard-gradients --memcpy-send-recv --all-to-all-reduce --persistent-quants --offload-quants`
+^7: `--offload-opt-m --offload-opt-v --recompute-ffn --recompute-norm --recompute-att --offload-master --shard-weights --memcpy-all-gather --shard-gradients --memcpy-send-recv --all-to-all-reduce`
+^8: `--offload-opt-m --offload-opt-v --recompute-block --offload-master --offload-residual --shard-weights --memcpy-all-gather --shard-gradients --memcpy-send-recv --all-to-all-reduce --persistent-quants --offload-quants`
+^9: `--offload-opt-m --offload-opt-v --recompute-block --offload-master --offload-residual --shard-weights --memcpy-all-gather --shard-gradients --memcpy-send-recv --all-to-all-reduce`
 ^10: `--offload-opt-m --recompute-swiglu --recompute-norm`
 
 ### L40S
@@ -420,12 +420,12 @@ On the L40S system, we found zero-copy access to offloaded optimizer states (`--
 | Qwen2.5-14B⁵ | 4    | fp8   | 64    | 8.7k | 54% | 32h   |
 | Qwen2.5-14B⁶ | 4    | bf16  | 64    | 6.3k | 73% | 44h   |
 
-^1: `--offload-opt-m --offload-opt-v --offload-master`  
+^1: `--offload-opt-m --offload-opt-v --offload-master`
 ^2: `--offload-opt-m --offload-opt-v --recompute-swiglu --recompute-norm`
 ^3: `--offload-opt-m --offload-opt-v --offload-master --recompute-block --use-zero-copy --lmhead-chunks=16 --shard-weights --offload-residual --persistent-quants --offload-quants`
 ^4: `--offload-opt-m --offload-opt-v --offload-master --recompute-block --use-zero-copy --lmhead-chunks=16 --shard-weights --offload-residual`
-^5: `--offload-opt-m --offload-opt-v --offload-master --recompute-block --use-zero-copy --lmhead-chunks=16 --shard-weights --offload-residual --shard-gradients --persistent-quants --offload-quants`  
-^6: `--offload-opt-m --offload-opt-v --offload-master --recompute-block --use-zero-copy --lmhead-chunks=16 --shard-weights --offload-residual --shard-gradients`  
+^5: `--offload-opt-m --offload-opt-v --offload-master --recompute-block --use-zero-copy --lmhead-chunks=16 --shard-weights --offload-residual --shard-gradients --persistent-quants --offload-quants`
+^6: `--offload-opt-m --offload-opt-v --offload-master --recompute-block --use-zero-copy --lmhead-chunks=16 --shard-weights --offload-residual --shard-gradients`
 
 ### RTX 5090 Performance Benchmarks
 
@@ -457,10 +457,10 @@ On the L40S system, we found zero-copy access to offloaded optimizer states (`--
 | Qwen2.5-14B³  | 4    | fp8   | 4     | 8.1k  | 23% | 34:20h |
 | Qwen2.5-14B³  | 4    | bf16  | 4     | 3.9k  | 20% | 71:20h |
 
-¹: `--recompute-ffn --recompute-att` 
-²: `--recompute-norm --recompute-swiglu --recompute-ffn --recompute-att` 
-³: `--recompute-norm --recompute-swiglu --recompute-ffn --recompute-att --offload-opt-m --offload-opt-v --shard-weights --offload-master --shard-gradients` 
-⁴: `--recompute-swiglu` 
+¹: `--recompute-ffn --recompute-att`
+²: `--recompute-norm --recompute-swiglu --recompute-ffn --recompute-att`
+³: `--recompute-norm --recompute-swiglu --recompute-ffn --recompute-att --offload-opt-m --offload-opt-v --shard-weights --offload-master --shard-gradients`
+⁴: `--recompute-swiglu`
 
 Command used: `./build/train --model=./Qwen2.5-0.5B --train-file=tiny-shakespeare-qwen-train.bin --eval-file=tiny-shakespeare-qwen-eval.bin --model-dtype=bf16 --opt-m-dtype=bf16 --opt-v-dtype=bf16 --matmul-dtype=e4m3 --grad-accumulation=8 --steps=1000 --learning-rate=1e-5 --gpus=1 --batch-size=8`
 
@@ -489,7 +489,7 @@ uv run --with auditwheel --with patchelf auditwheel repair dist/*.whl -w wheelho
 
 Then you can run
 ```bash
-modal run scripts/modal_test_app.py::test_recompute --recompute-swiglu 
+modal run scripts/modal_test_app.py::test_recompute --recompute-swiglu
 ```
 
 If you have a GPU locally, you can instead run the test script directly:

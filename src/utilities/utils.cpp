@@ -49,4 +49,3 @@ bool iequals(std::string_view lhs, std::string_view rhs) {
             return std::tolower(a) == std::tolower(b);
     });
 }
-

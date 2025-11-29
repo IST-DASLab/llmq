@@ -30,13 +30,13 @@ can be broken down into three main parts, plus some additional orchestration. Le
 ```cpp
 void LLamaModel::forward(Tensor inputs, NCCLCommunicator& comm, int micro_step) {
     // [define convenience variables]
-    
+
     // If this is the first micro-step, the parameters have just changed, and we can not
     // re-use any cached values
     if(micro_step == 0) {
         Parameters->invalidate();
     }
-    
+
     // copy inputs to GPU
     cudaMemcpyAsync(rs->Inputs.Data, inputs.Data, inputs.bytes(), cudaMemcpyHostToDevice, main_stream);
     cudaEventRecord(rs->TransferDone, main_stream);
@@ -65,7 +65,7 @@ Finally, we wait for the transfer-done event (potentially stalling the CPU), to 
 
 > For training, this is actually overly cautious, because each forward call will be followed by a backward call, only after which new inputs will be fetched. But during validation, there is no backward so this synchronization is necessary. As the bulk of GPU work is still scheduled asynchronously, though, an implementation like this is perfectly fine.
 
-Now, let's look at the individual parts. 
+Now, let's look at the individual parts.
 
 ### Embeddings
 ```cpp
@@ -74,11 +74,11 @@ encoder_forward(
     rs->Encoded,
     rs->Inputs,
     Parameters->get_embeddings(main_stream),
-    std::nullopt, B, T, C, V, main_stream); 
+    std::nullopt, B, T, C, V, main_stream);
 Parameters->release_embeddings(main_stream);
 ```
 In addition to the actual kernel call `encoder_forward`, there are three more functions involved:
-`gather_embeddings`, `get_embeddings`, and `release_embeddings`. These are responsible for FSDP/DDP/offloading. The `gather` function checks whether an up-to-date copy of the embeddings is already available on the GPU, and if not, it initiates the transfer that gathers the embeddings either from peer GPUs or from the CPU. 
+`gather_embeddings`, `get_embeddings`, and `release_embeddings`. These are responsible for FSDP/DDP/offloading. The `gather` function checks whether an up-to-date copy of the embeddings is already available on the GPU, and if not, it initiates the transfer that gathers the embeddings either from peer GPUs or from the CPU.
 The `get_embeddings` function returns a pointer to the embeddings on the GPU and inserts an event synchronization into the main stream that ensures the `gather` operation has finished. Finally, `release_embeddings` signals that we are finished using the embeddings, so their memory _may_ be reused.
 
 This now explains the need for the `invalidate` function: In the first micro-step, the parameters have just been changed by the optimizer, and we need to ensure that `gather_*` does not try to  re-use cached values.
@@ -139,7 +139,7 @@ The `release` function is necessary to implement double-buffered memory manageme
 In addition to fetching parameters, if residuals are offloaded, we also need to write and send them with double-buffering. The `get_res_ffn` gets a buffer that is ready, `mark_res_ffn_ready` triggers and event that indicates the computation is complete, and `put_res_ffn` handles the actual transfer to host memory. If residuals are not offloaded, all these functions are no-ops.
 
 Furthermore, you can see that the actual computation is split into two parts: First, the initial RMS-norm is handled, either by directly calling an `rmsnorm_forward` kernel (for the first block), or by calling a `fused_residual_rmsnorm_forward` kernel (for all other blocks).
-The fused kernel takes the output of the previous block, adds it to the residual stream, and writes the rms-normed result to a second output, thus avoiding the need to read the residual from memory. Because this means that different kernels are called depending on the layer number, this part of the computation is separated from the rest of the forward pass, which has a static computation graph. 
+The fused kernel takes the output of the previous block, adds it to the residual stream, and writes the rms-normed result to a second output, thus avoiding the need to read the residual from memory. Because this means that different kernels are called depending on the layer number, this part of the computation is separated from the rest of the forward pass, which has a static computation graph.
 Additional difficulties arise due to residual offloading; even if the graphs were the same, we would trigger an event inside the graph that would be waited on outside the graph, which results in an error.
 Therefore, we can run the rest of the forward pass, defined in the `_forward_block` function, in a cuda graph.
 
@@ -183,9 +183,9 @@ forward_qmm(acts.MlpDown, acts.SwiGLu, weights.MLP_Down_w, std::nullopt,
 This is just a sequence of kernel calls, which can be this simple because the `acts` variable takes care of selecting the right pointers to load/store activations.
 
 > There is a deliberate decision here in handling communication/weight gathering at the transformer-block level. While it would be possible to have individual gather calls for each parameter, this would result in a large number of additional kernel calls and event synchronizations. While there might be a latency advantage for the first layer (we can start computing as soon as the first parameter is available, instead of the whole layer), in subsequent layers there is no benefit: Either communication is faster than computation, and the next block can start immediately, or it is slower, in which case double-buffering still ensures that data is transferred at maximum bandwidth.
-> 
+>
 > Double-buffering in itself is also much more difficult to implement at smaller granularity: If we had one buffer for the attention part, and one for the MLP part, for example, then we would get significant imbalances, with the MLP part requiring more communication and (for moderate sequence lengths) more computation. This would make it more difficult to ensure perfect communication/computation overlap.
-> 
+>
 > In all, the block-level gather provides a simple mental model, keeps the forward_block function straightforward, and does not have significant performance drawbacks compared to more complicated implementations.
 
 ### Quantized Matmul
@@ -224,7 +224,7 @@ Finally, the actual matmul is launched.
 ### Implementation of weight management
 Finally, let's break open the gather/get/release black-boxes and see how these functions are implemented.
 
-The first decision the `gather` function needs to make is to check whether the weights are already present locally. For that purpose, we maintain the following data structure for each 
+The first decision the `gather` function needs to make is to check whether the weights are already present locally. For that purpose, we maintain the following data structure for each
 block buffer:
 ```cpp
 struct sGatherData {
@@ -289,7 +289,7 @@ void gather_block(int layer_idx, NCCLCommunicator& comm, LLamaRunState& run_stat
 }
 ```
 
-After the gather call, to ensure that the weights are available, the `get_block` function needs to be called. 
+After the gather call, to ensure that the weights are available, the `get_block` function needs to be called.
 ```cpp
 void update_get_status(sGatherData& data, int expected, cudaStream_t stream) const {
     data.Done = false;
@@ -299,7 +299,7 @@ void update_get_status(sGatherData& data, int expected, cudaStream_t stream) con
         throw std::logic_error("Gather data is not for the requested layer");
 
     // if we needed to fetch, we need to wait
-    if(data.Fetch) 
+    if(data.Fetch)
         cudaStreamWaitEvent(stream, done_event, 0);
 
     data.Version = mVersion;
@@ -359,7 +359,7 @@ void LLamaModel::backward(Tensor inputs, Tensor targets, NCCLCommunicator& comm,
     // reset residual stream gradients (put here to work with gradient accumulation)
     fill_zero(rs->DLNF, main_stream);
     fill_zero(d_acts[L-1].DResFFN.Value, main_stream);
-    
+
     _backward_lmhead(B, T, micro_step, grad_accum_steps, comm);
 
     // ok, now reduce the loss across all ranks
@@ -444,7 +444,7 @@ for (int nano_step = 0; nano_step < nano_batches; nano_step++) {
     if (nano_step == nano_batches - 1) {
         Grads->notify_lmhead(main_stream, comm);
     }
-    
+
     matmul(dlnf_slice, Parameters->get_head(main_stream), rs->Output, std::nullopt, get_device_one(),
            rs->CublasLtHandle, rs->Workspace, C, nano_batch_size, V, EMMTranspose::NN, false, main_stream);
 }
@@ -455,7 +455,7 @@ Next, the classifier head and gradients are calculated in a fused kernel, i.e., 
 Before we can actually start calculating gradients, we may need to wait for previous calculations to finish.
 
 For the gradient computation, we also need to have gradient buffers. Requesting with `Grads->get_lmhead_full` gets us a full-sized (i.e., unsharded) buffer for the gradient that can be written to.
-Only after the last chunk has been processed, we can notify the `Grads` object that the LM-head gradients are ready for reduction across GPUs. 
+Only after the last chunk has been processed, we can notify the `Grads` object that the LM-head gradients are ready for reduction across GPUs.
 Note that, as backward consists of two matmuls, we can actually start communicating the gradients after the last iteration of the _first_ matmul is done, so there is some overlap between the two. This is useful because the LM-head is generally much more expensive than a transformer block, so hiding its latency is difficult.
 
 Finally, what are the events that we need to wait for before starting gradient calculations?

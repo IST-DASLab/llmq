@@ -71,7 +71,7 @@ void TrainingRunLogger::log_dataset(const DataLoader& train_loader, const DataLo
 
     if (mVerbosity >= 0) {
         printf("[Dataset]\n");
-        
+
         printf(" train: %s tokens\n", fmt_token_count(train_loader.num_tokens()).c_str());
         for (int i = 0; i < train_loader.num_files(); ++i) {
             if (i < 10 || mVerbosity >= 1) {

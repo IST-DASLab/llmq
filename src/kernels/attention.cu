@@ -290,4 +290,3 @@ void attention_backward_cudnn(Tensor& dqkv, const Tensor& stats,
         throw std::logic_error("attention_backward: unsupported dtype");
     }
 }
-
