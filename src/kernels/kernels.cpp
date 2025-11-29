@@ -71,21 +71,21 @@ void swiglu_backward(Tensor& dinp, const Tensor& dout, const Tensor& inp, float*
     }
 }
 
-void rope_forward(Tensor& out, const Tensor& in, const Tensor& freqs_cis, int B, int T, int Nq, int Nkv, int head_dim, cudaStream_t stream)  {
+void rope_forward(Tensor& out, const Tensor& in, const Tensor& freqs_cis, float* abs_max_ptr, int B, int T, int Nq, int Nkv, int head_dim, cudaStream_t stream)  {
     if(out.DType == ETensorDType::FP32) {
-        rope_forward(out.get<float>(), in.get<float>(), freqs_cis.get<float>(), B, T, Nq, Nkv, head_dim, stream);
+        rope_forward(out.get<float>(), in.get<float>(), freqs_cis.get<float>(), abs_max_ptr, B, T, Nq, Nkv, head_dim, stream);
     } else if(out.DType == ETensorDType::BF16) {
-        rope_forward(out.get<nv_bfloat16>(), in.get<nv_bfloat16>(), freqs_cis.get<nv_bfloat16>(), B, T, Nq, Nkv, head_dim, stream);
+        rope_forward(out.get<nv_bfloat16>(), in.get<nv_bfloat16>(), freqs_cis.get<nv_bfloat16>(), abs_max_ptr, B, T, Nq, Nkv, head_dim, stream);
     } else {
         throw std::logic_error("rope_forward: unsupported dtype");
     }
 }
 
-void rope_backward(Tensor& dinp, const Tensor& dout, const Tensor& freqs_cis, int B, int T, int Nq, int Nkv, int head_dim, cudaStream_t stream) {
+void rope_backward(Tensor& dinp, const Tensor& dout, const Tensor& freqs_cis, float* abs_max_ptr, int B, int T, int Nq, int Nkv, int head_dim, cudaStream_t stream) {
     if(dinp.DType == ETensorDType::FP32) {
-        rope_backward(dinp.get<float>(), dout.get<float>(), freqs_cis.get<float>(), B, T, Nq, Nkv, head_dim, stream);
+        rope_backward(dinp.get<float>(), dout.get<float>(), freqs_cis.get<float>(), abs_max_ptr, B, T, Nq, Nkv, head_dim, stream);
     } else if(dinp.DType == ETensorDType::BF16) {
-        rope_backward(dinp.get<nv_bfloat16>(), dout.get<nv_bfloat16>(), freqs_cis.get<nv_bfloat16>(), B, T, Nq, Nkv, head_dim, stream);
+        rope_backward(dinp.get<nv_bfloat16>(), dout.get<nv_bfloat16>(), freqs_cis.get<nv_bfloat16>(), abs_max_ptr, B, T, Nq, Nkv, head_dim, stream);
     } else {
         throw std::logic_error("rope_backward: unsupported dtype");
     }

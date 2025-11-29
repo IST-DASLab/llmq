@@ -37,9 +37,17 @@ void precompute_freqs_cis(nv_bfloat16 *freqs_cis, int dim, int end, float theta)
 }
 
 template<bool Backward, typename floatX>
-__global__ void rope_kernel(floatX *out, const floatX *inp, const floatX *freqs_cis, int B, int T, int Nq, int Nkv, int head_dim, std::bool_constant<Backward> bw = {}) {
+__global__ void rope_kernel(floatX *out, const floatX *inp, const floatX *freqs_cis, float* abs_max_ptr,
+                            int B, int T, int Nq, int Nkv, int head_dim, std::bool_constant<Backward> bw = {}) {
     using x64 = GenericVector<floatX, 8/sizeof(floatX)>;
     using x128 = GenericVector<floatX, 16/sizeof(floatX)>;
+    __shared__ float block_max;
+    if (abs_max_ptr) {
+        if(threadIdx.x == 0)
+            block_max = 1e-10f;
+        __syncthreads();
+    }
+    float thread_max = 1e-10f;
 
     int idx = (blockIdx.x * blockDim.x + threadIdx.x) * x64::size;
     int head_dim_half = head_dim / 2;
@@ -54,12 +62,24 @@ __global__ void rope_kernel(floatX *out, const floatX *inp, const floatX *freqs_
         qkv = 1;        // key head
         h -= Nq;
     }
+
     if (qkv == 2) {
-        // if not in place, need to copy the value heads
-        if(out != inp) {
-            x128::load_cs(inp + 2*idx).store(out + 2*idx);
+        if(abs_max_ptr) {
+            x128 val = x128::load_cs(inp + 2 * idx);
+            for(int k = 0; k < x128::size; k++) {
+                thread_max = std::max(thread_max, fabsf(val[k]));
+            }
+            if (out != inp) {
+                val.store(out + 2 * idx);
+            }
+            return;
+        } else {
+            // if not in place, need to copy the value heads
+            if (out != inp) {
+                x128::load_cs(inp + 2 * idx).store(out + 2 * idx);
+            }
+            return;
         }
-        return;
     }
     // decode the individual indices and get the input index
     int b = idx / (T * N * head_dim_half);
@@ -84,35 +104,50 @@ __global__ void rope_kernel(floatX *out, const floatX *inp, const floatX *freqs_
         float imag = (float)v_imag[k];
         o_real[k] = real * cos - imag * sin;
         o_imag[k] = real * sin + imag * cos;
+        if (abs_max_ptr) {
+            thread_max = std::max(thread_max, fabsf(o_real[k]));
+            thread_max = std::max(thread_max, fabsf(o_imag[k]));
+        }
     }
     o_real.store(out + idxi);
     o_imag.store(out + idxi + head_dim_half);
+
+    if (abs_max_ptr) {
+        atomicMax_block(reinterpret_cast<unsigned int*>(&block_max), __float_as_uint(thread_max));
+        __syncthreads();
+        if(threadIdx.x == 0) {
+            atomicMax(reinterpret_cast<unsigned int*>(abs_max_ptr), __float_as_uint(block_max));
+        }
+    }
 }
 
 template<bool Backward, class floatX>
-void rope_imp(floatX* out, const floatX* in, const floatX *freqs_cis, int B, int T, int Nq, int Nkv, int head_dim, cudaStream_t stream, std::bool_constant<Backward> bw = {}) {
+void rope_imp(floatX* out, const floatX* in, const floatX *freqs_cis, float* abs_max_ptr, int B, int T, int Nq, int Nkv, int head_dim, cudaStream_t stream, std::bool_constant<Backward> bw = {}) {
     // the input and output to this kernel are (B, T, Nq + Nk + Nv, HD)
+    if (abs_max_ptr)
+        CUDA_CHECK(cudaMemsetAsync(abs_max_ptr, 0, sizeof(float), stream));
+
     const int block_size = 128;
     using x64 = GenericVector<floatX, 8/sizeof(floatX)>;
     assert(head_dim % (2*x64::size) == 0);
     int total_threads = (B * T * (Nq + 2*Nkv) * head_dim / 2) / x64::size;
     int num_blocks = div_ceil(total_threads, block_size);
-    rope_kernel<<<num_blocks, block_size, 0, stream>>>(out, in, freqs_cis, B, T, Nq, Nkv, head_dim, bw);
+    rope_kernel<<<num_blocks, block_size, 0, stream>>>(out, in, freqs_cis, abs_max_ptr, B, T, Nq, Nkv, head_dim, bw);
     CUDA_CHECK(cudaGetLastError());
 }
 
-void rope_forward(float* out, const float* in, const float *freqs_cis, int B, int T, int Nq, int Nkv, int head_dim, cudaStream_t stream) {
-    rope_imp(out, in, freqs_cis, B, T, Nq, Nkv, head_dim, stream, std::bool_constant<false>());
+void rope_forward(float* out, const float* in, const float *freqs_cis, float* abs_max_ptr, int B, int T, int Nq, int Nkv, int head_dim, cudaStream_t stream) {
+    rope_imp(out, in, freqs_cis, abs_max_ptr, B, T, Nq, Nkv, head_dim, stream, std::bool_constant<false>());
 }
 
-void rope_forward(nv_bfloat16* out, const nv_bfloat16* in, const nv_bfloat16 *freqs_cis, int B, int T, int Nq, int Nkv, int head_dim, cudaStream_t stream)  {
-    rope_imp(out, in, freqs_cis, B, T, Nq, Nkv, head_dim, stream, std::bool_constant<false>());
+void rope_forward(nv_bfloat16* out, const nv_bfloat16* in, const nv_bfloat16 *freqs_cis, float* abs_max_ptr, int B, int T, int Nq, int Nkv, int head_dim, cudaStream_t stream)  {
+    rope_imp(out, in, freqs_cis,  abs_max_ptr, B, T, Nq, Nkv, head_dim, stream, std::bool_constant<false>());
 }
 
-void rope_backward(float* dinp, const float* dout, const float *freqs_cis, int B, int T, int Nq, int Nkv, int head_dim, cudaStream_t stream) {
-    rope_imp(dinp, dout, freqs_cis, B, T, Nq, Nkv, head_dim, stream, std::bool_constant<true>());
+void rope_backward(float* dinp, const float* dout, const float *freqs_cis, float* abs_max_ptr, int B, int T, int Nq, int Nkv, int head_dim, cudaStream_t stream) {
+    rope_imp(dinp, dout, freqs_cis, abs_max_ptr, B, T, Nq, Nkv, head_dim, stream, std::bool_constant<true>());
 }
 
-void rope_backward(nv_bfloat16* dinp, const nv_bfloat16* dout, const nv_bfloat16 *freqs_cis, int B, int T, int Nq, int Nkv, int head_dim, cudaStream_t stream)  {
-    rope_imp(dinp, dout, freqs_cis, B, T, Nq, Nkv, head_dim, stream, std::bool_constant<true>());
+void rope_backward(nv_bfloat16* dinp, const nv_bfloat16* dout, const nv_bfloat16 *freqs_cis, float* abs_max_ptr, int B, int T, int Nq, int Nkv, int head_dim, cudaStream_t stream)  {
+    rope_imp(dinp, dout, freqs_cis, abs_max_ptr, B, T, Nq, Nkv, head_dim, stream, std::bool_constant<true>());
 }

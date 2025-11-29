@@ -120,7 +120,8 @@ TEST_CASE("rope forward/backward fp32 matches CPU", "[rope][fp32]") {
 
     rope_forward(thrust::raw_pointer_cast(d_out.data()),
                  thrust::raw_pointer_cast(d_inp.data()),
-                 thrust::raw_pointer_cast(d_freqs.data()), B, T, Nq, Nkv, HD, 0);
+                 thrust::raw_pointer_cast(d_freqs.data()),
+                 nullptr, B, T, Nq, Nkv, HD, 0);
 
     std::vector<float> h_out(size_inp);
     thrust::copy(d_out.begin(), d_out.end(), h_out.begin());
@@ -138,7 +139,9 @@ TEST_CASE("rope forward/backward fp32 matches CPU", "[rope][fp32]") {
 
     rope_backward(thrust::raw_pointer_cast(d_dinp.data()),
                   thrust::raw_pointer_cast(d_dout.data()),
-                  thrust::raw_pointer_cast(d_freqs.data()), B, T, Nq, Nkv, HD, 0);
+                  thrust::raw_pointer_cast(d_freqs.data()),
+                  nullptr,
+                  B, T, Nq, Nkv, HD, 0);
 
     std::vector<float> h_dinp = from_device(d_dinp);
     for (size_t i = 0; i < size_inp; ++i) {
@@ -190,7 +193,8 @@ TEST_CASE("rope forward/backward bfloat16 matches CPU (emulated)", "[rope][bf16]
 
     rope_forward(thrust::raw_pointer_cast(d_out.data()),
                  thrust::raw_pointer_cast(d_inp.data()),
-                 thrust::raw_pointer_cast(d_freqs.data()), B, T, Nq, Nkv, HD, 0);
+                 thrust::raw_pointer_cast(d_freqs.data()),
+                 nullptr, B, T, Nq, Nkv, HD, 0);
 
     std::vector<nv_bfloat16> h_out_bf16 = from_device(d_out);
     for (size_t i = 0; i < size_inp; ++i) {
@@ -212,7 +216,8 @@ TEST_CASE("rope forward/backward bfloat16 matches CPU (emulated)", "[rope][bf16]
 
     rope_backward(thrust::raw_pointer_cast(d_dinp.data()),
                   thrust::raw_pointer_cast(d_dout.data()),
-                  thrust::raw_pointer_cast(d_freqs.data()), B, T, Nq, Nkv, HD, 0);
+                  thrust::raw_pointer_cast(d_freqs.data()),
+                  nullptr, B, T, Nq, Nkv, HD, 0);
 
     std::vector<nv_bfloat16> h_dinp_bf16 = from_device(d_dinp);
     for (size_t i = 0; i < size_inp; ++i) {
