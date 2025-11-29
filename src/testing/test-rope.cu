@@ -298,3 +298,60 @@ TEST_CASE("rope forward/backward bfloat16 matches CPU (emulated)", "[rope][bf16]
     for (size_t i = 0; i < size_inp; ++i) expected_absmax_bwd_bf16 = std::max(expected_absmax_bwd_bf16, std::fabs(h_dinp_cpu[i]));
     REQUIRE(h_absmax_bwd_bf16 == Catch::Approx(expected_absmax_bwd_bf16).margin(3e-2f));
 }
+
+// New tests to ensure abs-max path participates for values and to catch sync/early-return bugs
+TEST_CASE("rope absmax (fp32)", "[rope][fp32][absmax]") {
+    using namespace testing_config;
+    // Craft sizes to force blocks to span Q/K and V regions in the same block
+    // Small problem so a single block likely processes mixed heads
+    const int B = 1, T = 64, Nq = 2, Nkv = 2, HD = 32;
+    const int N = Nq + 2 * Nkv;
+
+    const size_t size_inp = (size_t)B * T * N * HD;
+    const size_t size_freqs = (size_t)T * HD;
+
+    // Random input, large outlier in V region
+    std::vector<float> h_inp = uniform_host(size_inp, -0.9f, 0.9f, 2025ull);
+    h_inp[129] = 10.f;
+    std::vector<float> h_freqs(size_freqs);
+    precompute_freqs_cis(h_freqs.data(), HD, T, 10000.0f);
+
+    // CPU reference
+    std::vector<float> h_out_cpu(size_inp);
+    rope_forward_cpu(h_out_cpu.data(), h_inp.data(), h_freqs.data(), B, T, Nq, Nkv, HD);
+
+    // Device buffers
+    thrust::device_vector<float> d_inp = to_device(h_inp);
+    thrust::device_vector<float> d_out(size_inp);
+    thrust::device_vector<float> d_freqs = to_device(h_freqs);
+
+    // Out-of-place with absmax
+    thrust::device_vector<float> d_absmax(1);
+    rope_forward(thrust::raw_pointer_cast(d_out.data()),
+                 thrust::raw_pointer_cast(d_inp.data()),
+                 thrust::raw_pointer_cast(d_freqs.data()),
+                 thrust::raw_pointer_cast(d_absmax.data()),
+                 B, T, Nq, Nkv, HD, 0);
+
+    std::vector<float> h_out = from_device(d_out);
+    for (size_t i = 0; i < size_inp; ++i) {
+        REQUIRE(h_out[i] == Catch::Approx(h_out_cpu[i]).margin(1e-6f));
+    }
+    float absmax = from_device(d_absmax)[0];
+    float expected_abs = 10.f;
+    REQUIRE(absmax == Catch::Approx(expected_abs).margin(1e-6f)); // must include V region too
+
+    // In-place with absmax should produce identical results
+    thrust::device_vector<float> d_absmax_ip(1);
+    // Copy input to output buffer to perform in-place
+    thrust::device_vector<float> d_io = d_inp; // start from input
+    rope_forward(thrust::raw_pointer_cast(d_io.data()),
+                 thrust::raw_pointer_cast(d_io.data()),
+                 thrust::raw_pointer_cast(d_freqs.data()),
+                 thrust::raw_pointer_cast(d_absmax_ip.data()),
+                 B, T, Nq, Nkv, HD, 0);
+    std::vector<float> h_io = from_device(d_io);
+    for (size_t i = 0; i < size_inp; ++i) {
+        REQUIRE(h_io[i] == Catch::Approx(h_out_cpu[i]).margin(1e-6f));
+    }
+}
