@@ -63,11 +63,14 @@ __global__ void swiglu_forward_kernel(floatX* out, const floatX* inp, float* abs
 }
 
 template<typename floatX>
-__global__ void swiglu_forward_quant_kernel(__nv_fp8_e4m3* out, const floatX* inp, const float* abs_max_ptr, int B, int T, int C) {
+__global__ void swiglu_forward_quant_kernel(__nv_fp8_e4m3* out, float* scale_ptr, const floatX* inp, const float* abs_max_ptr, int B, int T, int C) {
     using x128 = GenericVector<floatX, 16/sizeof(floatX)>;
     using f8v_t = GenericVector<__nv_fp8_e4m3, 16 / sizeof(floatX)>;
 
     float scale = 448.f / *abs_max_ptr;
+    if(threadIdx.x == 0 && blockIdx.x == 0 && scale_ptr) {
+        *scale_ptr = 1.f / scale;
+    }
 
     int idx = (blockIdx.x * blockDim.x + threadIdx.x) * x128::size;
     __nv_fp8_e4m3* out_ptr = out + idx;
@@ -186,13 +189,13 @@ void swiglu_forward(float* out, const float* inp, float* abs_max_ptr, int B, int
     swiglu_forward_impl(out, inp, abs_max_ptr, B, T, C, stream);
 }
 
-void swiglu_forward_quant(__nv_fp8_e4m3* out, const nv_bfloat16* inp, const float* abs_max_ptr, int B, int T, int C, cudaStream_t stream) {
+void swiglu_forward_quant(__nv_fp8_e4m3* out, float* scale_ptr, const nv_bfloat16* inp, const float* abs_max_ptr, int B, int T, int C, cudaStream_t stream) {
     using x128 = GenericVector<nv_bfloat16, 16/sizeof(nv_bfloat16)>;
     const int block_size = 128;
     assert(C % x128::size == 0);
     assert((B*T*C) % (block_size * x128::size) == 0);
     const int grid_size = div_ceil(B*T*C, (int)(block_size * x128::size));
-    swiglu_forward_quant_kernel<<<grid_size, block_size, 0, stream>>>(out, inp, abs_max_ptr, B, T, C);
+    swiglu_forward_quant_kernel<<<grid_size, block_size, 0, stream>>>(out, scale_ptr, inp, abs_max_ptr, B, T, C);
     CUDA_CHECK(cudaGetLastError());
 }
 

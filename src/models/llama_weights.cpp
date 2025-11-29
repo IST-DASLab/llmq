@@ -416,7 +416,7 @@ void LLamaWeightsManager::convert_dtype_for_gather(TensorShard& src, TensorShard
         }
     }
 
-    quantize_with_abs_max(qnt, src, src.Stats, qnt.nelem(), run_state.DeviceProp, run_state.MainStream);
+    quantize_with_abs_max(qnt, src.scale(), src, src.abs_max(), qnt.nelem(), run_state.DeviceProp, run_state.MainStream);
     qnt.Stats = src.Stats;
     convert = true;
 }
@@ -798,23 +798,23 @@ void LLamaWeightsManager::synchronize_absmax(NCCLCommunicator& comm) {
 
     // in order to reach a consistent state, like after an optimizer step, we need to calculate the abs-maxes
     for (auto& layer : mMaster.Blocks) {
-        abs_max(layer.LN1_w.Stats, layer.LN1_w, layer.LN1_w.nelem(), dp, nullptr);
-        abs_max(layer.LN2_w.Stats, layer.LN2_w, layer.LN2_w.nelem(), dp, nullptr);
-        abs_max(layer.Attn_QKV_w.Stats, layer.Attn_QKV_w, layer.Attn_QKV_w.nelem(), dp, nullptr);
-        abs_max(layer.Attn_Out_w.Stats, layer.Attn_Out_w, layer.Attn_Out_w.nelem(), dp, nullptr);
-        abs_max(layer.MLP_Up_w.Stats, layer.MLP_Up_w, layer.MLP_Up_w.nelem(), dp, nullptr);
-        abs_max(layer.MLP_Down_w.Stats, layer.MLP_Down_w, layer.MLP_Down_w.nelem(), dp, nullptr);
+        abs_max(layer.LN1_w.abs_max(), layer.LN1_w, layer.LN1_w.nelem(), dp, nullptr);
+        abs_max(layer.LN2_w.abs_max(), layer.LN2_w, layer.LN2_w.nelem(), dp, nullptr);
+        abs_max(layer.Attn_QKV_w.abs_max(), layer.Attn_QKV_w, layer.Attn_QKV_w.nelem(), dp, nullptr);
+        abs_max(layer.Attn_Out_w.abs_max(), layer.Attn_Out_w, layer.Attn_Out_w.nelem(), dp, nullptr);
+        abs_max(layer.MLP_Up_w.abs_max(), layer.MLP_Up_w, layer.MLP_Up_w.nelem(), dp, nullptr);
+        abs_max(layer.MLP_Down_w.abs_max(), layer.MLP_Down_w, layer.MLP_Down_w.nelem(), dp, nullptr);
         if (layer.Attn_QKV_b.has_value()) {
-            abs_max(layer.Attn_QKV_b.value().Stats, layer.Attn_QKV_b.value(), layer.Attn_QKV_b.value().nelem(), dp, nullptr);
+            abs_max(layer.Attn_QKV_b.value().abs_max(), layer.Attn_QKV_b.value(), layer.Attn_QKV_b.value().nelem(), dp, nullptr);
         }
-        comm.reduce_max(layer.LN1_w.Stats);
-        comm.reduce_max(layer.LN2_w.Stats);
-        comm.reduce_max(layer.Attn_QKV_w.Stats);
-        comm.reduce_max(layer.Attn_Out_w.Stats);
-        comm.reduce_max(layer.MLP_Up_w.Stats);
-        comm.reduce_max(layer.MLP_Down_w.Stats);
+        comm.reduce_max(layer.LN1_w.abs_max());
+        comm.reduce_max(layer.LN2_w.abs_max());
+        comm.reduce_max(layer.Attn_QKV_w.abs_max());
+        comm.reduce_max(layer.Attn_Out_w.abs_max());
+        comm.reduce_max(layer.MLP_Up_w.abs_max());
+        comm.reduce_max(layer.MLP_Down_w.abs_max());
         if (layer.Attn_QKV_b.has_value()) {
-            comm.reduce_max(layer.Attn_QKV_b.value().Stats);
+            comm.reduce_max(layer.Attn_QKV_b.value().abs_max());
         }
         comm.wait_on_comms(nullptr);
     }

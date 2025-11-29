@@ -67,7 +67,7 @@ template<class FloatC, class FloatA, class FloatB, class FloatBias>
 void matmul_cublaslt(FloatC* d, const FloatA* a, const FloatB* b, const FloatBias* bias,
                      std::byte* workspace, std::size_t workspace_size,
                      int m, int n, int k, cudaStream_t stream, cublasLtHandle_t handle,
-                     const float* scale, EMMTranspose mode, bool accumulate)
+                     const float* scale_a, const float* scale_b, EMMTranspose mode, bool accumulate)
 {
     bool has_bias = (bias != nullptr);
 
@@ -134,6 +134,19 @@ void matmul_cublaslt(FloatC* d, const FloatA* a, const FloatB* b, const FloatBia
         CUBLAS_CHECK(cublasLtMatmulDescSetAttribute(operationDesc, CUBLASLT_MATMUL_DESC_BIAS_POINTER, &bias, sizeof(bias)));
     }
 
+    if(scale_a) {
+        if(sizeof(FloatA) != 1) {
+            throw std::runtime_error("Scaling A is only supported for FP8");
+        }
+        CUBLAS_CHECK(cublasLtMatmulDescSetAttribute(operationDesc, CUBLASLT_MATMUL_DESC_A_SCALE_POINTER, &scale_a, sizeof(&scale_a)));
+    }
+    if(scale_b) {
+        if(sizeof(FloatB) != 1) {
+            throw std::runtime_error("Scaling B is only supported for FP8");
+        }
+        CUBLAS_CHECK(cublasLtMatmulDescSetAttribute(operationDesc, CUBLASLT_MATMUL_DESC_B_SCALE_POINTER, &scale_b, sizeof(&scale_b)));
+    }
+
     // set scale type to FP32 (needs to be FP16 if and only if using CUBLAS_COMPUTE_16F, so it's FP32 even for FP8!)
     cublasDataType_t scale_type = CUDA_R_32F;
     CUBLAS_CHECK(cublasLtMatmulDescSetAttribute(operationDesc, CUBLASLT_MATMUL_DESC_SCALE_TYPE, &scale_type, sizeof(scale_type)));
@@ -148,28 +161,14 @@ void matmul_cublaslt(FloatC* d, const FloatA* a, const FloatB* b, const FloatBia
     // set whether to accumulate (i.e. D += C) or not - note this isn't considered in algorithm selection (?!)
     float one = 1.f;
     float zero = 0.f;
-
-    const float* alpha;
-    const float* beta;
-    if(scale != nullptr) {
-        alpha = scale;
-        beta = accumulate ? device_one : device_zero;
-        std::int32_t device_pointer_mode = CUBLASLT_POINTER_MODE_DEVICE;
-        CUBLAS_CHECK(
-            cublasLtMatmulDescSetAttribute(operationDesc, CUBLASLT_MATMUL_DESC_POINTER_MODE, &device_pointer_mode,
-                                           sizeof(device_pointer_mode)));
-    } else {
-        // For some reason, using device_one/device_zero for bf16 x bf16 -> bf16 matmuls doesn't
-        // work reliably
-        // TODO figure out what's going on with cublas
-        alpha = &one;
-        beta = accumulate ? &one : &zero;
-    }
+    float* alpha = &one;
+    float* beta = accumulate ? &one : &zero;
 
     // call the matmul
     CUBLAS_CHECK(cublasLtMatmul(handle, operationDesc,
                                alpha, a, ALayout, b, BLayout, beta, d, CLayout, d, DLayout,
                                &heuristic.algo, workspace, workspace_size, stream));
+    CUDA_CHECK(cudaGetLastError());
 
     // cleanups
     CUBLAS_CHECK(cublasLtMatmulPreferenceDestroy(preference));
@@ -181,53 +180,53 @@ void matmul_cublaslt(FloatC* d, const FloatA* a, const FloatB* b, const FloatBia
     CUDA_CHECK(cudaGetLastError());
 }
 
-void matmul(float* c, const float* a, const float* b, const float* bias, const float* scale,
+void matmul(float* c, const float* a, const float* b, const float* bias, const float* scale_a, const float* scale_b,
             cublasLtHandle_t handle, std::byte* workspace, std::size_t workspace_size,
             int M, int N, int K, EMMTranspose mode, bool accumulate, cudaStream_t stream) {
-    matmul_cublaslt(c, a, b, bias, workspace, workspace_size, M, N, K, stream, handle, scale, mode, accumulate);
+    matmul_cublaslt(c, a, b, bias, workspace, workspace_size, M, N, K, stream, handle, scale_a, scale_b, mode, accumulate);
 }
 
-void matmul(float* c, const nv_bfloat16* a, const nv_bfloat16* b, const float* bias, const float* scale,
+void matmul(float* c, const nv_bfloat16* a, const nv_bfloat16* b, const float* bias, const float* scale_a, const float* scale_b,
             cublasLtHandle_t handle, std::byte* workspace, std::size_t workspace_size,
             int M, int N, int K, EMMTranspose mode, bool accumulate, cudaStream_t stream) {
-    matmul_cublaslt(c, a, b, bias, workspace, workspace_size, M, N, K, stream, handle, scale, mode, accumulate);
+    matmul_cublaslt(c, a, b, bias, workspace, workspace_size, M, N, K, stream, handle, scale_a, scale_b, mode, accumulate);
 }
 
-void matmul(float* c, const __nv_fp8_e4m3* a, const __nv_fp8_e4m3* b, const float* bias, const float* scale,
+void matmul(float* c, const __nv_fp8_e4m3* a, const __nv_fp8_e4m3* b, const float* bias, const float* scale_a, const float* scale_b,
             cublasLtHandle_t handle, std::byte* workspace, std::size_t workspace_size,
             int M, int N, int K, EMMTranspose mode, bool accumulate, cudaStream_t stream) {
-    matmul_cublaslt(c, a, b, bias, workspace, workspace_size, M, N, K, stream, handle, scale, mode, accumulate);
+    matmul_cublaslt(c, a, b, bias, workspace, workspace_size, M, N, K, stream, handle, scale_a, scale_b, mode, accumulate);
 }
 
-void matmul(float* c, const __nv_fp8_e4m3* a, const __nv_fp8_e4m3* b, const nv_bfloat16* bias, const float* scale,
+void matmul(float* c, const __nv_fp8_e4m3* a, const __nv_fp8_e4m3* b, const nv_bfloat16* bias, const float* scale_a, const float* scale_b,
             cublasLtHandle_t handle, std::byte* workspace, std::size_t workspace_size,
             int M, int N, int K, EMMTranspose mode, bool accumulate, cudaStream_t stream) {
-    matmul_cublaslt(c, a, b, bias, workspace, workspace_size, M, N, K, stream, handle, scale, mode, accumulate);
+    matmul_cublaslt(c, a, b, bias, workspace, workspace_size, M, N, K, stream, handle, scale_a, scale_b, mode, accumulate);
 }
 
-void matmul(nv_bfloat16* c, const nv_bfloat16* a, const nv_bfloat16* b, const nv_bfloat16* bias, const float* scale,
+void matmul(nv_bfloat16* c, const nv_bfloat16* a, const nv_bfloat16* b, const nv_bfloat16* bias, const float* scale_a, const float* scale_b,
             cublasLtHandle_t handle, std::byte* workspace, std::size_t workspace_size,
             int M, int N, int K, EMMTranspose mode, bool accumulate, cudaStream_t stream) {
-    matmul_cublaslt(c, a, b, bias, workspace, workspace_size, M, N, K, stream, handle, scale, mode, accumulate);
+    matmul_cublaslt(c, a, b, bias, workspace, workspace_size, M, N, K, stream, handle, scale_a, scale_b, mode, accumulate);
 }
 
-void matmul(nv_bfloat16* c, const __nv_fp8_e4m3* a, const __nv_fp8_e4m3* b, const nv_bfloat16* bias, const float* scale,
+void matmul(nv_bfloat16* c, const __nv_fp8_e4m3* a, const __nv_fp8_e4m3* b, const nv_bfloat16* bias, const float* scale_a, const float* scale_b,
             cublasLtHandle_t handle, std::byte* workspace, std::size_t workspace_size,
             int M, int N, int K, EMMTranspose mode, bool accumulate, cudaStream_t stream) {
-    matmul_cublaslt(c, a, b, bias, workspace, workspace_size, M, N, K, stream, handle, scale, mode, accumulate);
+    matmul_cublaslt(c, a, b, bias, workspace, workspace_size, M, N, K, stream, handle, scale_a, scale_b, mode, accumulate);
 }
 
-void matmul(nv_bfloat16* c, const __nv_fp8_e4m3* a, const __nv_fp8_e5m2* b, const nv_bfloat16* bias, const float* scale,
+void matmul(nv_bfloat16* c, const __nv_fp8_e4m3* a, const __nv_fp8_e5m2* b, const nv_bfloat16* bias, const float* scale_a, const float* scale_b,
             cublasLtHandle_t handle, std::byte* workspace, std::size_t workspace_size,
             int M, int N, int K, EMMTranspose mode, bool accumulate, cudaStream_t stream) {
-    matmul_cublaslt(c, a, b, bias, workspace, workspace_size, M, N, K, stream, handle, scale, mode, accumulate);
+    matmul_cublaslt(c, a, b, bias, workspace, workspace_size, M, N, K, stream, handle, scale_a, scale_b, mode, accumulate);
 }
 
 /*
 void matmul(float* c, const std::int8_t* a, const std::int8_t* b, const nv_bfloat16* bias, const float* scale,
             cublasLtHandle_t handle, std::byte* workspace, std::size_t workspace_size,
             int M, int N, int K, EMMTranspose mode, bool accumulate, cudaStream_t stream) {
-    matmul_cublaslt(c, b, a, bias, workspace, workspace_size, M, N, K, stream, handle, scale, mode, accumulate);
+    matmul_cublaslt(c, b, a, bias, workspace, workspace_size, M, N, K, stream, handle, scale_a, scale_b, mode, accumulate);
     if(bias) {
         add_bias(c, bias, B, T, OC, stream);
     }
