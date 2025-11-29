@@ -53,9 +53,9 @@ void swiglu_forward(Tensor& out, const Tensor& inp, float* abs_max_ptr, int B, i
     }
 }
 
-void swiglu_forward_quant(Tensor& out, const Tensor& inp, const float* abs_max_ptr, int B, int T, int C, cudaStream_t stream) {
+void swiglu_forward_quant(Tensor& out, float* scale_ptr, const Tensor& inp, const float* abs_max_ptr, int B, int T, int C, cudaStream_t stream) {
     if(out.DType == ETensorDType::FP8_E4M3 && inp.DType == ETensorDType::BF16) {
-        swiglu_forward_quant(out.get<__nv_fp8_e4m3>(), inp.get<nv_bfloat16>(), abs_max_ptr, B, T, C, stream);
+        swiglu_forward_quant(out.get<__nv_fp8_e4m3>(), scale_ptr, inp.get<nv_bfloat16>(), abs_max_ptr, B, T, C, stream);
     } else {
         throw std::logic_error("swiglu_forward_quant: unsupported dtype");
     }
@@ -194,26 +194,26 @@ void abs_max(float* scale, const Tensor& in, long N, const cudaDeviceProp& dp, c
     }
 }
 
-void quantize_with_abs_max(Tensor& out, const Tensor& in, const float* abs_max, long N, const cudaDeviceProp& dp, cudaStream_t stream) {
+void quantize_with_abs_max(Tensor& out, float* scale_ptr, const Tensor& in, const float* abs_max, long N, const cudaDeviceProp& dp, cudaStream_t stream) {
     if (in.DType == ETensorDType::FP32) {
         if (out.DType == ETensorDType::BF16) {
-            quantize_with_abs_max(out.get<nv_bfloat16>(), in.get<float>(), abs_max, N, dp, stream);
+            quantize_with_abs_max(out.get<nv_bfloat16>(), scale_ptr, in.get<float>(), abs_max, N, dp, stream);
         } else if (out.DType == ETensorDType::FP8_E4M3) {
-            quantize_with_abs_max(out.get<__nv_fp8_e4m3>(), in.get<float>(), abs_max, N, dp, stream);
+            quantize_with_abs_max(out.get<__nv_fp8_e4m3>(), scale_ptr, in.get<float>(), abs_max, N, dp, stream);
         } else if (out.DType == ETensorDType::FP8_E5M2) {
-            quantize_with_abs_max(out.get<__nv_fp8_e5m2>(), in.get<float>(), abs_max, N, dp, stream);
+            quantize_with_abs_max(out.get<__nv_fp8_e5m2>(), scale_ptr, in.get<float>(), abs_max, N, dp, stream);
         } else if (out.DType == ETensorDType::INT8) {
-            quantize_with_abs_max(out.get<int8_t>(), in.get<float>(), abs_max, N, dp, stream);
+            quantize_with_abs_max(out.get<int8_t>(), scale_ptr, in.get<float>(), abs_max, N, dp, stream);
         } else {
             throw std::logic_error("quantize_with_abs_max: unsupported dtype");
         }
     } else if (in.DType == ETensorDType::BF16) {
         if (out.DType == ETensorDType::FP8_E4M3) {
-            quantize_with_abs_max(out.get<__nv_fp8_e4m3>(), in.get<nv_bfloat16>(), abs_max, N, dp, stream);
+            quantize_with_abs_max(out.get<__nv_fp8_e4m3>(), scale_ptr, in.get<nv_bfloat16>(), abs_max, N, dp, stream);
         } else if (out.DType == ETensorDType::FP8_E5M2) {
-            quantize_with_abs_max(out.get<__nv_fp8_e5m2>(), in.get<nv_bfloat16>(), abs_max, N, dp, stream);
+            quantize_with_abs_max(out.get<__nv_fp8_e5m2>(), scale_ptr, in.get<nv_bfloat16>(), abs_max, N, dp, stream);
         } else if (out.DType == ETensorDType::INT8) {
-            quantize_with_abs_max(out.get<int8_t>(), in.get<nv_bfloat16>(), abs_max, N, dp, stream);
+            quantize_with_abs_max(out.get<int8_t>(), scale_ptr, in.get<nv_bfloat16>(), abs_max, N, dp, stream);
         } else {
             throw std::logic_error("quantize_with_abs_max: unsupported dtype");
         }
@@ -222,17 +222,17 @@ void quantize_with_abs_max(Tensor& out, const Tensor& in, const float* abs_max, 
     }
 }
 
-void quantize_and_transpose_with_abs_max(Tensor& out, const Tensor& in, const float* abs_max, int rows, int cols, const cudaDeviceProp& dp, cudaStream_t stream) {
+void quantize_and_transpose_with_abs_max(Tensor& out, float* scale_ptr, const Tensor& in, const float* abs_max, int rows, int cols, const cudaDeviceProp& dp, cudaStream_t stream) {
     if(out.DType == ETensorDType::BF16 && in.DType == ETensorDType::FP32) {
-        quantize_and_transpose_with_abs_max(out.get<nv_bfloat16>(), in.get<float>(), abs_max, rows, cols, dp, stream);
+        quantize_and_transpose_with_abs_max(out.get<nv_bfloat16>(), scale_ptr, in.get<float>(), abs_max, rows, cols, dp, stream);
     } else if(out.DType == ETensorDType::INT8 && in.DType == ETensorDType::FP32) {
-        quantize_and_transpose_with_abs_max(out.get<std::int8_t>(), in.get<float>(), abs_max, rows, cols, dp, stream);
+        quantize_and_transpose_with_abs_max(out.get<std::int8_t>(), scale_ptr, in.get<float>(), abs_max, rows, cols, dp, stream);
     } else if(out.DType == ETensorDType::INT8 && in.DType == ETensorDType::BF16) {
-        quantize_and_transpose_with_abs_max(out.get<std::int8_t>(), in.get<nv_bfloat16>(), abs_max, rows, cols, dp, stream);
+        quantize_and_transpose_with_abs_max(out.get<std::int8_t>(), scale_ptr, in.get<nv_bfloat16>(), abs_max, rows, cols, dp, stream);
     } else if(out.DType == ETensorDType::FP8_E4M3 && in.DType == ETensorDType::FP32) {
-        quantize_and_transpose_with_abs_max(out.get<__nv_fp8_e4m3>(), in.get<float>(), abs_max, rows, cols, dp, stream);
+        quantize_and_transpose_with_abs_max(out.get<__nv_fp8_e4m3>(), scale_ptr, in.get<float>(), abs_max, rows, cols, dp, stream);
     } else if(out.DType == ETensorDType::FP8_E4M3 && in.DType == ETensorDType::BF16) {
-        quantize_and_transpose_with_abs_max(out.get<__nv_fp8_e4m3>(), in.get<nv_bfloat16>(), abs_max, rows, cols, dp, stream);
+        quantize_and_transpose_with_abs_max(out.get<__nv_fp8_e4m3>(), scale_ptr, in.get<nv_bfloat16>(), abs_max, rows, cols, dp, stream);
     } else {
         throw std::logic_error("Invalid DType combination");
     }
@@ -258,50 +258,51 @@ void fill_constant(Tensor& dest, float value, std::size_t count, cudaStream_t st
     }
 }
 
-void matmul(Tensor& c, const Tensor& a, const Tensor& b, std::optional<Tensor> bias, const float* scale,
+void matmul(Tensor& c, const Tensor& a, const Tensor& b, std::optional<Tensor> bias,
+            const float* scale_a, const float* scale_b,
             cublasLtHandle_t handle, Tensor& workspace,
             int M, int N, int K, EMMTranspose mode, bool accumulate, cudaStream_t stream) {
     std::byte* ws = workspace.get<std::byte>();
     std::size_t ws_size = workspace.bytes();
     if(c.DType == ETensorDType::FP32 && a.DType == ETensorDType::FP32) {
         float* bias_ptr = bias.has_value() ? bias.value().get<float>() : nullptr;
-        matmul(c.get<float>(), a.get<float>(), b.get<float>(), bias_ptr, scale,handle, ws, ws_size, M, N, K, mode, accumulate, stream);
+        matmul(c.get<float>(), a.get<float>(), b.get<float>(), bias_ptr, scale_a, scale_b, handle, ws, ws_size, M, N, K, mode, accumulate, stream);
     } else if(c.DType == ETensorDType::FP32 && a.DType == ETensorDType::BF16) {
         float* bias_ptr = bias.has_value() ? bias.value().get<float>() : nullptr;
-        matmul(c.get<float>(), a.get<nv_bfloat16>(), b.get<nv_bfloat16>(), bias_ptr, scale,handle, ws, ws_size, M, N, K, mode, accumulate, stream);
+        matmul(c.get<float>(), a.get<nv_bfloat16>(), b.get<nv_bfloat16>(), bias_ptr, scale_a, scale_b, handle, ws, ws_size, M, N, K, mode, accumulate, stream);
     } else if(c.DType == ETensorDType::FP32 && a.DType == ETensorDType::FP8_E4M3) {
         if(bias.has_value()) {
             if(bias.value().DType == ETensorDType::BF16) {
-                matmul(c.get<float>(), a.get<__nv_fp8_e4m3>(), b.get<__nv_fp8_e4m3>(), bias->get<nv_bfloat16>(), scale,handle, ws, ws_size, M, N, K, mode, accumulate, stream);
+                matmul(c.get<float>(), a.get<__nv_fp8_e4m3>(), b.get<__nv_fp8_e4m3>(), bias->get<nv_bfloat16>(), scale_a, scale_b, handle, ws, ws_size, M, N, K, mode, accumulate, stream);
             } else {
-                matmul(c.get<float>(), a.get<__nv_fp8_e4m3>(), b.get<__nv_fp8_e4m3>(), bias->get<float>(), scale,handle, ws, ws_size, M, N, K, mode, accumulate, stream);
+                matmul(c.get<float>(), a.get<__nv_fp8_e4m3>(), b.get<__nv_fp8_e4m3>(), bias->get<float>(), scale_a, scale_b, handle, ws, ws_size, M, N, K, mode, accumulate, stream);
             }
         } else {
-            matmul(c.get<float>(), a.get<__nv_fp8_e4m3>(), b.get<__nv_fp8_e4m3>(), (nv_bfloat16*)nullptr, scale,handle, ws, ws_size, M, N, K, mode, accumulate, stream);
+            matmul(c.get<float>(), a.get<__nv_fp8_e4m3>(), b.get<__nv_fp8_e4m3>(), (nv_bfloat16*)nullptr, scale_a, scale_b, handle, ws, ws_size, M, N, K, mode, accumulate, stream);
         }
     } else if(c.DType == ETensorDType::BF16 && a.DType == ETensorDType::FP8_E4M3 && b.DType == ETensorDType::FP8_E4M3) {
         nv_bfloat16* bias_ptr = bias.has_value() ? bias.value().get<nv_bfloat16>() : nullptr;
-        matmul(c.get<nv_bfloat16>(), a.get<__nv_fp8_e4m3>(), b.get<__nv_fp8_e4m3>(), bias_ptr, scale,handle, ws, ws_size, M, N, K, mode, accumulate, stream);
+        matmul(c.get<nv_bfloat16>(), a.get<__nv_fp8_e4m3>(), b.get<__nv_fp8_e4m3>(), bias_ptr, scale_a, scale_b, handle, ws, ws_size, M, N, K, mode, accumulate, stream);
     } else if(c.DType == ETensorDType::BF16 && a.DType == ETensorDType::FP8_E4M3 && b.DType == ETensorDType::FP8_E5M2) {
         nv_bfloat16* bias_ptr = bias.has_value() ? bias.value().get<nv_bfloat16>() : nullptr;
-        matmul(c.get<nv_bfloat16>(), a.get<__nv_fp8_e4m3>(), b.get<__nv_fp8_e5m2>(), bias_ptr, scale, handle, ws, ws_size, M, N, K, mode, accumulate, stream);
+        matmul(c.get<nv_bfloat16>(), a.get<__nv_fp8_e4m3>(), b.get<__nv_fp8_e5m2>(), bias_ptr, scale_a, scale_b, handle, ws, ws_size, M, N, K, mode, accumulate, stream);
     } else if(c.DType == ETensorDType::BF16) {
         nv_bfloat16* bias_ptr = bias.has_value() ? bias.value().get<nv_bfloat16>() : nullptr;
-        matmul(c.get<nv_bfloat16>(), a.get<nv_bfloat16>(), b.get<nv_bfloat16>(), bias_ptr, scale,handle, ws, ws_size, M, N, K, mode, accumulate, stream);
+        matmul(c.get<nv_bfloat16>(), a.get<nv_bfloat16>(), b.get<nv_bfloat16>(), bias_ptr, scale_a, scale_b, handle, ws, ws_size, M, N, K, mode, accumulate, stream);
     } else {
         throw std::logic_error("matmul_forward: invalid DType combination");
     }
 }
 
-void backward_bias(Tensor& dbias, const Tensor& dout, const float* dout_abs_max, Tensor& dbias_buffer, int B, int T, int OC, const cudaDeviceProp& dp, cudaStream_t stream) {
+void backward_bias(Tensor& dbias, const Tensor& dout, const float* scale_a, const float* scale_b, Tensor& dbias_buffer, int B, int T, int OC, const cudaDeviceProp& dp, cudaStream_t stream) {
     if(dbias.DType == ETensorDType::FP32 && dout.DType == ETensorDType::FP32) {
-        backward_bias(dbias.get<float>(), dout.get<float>(), dout_abs_max, dbias_buffer.get<float>(), B, T, OC, dp, stream);
+        backward_bias(dbias.get<float>(), dout.get<float>(), scale_a, scale_b, dbias_buffer.get<float>(), B, T, OC, dp, stream);
     } else if(dbias.DType == ETensorDType::BF16 && dout.DType == ETensorDType::BF16) {
-        backward_bias(dbias.get<nv_bfloat16>(), dout.get<nv_bfloat16>(), dout_abs_max, dbias_buffer.get<float>(), B, T, OC, dp, stream);
+        backward_bias(dbias.get<nv_bfloat16>(), dout.get<nv_bfloat16>(), scale_a, scale_b, dbias_buffer.get<float>(), B, T, OC, dp, stream);
     } else if(dbias.DType == ETensorDType::BF16 && dout.DType == ETensorDType::FP8_E4M3) {
-        backward_bias(dbias.get<nv_bfloat16>(), dout.get<__nv_fp8_e4m3>(), dout_abs_max, dbias_buffer.get<float>(), B, T, OC, dp, stream);
+        backward_bias(dbias.get<nv_bfloat16>(), dout.get<__nv_fp8_e4m3>(), scale_a, scale_b, dbias_buffer.get<float>(), B, T, OC, dp, stream);
     }  else if(dbias.DType == ETensorDType::BF16 && dout.DType == ETensorDType::FP8_E5M2) {
-        backward_bias(dbias.get<nv_bfloat16>(), dout.get<__nv_fp8_e5m2>(), dout_abs_max, dbias_buffer.get<float>(), B, T, OC, dp, stream);
+        backward_bias(dbias.get<nv_bfloat16>(), dout.get<__nv_fp8_e5m2>(), scale_a, scale_b, dbias_buffer.get<float>(), B, T, OC, dp, stream);
     } else {
         throw std::logic_error("backward_bias: unsupported dtype");
     }

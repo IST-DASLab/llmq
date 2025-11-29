@@ -38,7 +38,7 @@ void add_bias(nv_bfloat16* out, const nv_bfloat16* bias, int B, int T, int OC, c
 }
 
 template<typename floatX, typename OutFloat, bool UseAuxBuffer>
-__global__ void matmul_backward_bias_kernel(OutFloat* dbias, const floatX* dout, const float* abs_max, int B, int T, int OC,
+__global__ void matmul_backward_bias_kernel(OutFloat* dbias, const floatX* dout, const float* scale_a, const float* scale_b, int B, int T, int OC,
                                             std::bool_constant<UseAuxBuffer>) {
     using x128 = GenericVector<floatX, 16/sizeof(floatX)>;
     using f128 = GenericVector<float, 16/sizeof(float)>;
@@ -50,6 +50,11 @@ __global__ void matmul_backward_bias_kernel(OutFloat* dbias, const floatX* dout,
     int warp_d = (int)threadIdx.x;
     int warp_c = (int)threadIdx.y;
     int block_d = (int)threadIdx.z;
+
+    float scale = 1.f;
+    if(scale_a != nullptr && scale_b != nullptr) {
+        scale = *scale_a * *scale_b;
+    }
 
     const int OC_per_warp = bdy * x128::size;  // 64 at BF16
 
@@ -97,18 +102,10 @@ __global__ void matmul_backward_bias_kernel(OutFloat* dbias, const floatX* dout,
             a += v;
         }
         if(warp_d == 0 && global_oc < OC) {
-            if(abs_max != nullptr) {
-                a *= *abs_max;
-                if constexpr (std::is_same_v<floatX, __nv_fp8_e4m3>) {
-                    a /= 448.f;
-                } else if constexpr (std::is_same_v<floatX, __nv_fp8_e5m2>) {
-                    a /= 448.f;
-                }
-            }
             if constexpr (!UseAuxBuffer) {
-                dbias[global_oc + k] = (OutFloat)(a + (float)dbias[global_oc + k]);
+                dbias[global_oc + k] = (OutFloat)(a * scale + (float)dbias[global_oc + k]);
             } else {
-                dbias[global_oc + k + blockIdx.y * OC] = a;
+                dbias[global_oc + k + blockIdx.y * OC] = a * scale;
             }
         }
     }
@@ -147,7 +144,7 @@ int get_bias_backward_scratch_size(ETensorDType dtype, int OC, const cudaDeviceP
 }
 
 template<class floatX, class FloatY>
-void backward_bias_imp(floatX* dbias, const FloatY* dout, const float* dout_abs_max, float* dbias_buffer, int B, int T, int OC, const cudaDeviceProp& dp, cudaStream_t stream) {
+void backward_bias_imp(floatX* dbias, const FloatY* dout, const float* scale_a, const float* scale_b, float* dbias_buffer, int B, int T, int OC, const cudaDeviceProp& dp, cudaStream_t stream) {
     // Each warp is responsible for 8 * "x128::size" = 64 OCs at BF16 (OC must be a multiple of 64!)
     // Block size is 1024 | 768 threads (32|24 warps) and we reduce those values into 1 at the end
     using x128 = GenericVector<floatX, 16/sizeof(floatX)>;
@@ -160,32 +157,36 @@ void backward_bias_imp(floatX* dbias, const FloatY* dout, const float* dout_abs_
     const int grid_size_x = div_ceil(OC, OC_per_warp); // e.g. 12 horizontal blocks for 768 OCs at BF16
     const int grid_size_y = max(1, block_size * dp.multiProcessorCount / (block_size * grid_size_x)); // full GPU!
 
+    if( (scale_a == nullptr) != (scale_b == nullptr) ) {
+        throw std::logic_error("backward_bias: scale_a and scale_b must be both nullptr or both non-nullptr");
+    }
+
     // If we have enough OC that we don't need cross-block reductions, we can skip the bias_buffer accumulation
     // and write results directly to the output.
     if(grid_size_y == 1) {
-        matmul_backward_bias_kernel<<<dim3(grid_size_x, grid_size_y), block_dim, 0, stream>>>(dbias, dout, dout_abs_max, B, T, OC, std::bool_constant<false>());
+        matmul_backward_bias_kernel<<<dim3(grid_size_x, grid_size_y), block_dim, 0, stream>>>(dbias, dout, scale_a, scale_b, B, T, OC, std::bool_constant<false>());
         CUDA_CHECK(cudaGetLastError());
     } else {
         // kernel 9 overwrites temp buffer, so no need to memset
-        matmul_backward_bias_kernel<<<dim3(grid_size_x, grid_size_y), block_dim, 0, stream>>>(dbias_buffer, dout, dout_abs_max, B, T, OC, std::bool_constant<true>());
+        matmul_backward_bias_kernel<<<dim3(grid_size_x, grid_size_y), block_dim, 0, stream>>>(dbias_buffer, dout, scale_a, scale_b, B, T, OC, std::bool_constant<true>());
         CUDA_CHECK(cudaGetLastError());
         reduce_add_sum_kernel<<<div_ceil((size_t)OC, 256 * f128::size), 256, 0, stream>>>(dbias, dbias_buffer, OC, grid_size_y);
         CUDA_CHECK(cudaGetLastError());
     }
 }
 
-void backward_bias(float* dbias, const float* dout, const float* dout_abs_max, float* dbias_buffer, int B, int T, int OC, const cudaDeviceProp& dp, cudaStream_t stream)  {
-    backward_bias_imp(dbias, dout, dout_abs_max, dbias_buffer, B, T, OC, dp, stream);
+void backward_bias(float* dbias, const float* dout, const float* scale_a, const float* scale_b, float* dbias_buffer, int B, int T, int OC, const cudaDeviceProp& dp, cudaStream_t stream)  {
+    backward_bias_imp(dbias, dout, scale_a, scale_b, dbias_buffer, B, T, OC, dp, stream);
 }
 
-void backward_bias(nv_bfloat16* dbias, const nv_bfloat16* dout, const float* dout_abs_max, float* dbias_buffer, int B, int T, int OC, const cudaDeviceProp& dp, cudaStream_t stream)  {
-    backward_bias_imp(dbias, dout, dout_abs_max, dbias_buffer, B, T, OC, dp, stream);
+void backward_bias(nv_bfloat16* dbias, const nv_bfloat16* dout, const float* scale_a, const float* scale_b, float* dbias_buffer, int B, int T, int OC, const cudaDeviceProp& dp, cudaStream_t stream)  {
+    backward_bias_imp(dbias, dout, scale_a, scale_b, dbias_buffer, B, T, OC, dp, stream);
 }
 
-void backward_bias(nv_bfloat16* dbias, const __nv_fp8_e4m3* dout, const float* dout_abs_max, float* dbias_buffer, int B, int T, int OC, const cudaDeviceProp& dp, cudaStream_t stream)  {
-    backward_bias_imp(dbias, dout, dout_abs_max, dbias_buffer, B, T, OC, dp, stream);
+void backward_bias(nv_bfloat16* dbias, const __nv_fp8_e4m3* dout, const float* scale_a, const float* scale_b, float* dbias_buffer, int B, int T, int OC, const cudaDeviceProp& dp, cudaStream_t stream)  {
+    backward_bias_imp(dbias, dout, scale_a, scale_b, dbias_buffer, B, T, OC, dp, stream);
 }
 
-void backward_bias(nv_bfloat16* dbias, const __nv_fp8_e5m2* dout, const float* dout_abs_max, float* dbias_buffer, int B, int T, int OC, const cudaDeviceProp& dp, cudaStream_t stream)  {
-    backward_bias_imp(dbias, dout, dout_abs_max, dbias_buffer, B, T, OC, dp, stream);
+void backward_bias(nv_bfloat16* dbias, const __nv_fp8_e5m2* dout, const float* scale_a, const float* scale_b, float* dbias_buffer, int B, int T, int OC, const cudaDeviceProp& dp, cudaStream_t stream)  {
+    backward_bias_imp(dbias, dout, scale_a, scale_b, dbias_buffer, B, T, OC, dp, stream);
 }
