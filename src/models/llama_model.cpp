@@ -189,7 +189,7 @@ void LLamaModel::_forward_block(sLLamaBlockWeights<Tensor>& weights, sLLamaLayer
                 B, T, C, Config.qkv_channels(),
                 rs->DeviceProp, false, main_stream);
     // 2) apply RoPE to q,k (potentially in place)
-    rope_forward(acts.QKV, acts.QKV, rs->FreqCis, B, T, Hq, Hkv, Hs, main_stream);
+    rope_forward(acts.QKV, acts.QKV, rs->FreqCis, nullptr, B, T, Hq, Hkv, Hs, main_stream);
     // 3) attention: att <- softmax(qk^T)v
     attention_forward_cudnn(acts.Att.Value, acts.LSE, acts.QKV, rs->CuBlasWorkspace, rs->CudnnHandle, B, T, Hq, Hkv, Hs, main_stream);
     // quantize attention if necessary
@@ -542,7 +542,7 @@ void LLamaModel::_recompute_block(sLLamaBlockWeights<Tensor>& weights, sLLamaLay
                      rs->CublasLtHandle, rs->CuBlasWorkspace,
                      B, T, C, Config.qkv_channels(),
                      rs->DeviceProp, !recompute_ln1, main_stream);
-        rope_forward(acts.QKV, acts.QKV, rs->FreqCis, B, T, Hq, Hkv, Hs, main_stream);
+        rope_forward(acts.QKV, acts.QKV, rs->FreqCis, nullptr, B, T, Hq, Hkv, Hs, main_stream);
     }
 
     if (recompute_att) {
@@ -636,11 +636,7 @@ void LLamaModel::_backward_block(bool accumulate, sLLamaBlockWeights<Tensor>& we
             chunk_batch_size, T, Hq, Hkv, Hs, main_stream);
     }
     rs->temp_free(rs->CuDNNWorkspace);
-    rope_backward(d_acts.DQKV.Value, d_acts.DQKV.Value, rs->FreqCis, B, T, Hq, Hkv, Hs, main_stream);
-
-    if (d_acts.DQKV.Quant.has_value()) {
-        abs_max(d_acts.DQKV.Quant->Scales, d_acts.DQKV.Value, d_acts.DQKV.Value.nelem(), rs->DeviceProp, main_stream);
-    }
+    rope_backward(d_acts.DQKV.Value, d_acts.DQKV.Value, rs->FreqCis, quant_abs_max_ptr(d_acts.DQKV), B, T, Hq, Hkv, Hs, main_stream);
 
     backward_qmm(d_acts.DLN1, d_weights.Attn_QKV_w, d_weights.Attn_QKV_b, d_acts.DQKV, acts.LN1, weights.Attn_QKV_w, rs->MatmulBiasScratch,
                  accumulate, *rs, B, T, C, Config.qkv_channels(), !recompute_ln1, main_stream);
