@@ -108,14 +108,18 @@ def add_training_args(parser: argparse.ArgumentParser, default: Optional[Trainin
     parser.add_argument("--init-proj-to-zero", action="store_true", help="Initialize projections to zero")
     parser.add_argument("--model-dtype", default=default.model_dtype, help="Model dtype")
     parser.add_argument("--matmul-dtype", help="Matmul dtype (defaults to model-dtype)")
-    parser.add_argument("--gradient-dtype", help="Gradient dtype (defaults to matmul-dtype, except e4m3 matmul uses m5m2 gradients)")
+    parser.add_argument("--gradient-dtype",
+                        help="Gradient dtype (defaults to matmul-dtype, except e4m3 matmul uses m5m2 gradients)")
 
     # Batch configuration
     parser.add_argument("--batch-size", "--batch", type=int, default=default.batch_size, help="Micro-batch size")
     parser.add_argument("--seq-len", "--seq-length", type=int, default=default.seq_len, help="Sequence length")
-    parser.add_argument("--grad-accumulation", type=int, default=default.grad_accumulation, help="Gradient accumulation steps")
-    parser.add_argument("--lmhead-chunks", type=int, default=default.lmhead_chunks, help="Run LM-head in smaller chunks")
-    parser.add_argument("--attn-bwd-chunks", type=int, default=default.attn_bwd_chunks, help="Run attention backward in smaller chunks")
+    parser.add_argument("--grad-accumulation", type=int, default=default.grad_accumulation,
+                        help="Gradient accumulation steps")
+    parser.add_argument("--lmhead-chunks", type=int, default=default.lmhead_chunks,
+                        help="Run LM-head in smaller chunks")
+    parser.add_argument("--attn-bwd-chunks", type=int, default=default.attn_bwd_chunks,
+                        help="Run attention backward in smaller chunks")
 
     # Optimizer
     parser.add_argument("--learning-rate", "--lr", type=float, default=default.learning_rate, help="Learning rate")
@@ -130,9 +134,11 @@ def add_training_args(parser: argparse.ArgumentParser, default: Optional[Trainin
 
     # Training
     parser.add_argument("--steps", type=int, default=default.steps, help="Training steps")
-    parser.add_argument("--eval-every-n-steps", type=int, default=default.eval_every, dest="eval_every", help="Evaluation interval")
+    parser.add_argument("--eval-every-n-steps", type=int, default=default.eval_every,
+                        dest="eval_every", help="Evaluation interval")
     parser.add_argument("--eval-num-steps", type=int, default=default.eval_num_steps, help="Number of eval batches")
-    parser.add_argument("--log-gpu-util", type=int, default=default.log_gpu_util, help="GPU logging interval (0 to disable)")
+    parser.add_argument("--log-gpu-util", type=int, default=default.log_gpu_util,
+                        help="GPU logging interval (0 to disable)")
 
     # Data
     parser.add_argument("--train-file", default=default.train_file, help="Training data file")
@@ -186,6 +192,7 @@ def add_training_args(parser: argparse.ArgumentParser, default: Optional[Trainin
 
 class CosineLRSchedule:
     """Cosine learning rate schedule with linear warmup."""
+
     def __init__(self, base_lr: float, max_steps: int, warmup_steps: int, final_lr: float):
         self.base_lr = base_lr
         self.max_steps = max_steps
@@ -252,13 +259,14 @@ def log_line_to_wandb(run: "wandb.Run", entry: dict):
         run.log({"allocations": fig}, step=step)
     elif kind == "dataset":
         pass
-        #run.config["dataset"] = entry
+        # run.config["dataset"] = entry
     elif kind == "option":
         pass
     elif kind == "checkpoint":
         pass
     else:
         raise RuntimeError(f"Unknown kind {kind}")
+
 
 def make_wandb_log_callback(run):
     def callback(entry: str):

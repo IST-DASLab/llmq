@@ -24,7 +24,6 @@ def compare_results(result: RunResult, expected: RunResult, *, file=None, atol=0
         print("norms have different lengths", file=file)
         passed = False
 
-
     print("\nlosses:", file=file)
     for i, (loss, ref_loss) in enumerate(zip(result.losses, expected.losses)):
         if loss == ref_loss:
@@ -153,7 +152,7 @@ def parse_args(args: list = None) -> TrainingConfig:
     parser = argparse.ArgumentParser(
         description="Test recomputation strategies produce identical results"
     )
-    from  pyllmq.training import add_training_args
+    from pyllmq.training import add_training_args
     default = TrainingConfig()
     default.steps = 10
     default.train_file = "data/tiny-shakespeare-qwen/train.bin"
