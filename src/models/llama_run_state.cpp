@@ -348,30 +348,30 @@ void LLamaRunState::init(LLamaConfig config, long B, long T) {
     }
 
     if(Options.matmul_dtype() != config.DType) {
-        AbsMaxes = alloc->allocate(ETensorDType::FP32, "abs_max", {config.NumLayers, 6l*QWEN2_NUM_LINEAR_OPS});
+        AbsMaxes = alloc->allocate(ETensorDType::FP32, "abs_max", {config.NumLayers, 8l*QWEN2_NUM_LINEAR_OPS});
         float* abs_max_ptr = AbsMaxes->get<float>();
         for(int i = 0; i < config.NumLayers; ++i) {
-            float* layer_abs_maxes = abs_max_ptr + 6 * QWEN2_NUM_LINEAR_OPS * i;
+            float* layer_abs_maxes = abs_max_ptr + 8 * QWEN2_NUM_LINEAR_OPS * i;
 
-            Acts[i].LN1.Quant->Scales = layer_abs_maxes + 0;
-            Acts[i].QKV.Scales = layer_abs_maxes + 2;
-            DActs.at(i).DQKV.Quant->Scales = layer_abs_maxes + 3;
-            DActs.at(i).DLN1.Scales = layer_abs_maxes + 4;
+            Acts[i].LN1.Quant->Stats = layer_abs_maxes + 0;
+            Acts[i].QKV.Stats = layer_abs_maxes + 2;
+            DActs.at(i).DQKV.Quant->Stats = layer_abs_maxes + 4;
+            DActs.at(i).DLN1.Stats = layer_abs_maxes + 6;
 
-            Acts[i].Att.Quant->Scales = layer_abs_maxes + 6;
-            Acts[i].AttO.Scales = layer_abs_maxes + 8;
-            DActs.at(i).DResAtt.Quant->Scales = layer_abs_maxes + 9;
-            DActs.at(i).DAttY.Scales = layer_abs_maxes + 10;
+            Acts[i].Att.Quant->Stats = layer_abs_maxes + 8;
+            Acts[i].AttO.Stats = layer_abs_maxes + 10;
+            DActs.at(i).DResAtt.Quant->Stats = layer_abs_maxes + 12;
+            DActs.at(i).DAttY.Stats = layer_abs_maxes + 14;
 
-            Acts[i].LN2.Quant->Scales = layer_abs_maxes + 12;
-            Acts[i].MlpUp.Scales = layer_abs_maxes + 14;
-            DActs.at(i).DMlpUp.Quant->Scales = layer_abs_maxes + 15;
-            DActs.at(i).DLN2.Scales = layer_abs_maxes + 16;
+            Acts[i].LN2.Quant->Stats = layer_abs_maxes + 16;
+            Acts[i].MlpUp.Stats = layer_abs_maxes + 18;
+            DActs.at(i).DMlpUp.Quant->Stats = layer_abs_maxes + 20;
+            DActs.at(i).DLN2.Stats = layer_abs_maxes + 22;
 
-            Acts[i].SwiGLu.Quant->Scales = layer_abs_maxes + 18;
-            Acts[i].MlpDown.Scales = layer_abs_maxes + 20;
-            DActs.at(i).DResFFN.Quant->Scales = layer_abs_maxes + 21;
-            DActs.at(i).DSwiGLU.Scales = layer_abs_maxes + 22;
+            Acts[i].SwiGLu.Quant->Stats = layer_abs_maxes + 24;
+            Acts[i].MlpDown.Stats = layer_abs_maxes + 26;
+            DActs.at(i).DResFFN.Quant->Stats = layer_abs_maxes + 28;
+            DActs.at(i).DSwiGLU.Stats = layer_abs_maxes + 30;
         }
     }
 

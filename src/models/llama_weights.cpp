@@ -187,30 +187,30 @@ LLamaWeightsManager::~LLamaWeightsManager() {
 
 void LLamaWeightsManager::setup_scales(TensorAllocator& alloc) {
     int layers = mMaster.Blocks.size();
-    mAbsMaxes = alloc.allocate(ETensorDType::FP32, "abs_maxes", EAllocationType::ON_DEVICE, {3 + layers * 7});
+    mAbsMaxes = alloc.allocate(ETensorDType::FP32, "abs_maxes", EAllocationType::ON_DEVICE, {6 + layers * 14});
     float* abs_maxes = mAbsMaxes.get<float>();
-    mMaster.NonBlocks.Embeddings.Scales = abs_maxes + 0;
-    mMaster.NonBlocks.LNF_w.Scales = abs_maxes + 1;
-    mMaster.NonBlocks.LMHead.Scales = abs_maxes + 2;
+    mMaster.NonBlocks.Embeddings.Stats = abs_maxes + 0;
+    mMaster.NonBlocks.LNF_w.Stats = abs_maxes + 2;
+    mMaster.NonBlocks.LMHead.Stats = abs_maxes + 4;
     for(int i = 0; i < layers; ++i) {
-        float* a = abs_maxes + 3 + i * 7;
-        mMaster.Blocks[i].Attn_QKV_w.Scales = a + 0;
-        mMaster.Blocks[i].Attn_Out_w.Scales = a + 1;
-        mMaster.Blocks[i].MLP_Up_w.Scales = a + 2;
-        mMaster.Blocks[i].MLP_Down_w.Scales = a + 3;
+        float* a = abs_maxes + 6 + i * 14;
+        mMaster.Blocks[i].Attn_QKV_w.Stats = a + 0;
+        mMaster.Blocks[i].Attn_Out_w.Stats = a + 2;
+        mMaster.Blocks[i].MLP_Up_w.Stats = a + 4;
+        mMaster.Blocks[i].MLP_Down_w.Stats = a + 6;
         if(mMaster.Blocks[i].Attn_QKV_b.has_value()) {
-            mMaster.Blocks[i].Attn_QKV_b.value().Scales = a + 4;
+            mMaster.Blocks[i].Attn_QKV_b.value().Stats = a + 8;
         }
-        mMaster.Blocks[i].LN1_w.Scales = a + 5;
-        mMaster.Blocks[i].LN2_w.Scales = a + 6;
+        mMaster.Blocks[i].LN1_w.Stats = a + 10;
+        mMaster.Blocks[i].LN2_w.Stats = a + 12;
     }
 }
 
 
 std::pair<float*, float*> LLamaWeightsManager::get_scales_for_block(int layer_idx) {
     float* abs_maxes = mAbsMaxes.get<float>();
-    float* begin = abs_maxes + 3 + layer_idx * 7;
-    return {begin + 0, begin + 7};
+    float* begin = abs_maxes + 6 + layer_idx * 14;
+    return {begin + 0, begin + 14};
 }
 
 
@@ -280,10 +280,10 @@ void LLamaWeightsManager::fetch_master_block(int layer_idx, cudaStream_t fetch_s
         // tensors on the same device are handled by pointer assignment
         if(dst.Device == src.Device) {
             dst.Data = src.Data;
-            dst.Scales = src.Scales;
+            dst.Stats = src.Stats;
         } else {
             CUDA_CHECK(cudaMemcpyAsync(dst.Data, src.Data, dst.bytes(), cudaMemcpyHostToDevice, fetch_stream));
-            dst.Scales = src.Scales;
+            dst.Stats = src.Stats;
             stat.Fetch = true;
         }
     };
@@ -416,8 +416,8 @@ void LLamaWeightsManager::convert_dtype_for_gather(TensorShard& src, TensorShard
         }
     }
 
-    quantize_with_abs_max(qnt, src, src.Scales, qnt.nelem(), run_state.DeviceProp, run_state.MainStream);
-    qnt.Scales = src.Scales;
+    quantize_with_abs_max(qnt, src, src.Stats, qnt.nelem(), run_state.DeviceProp, run_state.MainStream);
+    qnt.Stats = src.Stats;
     convert = true;
 }
 
@@ -452,15 +452,15 @@ void LLamaWeightsManager::gather_block(int layer_idx, NCCLCommunicator& comm, LL
     }
 
     // make sure the target scales are set up correctly
-    dst.LN1_w.Scales = qnt.Block.LN1_w.Scales;
-    dst.LN2_w.Scales = qnt.Block.LN2_w.Scales;
-    dst.Attn_QKV_w.Scales = qnt.Block.Attn_QKV_w.Scales;
+    dst.LN1_w.Stats = qnt.Block.LN1_w.Stats;
+    dst.LN2_w.Stats = qnt.Block.LN2_w.Stats;
+    dst.Attn_QKV_w.Stats = qnt.Block.Attn_QKV_w.Stats;
     if (src.Attn_QKV_b.has_value()) {
-        dst.Attn_QKV_b.value().Scales = qnt.Block.Attn_QKV_b.value().Scales;
+        dst.Attn_QKV_b.value().Stats = qnt.Block.Attn_QKV_b.value().Stats;
     }
-    dst.Attn_Out_w.Scales = qnt.Block.Attn_Out_w.Scales;
-    dst.MLP_Up_w.Scales = qnt.Block.MLP_Up_w.Scales;
-    dst.MLP_Down_w.Scales = qnt.Block.MLP_Down_w.Scales;
+    dst.Attn_Out_w.Stats = qnt.Block.Attn_Out_w.Stats;
+    dst.MLP_Up_w.Stats = qnt.Block.MLP_Up_w.Stats;
+    dst.MLP_Down_w.Stats = qnt.Block.MLP_Down_w.Stats;
 
     if (convert_any) {
         CUDA_CHECK(cudaEventRecord(gather_data.DoneEvent, run_state.MainStream));
@@ -798,23 +798,23 @@ void LLamaWeightsManager::synchronize_absmax(NCCLCommunicator& comm) {
 
     // in order to reach a consistent state, like after an optimizer step, we need to calculate the abs-maxes
     for (auto& layer : mMaster.Blocks) {
-        abs_max(layer.LN1_w.Scales, layer.LN1_w, layer.LN1_w.nelem(), dp, nullptr);
-        abs_max(layer.LN2_w.Scales, layer.LN2_w, layer.LN2_w.nelem(), dp, nullptr);
-        abs_max(layer.Attn_QKV_w.Scales, layer.Attn_QKV_w, layer.Attn_QKV_w.nelem(), dp, nullptr);
-        abs_max(layer.Attn_Out_w.Scales, layer.Attn_Out_w, layer.Attn_Out_w.nelem(), dp, nullptr);
-        abs_max(layer.MLP_Up_w.Scales, layer.MLP_Up_w, layer.MLP_Up_w.nelem(), dp, nullptr);
-        abs_max(layer.MLP_Down_w.Scales, layer.MLP_Down_w, layer.MLP_Down_w.nelem(), dp, nullptr);
+        abs_max(layer.LN1_w.Stats, layer.LN1_w, layer.LN1_w.nelem(), dp, nullptr);
+        abs_max(layer.LN2_w.Stats, layer.LN2_w, layer.LN2_w.nelem(), dp, nullptr);
+        abs_max(layer.Attn_QKV_w.Stats, layer.Attn_QKV_w, layer.Attn_QKV_w.nelem(), dp, nullptr);
+        abs_max(layer.Attn_Out_w.Stats, layer.Attn_Out_w, layer.Attn_Out_w.nelem(), dp, nullptr);
+        abs_max(layer.MLP_Up_w.Stats, layer.MLP_Up_w, layer.MLP_Up_w.nelem(), dp, nullptr);
+        abs_max(layer.MLP_Down_w.Stats, layer.MLP_Down_w, layer.MLP_Down_w.nelem(), dp, nullptr);
         if (layer.Attn_QKV_b.has_value()) {
-            abs_max(layer.Attn_QKV_b.value().Scales, layer.Attn_QKV_b.value(), layer.Attn_QKV_b.value().nelem(), dp, nullptr);
+            abs_max(layer.Attn_QKV_b.value().Stats, layer.Attn_QKV_b.value(), layer.Attn_QKV_b.value().nelem(), dp, nullptr);
         }
-        comm.reduce_max(layer.LN1_w.Scales);
-        comm.reduce_max(layer.LN2_w.Scales);
-        comm.reduce_max(layer.Attn_QKV_w.Scales);
-        comm.reduce_max(layer.Attn_Out_w.Scales);
-        comm.reduce_max(layer.MLP_Up_w.Scales);
-        comm.reduce_max(layer.MLP_Down_w.Scales);
+        comm.reduce_max(layer.LN1_w.Stats);
+        comm.reduce_max(layer.LN2_w.Stats);
+        comm.reduce_max(layer.Attn_QKV_w.Stats);
+        comm.reduce_max(layer.Attn_Out_w.Stats);
+        comm.reduce_max(layer.MLP_Up_w.Stats);
+        comm.reduce_max(layer.MLP_Down_w.Stats);
         if (layer.Attn_QKV_b.has_value()) {
-            comm.reduce_max(layer.Attn_QKV_b.value().Scales);
+            comm.reduce_max(layer.Attn_QKV_b.value().Stats);
         }
         comm.wait_on_comms(nullptr);
     }

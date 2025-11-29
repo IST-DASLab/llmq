@@ -22,7 +22,7 @@ struct Tensor {
     ETensorDType DType;
     std::array<long, MAX_TENSOR_DIM> Sizes;
     std::byte* Data = nullptr;
-    float* Scales = nullptr;
+    float* Stats = nullptr;
     int Rank = 0;
     int Device = -1;
 
@@ -81,6 +81,15 @@ struct Tensor {
         return Tensor{dtype, sizes, ptr, nullptr, rank, device};
     }
 
+    float* abs_max() {
+        return Stats;
+    }
+
+    float* scale() {
+        if(Stats == nullptr)
+            return nullptr;
+        return Stats + 1;
+    }
 };
 
 void fill_zero(Tensor& dst, cudaStream_t stream);
