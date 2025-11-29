@@ -129,6 +129,22 @@ TEST_CASE("rope forward/backward fp32 matches CPU", "[rope][fp32]") {
         REQUIRE(h_out[i] == Catch::Approx(h_out_cpu[i]).margin(1e-6f));
     }
 
+    // Forward again with absmax and ensure bit-perfect identical results, and absmax matches expected
+    thrust::device_vector<float> d_absmax_fwd(1);
+    thrust::device_vector<float> d_out2(size_inp);
+    rope_forward(thrust::raw_pointer_cast(d_out2.data()),
+                 thrust::raw_pointer_cast(d_inp.data()),
+                 thrust::raw_pointer_cast(d_freqs.data()),
+                 thrust::raw_pointer_cast(d_absmax_fwd.data()), B, T, Nq, Nkv, HD, 0);
+    std::vector<float> h_out2 = from_device(d_out2);
+    for (size_t i = 0; i < size_inp; ++i) {
+        REQUIRE(h_out2[i] == h_out[i]); // bit-perfect identical
+    }
+    float h_absmax_fwd = from_device(d_absmax_fwd)[0];
+    float expected_absmax_fwd = 0.0f;
+    for (size_t i = 0; i < size_inp; ++i) expected_absmax_fwd = std::max(expected_absmax_fwd, std::fabs(h_out_cpu[i]));
+    REQUIRE(h_absmax_fwd == Catch::Approx(expected_absmax_fwd).margin(1e-6f));
+
     // Backward: generate dout and compare dinp
     std::vector<float> h_dout = uniform_host(size_inp,  -0.5, 0.5, 424242ull);
     std::vector<float> h_dinp_cpu(size_inp);
@@ -147,6 +163,23 @@ TEST_CASE("rope forward/backward fp32 matches CPU", "[rope][fp32]") {
     for (size_t i = 0; i < size_inp; ++i) {
         REQUIRE(h_dinp[i] == Catch::Approx(h_dinp_cpu[i]).margin(1e-6f));
     }
+
+    // Backward again with absmax and ensure bit-perfect identical results, and absmax matches expected
+    thrust::device_vector<float> d_absmax_bwd(1);
+    thrust::device_vector<float> d_dinp2(size_inp);
+    rope_backward(thrust::raw_pointer_cast(d_dinp2.data()),
+                  thrust::raw_pointer_cast(d_dout.data()),
+                  thrust::raw_pointer_cast(d_freqs.data()),
+                  thrust::raw_pointer_cast(d_absmax_bwd.data()),
+                  B, T, Nq, Nkv, HD, 0);
+    std::vector<float> h_dinp2 = from_device(d_dinp2);
+    for (size_t i = 0; i < size_inp; ++i) {
+        REQUIRE(h_dinp2[i] == h_dinp[i]); // bit-perfect identical
+    }
+    float h_absmax_bwd = from_device(d_absmax_bwd)[0];
+    float expected_absmax_bwd = 0.0f;
+    for (size_t i = 0; i < size_inp; ++i) expected_absmax_bwd = std::max(expected_absmax_bwd, std::fabs(h_dinp_cpu[i]));
+    REQUIRE(h_absmax_bwd == Catch::Approx(expected_absmax_bwd).margin(1e-6f));
 }
 
 TEST_CASE("rope forward/backward bfloat16 matches CPU (emulated)", "[rope][bf16]") {
@@ -204,6 +237,25 @@ TEST_CASE("rope forward/backward bfloat16 matches CPU (emulated)", "[rope][bf16]
         REQUIRE(v == Catch::Approx(h_out_cpu[i]).margin(3e-2f));
     }
 
+    // Forward again with absmax, ensure bit-perfect identical bf16 outputs, check absmax
+    std::vector<nv_bfloat16> h_out_bf16_ref = h_out_bf16; // keep reference for bitwise compare
+    thrust::device_vector<float> d_absmax_fwd_bf16(1);
+    rope_forward(thrust::raw_pointer_cast(d_out.data()),
+                 thrust::raw_pointer_cast(d_inp.data()),
+                 thrust::raw_pointer_cast(d_freqs.data()),
+                 thrust::raw_pointer_cast(d_absmax_fwd_bf16.data()), B, T, Nq, Nkv, HD, 0);
+    h_out_bf16 = from_device(d_out);
+    for (size_t i = 0; i < size_inp; ++i) {
+        uint16_t a, b;
+        std::memcpy(&a, &h_out_bf16[i], sizeof(a));
+        std::memcpy(&b, &h_out_bf16_ref[i], sizeof(b));
+        REQUIRE(a == b); // bit-perfect identical
+    }
+    float h_absmax_fwd_bf16 = from_device(d_absmax_fwd_bf16)[0];
+    float expected_absmax_fwd_bf16 = 0.0f;
+    for (size_t i = 0; i < size_inp; ++i) expected_absmax_fwd_bf16 = std::max(expected_absmax_fwd_bf16, std::fabs(h_out_cpu[i]));
+    REQUIRE(h_absmax_fwd_bf16 == Catch::Approx(expected_absmax_fwd_bf16).margin(3e-2f));
+
     // Backward bf16
     std::vector<float> h_dout_f = uniform_host(size_inp, -0.5f, 0.5f, 424242ull);
     std::vector<nv_bfloat16> h_dout_bf16 = to_bf16(h_dout_f);
@@ -226,4 +278,23 @@ TEST_CASE("rope forward/backward bfloat16 matches CPU (emulated)", "[rope][bf16]
         float v = bf16_bits_to_float(bits);
         REQUIRE(v == Catch::Approx(h_dinp_cpu[i]).margin(3e-2f));
     }
+
+    // Backward again with absmax, bitwise identity and absmax check
+    std::vector<nv_bfloat16> h_dinp_bf16_ref = h_dinp_bf16;
+    thrust::device_vector<float> d_absmax_bwd_bf16(1);
+    rope_backward(thrust::raw_pointer_cast(d_dinp.data()),
+                  thrust::raw_pointer_cast(d_dout.data()),
+                  thrust::raw_pointer_cast(d_freqs.data()),
+                  thrust::raw_pointer_cast(d_absmax_bwd_bf16.data()), B, T, Nq, Nkv, HD, 0);
+    h_dinp_bf16 = from_device(d_dinp);
+    for (size_t i = 0; i < size_inp; ++i) {
+        uint16_t a, b;
+        std::memcpy(&a, &h_dinp_bf16[i], sizeof(a));
+        std::memcpy(&b, &h_dinp_bf16_ref[i], sizeof(b));
+        REQUIRE(a == b);
+    }
+    float h_absmax_bwd_bf16 = from_device(d_absmax_bwd_bf16)[0];
+    float expected_absmax_bwd_bf16 = 0.0f;
+    for (size_t i = 0; i < size_inp; ++i) expected_absmax_bwd_bf16 = std::max(expected_absmax_bwd_bf16, std::fabs(h_dinp_cpu[i]));
+    REQUIRE(h_absmax_bwd_bf16 == Catch::Approx(expected_absmax_bwd_bf16).margin(3e-2f));
 }
