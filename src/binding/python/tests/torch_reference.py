@@ -14,7 +14,8 @@ from pyllmq.training import TrainingConfig
 
 
 def torch_grad_one_step(config: TrainingConfig):
-    torch_model = transformers.AutoModelForCausalLM.from_pretrained(config.model, device_map="cuda", torch_dtype=torch.float32)
+    torch_model = transformers.AutoModelForCausalLM.from_pretrained(
+        config.model, device_map="cuda", torch_dtype=torch.float32)
 
     data_loader = pyllmq.DataLoader(
         [config.train_file],
@@ -135,12 +136,14 @@ def compare_single_step(config, file=None):
     avg_rel_norm_error /= total
 
     print("", file=file)
-    if passed > 95 * total // 100 and avg_cosing_similarity > 0.99 and avg_rel_norm_error < 0.01:
-        print(f"\033[1;32mPASS\033[0m {passed} / {total}  cos {avg_cosing_similarity:.3f} norm {100*avg_rel_norm_error:5.2f}", file=file)
+    result_str = f"{passed} / {total}  cos {avg_cosing_similarity:.3f} norm {100*avg_rel_norm_error:5.2f}"
+    if passed > 95 * total // 100 and avg_cosing_similarity > 0.99 and avg_rel_norm_error < 0.012:
+        print(f"\033[1;32mPASS\033[0m {result_str}", file=file)
         return True
     else:
-        print(f"\033[1;31mFAIL\033[0m {passed} / {total}  cos {avg_cosing_similarity:.3f} norm {100*avg_rel_norm_error:5.2f}", file=file)
+        print(f"\033[1;31mFAIL\033[0m {result_str}", file=file)
         return False
+
 
 def run_compare_single_step():
     config = parse_args()

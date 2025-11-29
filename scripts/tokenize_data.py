@@ -56,6 +56,7 @@ def load_or_create_dataset(name: str):
 
     raise ValueError(f"unknown dataset {name}")
 
+
 class TokenizedDataFileWriter:
     def __init__(self, file_name: str,  vocab_size: int, masking: bool = False):
         self.file_name = file_name

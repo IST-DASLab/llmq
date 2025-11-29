@@ -12,6 +12,7 @@ import collections
 import matplotlib.pyplot as plt
 import numpy as np
 
+
 def load_log(file_name: str):
     log_data = json.load(file_name)
     result = collections.defaultdict(list)
@@ -48,7 +49,6 @@ def main():
 
     plt.legend()
     plt.show()
-
 
 
 if __name__ == "__main__":
