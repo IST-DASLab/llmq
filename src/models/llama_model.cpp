@@ -33,9 +33,9 @@ void forward_qmm(Tensor& out, QuantizableTensor& inp, Tensor& weight, std::optio
         matmul(out, weight, inp.Value, bias, nullptr, handle, workspace, OC, B*T, C, EMMTranspose::TN, false, stream);
         return;
    }
-    float* act_scale = inp.Quant->Scales;
-    float* wgt_scale = weight.Scales;
-    float* out_scale = out.Scales;
+    float* act_scale = inp.Quant->Stats;
+    float* wgt_scale = weight.Stats;
+    float* out_scale = out.Stats;
 
     if (!reuse_inp_quant) {
         quantize_with_abs_max(inp.Quant.value(), inp.Value, act_scale, B*T*C, dp, stream);
@@ -76,7 +76,7 @@ void trace_or_execute_cuda_graph(Function&& function, cudaStream_t stream, cudaG
 
 /// If `tensor` has quants, return their scales; otherwise, return nullptr
 float* quant_abs_max_ptr(QuantizableTensor& tensor) {
-    return tensor.Quant.has_value() ? tensor.Quant->Scales : nullptr;
+    return tensor.Quant.has_value() ? tensor.Quant->abs_max() : nullptr;
 }
 
 void LLamaModel::forward(Tensor inputs, NCCLCommunicator& comm, int micro_step) {
@@ -194,7 +194,7 @@ void LLamaModel::_forward_block(sLLamaBlockWeights<Tensor>& weights, sLLamaLayer
     attention_forward_cudnn(acts.Att.Value, acts.LSE, acts.QKV, rs->CuBlasWorkspace, rs->CudnnHandle, B, T, Hq, Hkv, Hs, main_stream);
     // quantize attention if necessary
     if(acts.Att.Quant.has_value()) {
-        abs_max(acts.Att.Quant->Scales, acts.Att.Value, acts.Att.Value.nelem(), rs->DeviceProp, main_stream);
+        abs_max(acts.Att.Quant->abs_max(), acts.Att.Value, acts.Att.Value.nelem(), rs->DeviceProp, main_stream);
     }
 
     forward_qmm(acts.AttO, acts.Att, weights.Attn_Out_w, std::nullopt,
@@ -296,9 +296,9 @@ void backward_qmm(Tensor& dinp, Tensor& dweight, std::optional<Tensor> dbias,
             backward_bias(dbias.value(), dout.Value, nullptr, bias_buffer.value(), B, T, OC, rs.DeviceProp, stream);
         }
     } else {
-        float* act_scale = inp.Quant->Scales;
-        float* wgt_scale = weight.Scales;
-        float* dout_scale = dout.Quant->Scales;
+        float* act_scale = inp.Quant->Stats;
+        float* wgt_scale = weight.Stats;
+        float* dout_scale = dout.Quant->Stats;
         float* dinp_scale = rs.MatmulScales.get<float>();
         float* dwgt_scale = dinp_scale + 1;
 
@@ -577,7 +577,7 @@ void LLamaModel::_recompute_block(sLLamaBlockWeights<Tensor>& weights, sLLamaLay
 
     if(recompute_swiglu) {
         if (acts.SwiGLu.Quant.has_value()) {
-            swiglu_forward_quant(acts.SwiGLu.Quant.value(), acts.MlpUp, acts.SwiGLu.Quant->Scales, B, T, D, main_stream);
+            swiglu_forward_quant(acts.SwiGLu.Quant.value(), acts.MlpUp, acts.SwiGLu.Quant->abs_max(), B, T, D, main_stream);
         } else {
             swiglu_forward(acts.SwiGLu.Value, acts.MlpUp, nullptr, B, T, D, main_stream);
         }
@@ -735,17 +735,17 @@ void LLamaModel::update(NCCLCommunicator& comm, float learning_rate, float beta_
 
     auto run_update = [&](Tensor& val, Tensor& grad, Tensor& m, Tensor& v, Tensor& scales, float wd) {
         adamw_update(val, grad, m, v, grad.nelem(),
-                     learning_rate, beta_1, beta_2, t, epsilon, wd, grad_scale, scales, val.Scales, rng(), main_stream);
+                     learning_rate, beta_1, beta_2, t, epsilon, wd, grad_scale, scales, val.abs_max(), rng(), main_stream);
     };
 
     auto& m_scales = OptimizerState->scales_m();
 
     run_update(Parameters->get_master_embeddings(), Grads->get_embeddings_shard(main_stream),
                OptimizerState->non_block_m().Embeddings, OptimizerState->non_block_v().Embeddings, m_scales.NonBlocks.Embeddings, weight_decay);
-    comm.reduce_max(Parameters->get_master_embeddings().Scales);
+    comm.reduce_max(Parameters->get_master_embeddings().abs_max());
     run_update(Parameters->get_master_lnf_w(), Grads->get_lnf_w_shard(main_stream),
                OptimizerState->non_block_m().LNF_w, OptimizerState->non_block_v().LNF_w, m_scales.NonBlocks.LNF_w, 0.f);
-    comm.reduce_max(Parameters->get_master_lnf_w().Scales);
+    comm.reduce_max(Parameters->get_master_lnf_w().abs_max());
     CUDA_CHECK(cudaEventRecord(rs->OptEmbeddingsDone, main_stream));
 
     for(int i = 0; i < Config.NumLayers; i++) {
@@ -788,7 +788,7 @@ void LLamaModel::update(NCCLCommunicator& comm, float learning_rate, float beta_
     if(!Config.TiedWordEmbeddings) {
         run_update(Parameters->get_master_lmhead(), Grads->get_lmhead_shard(main_stream),
                    OptimizerState->non_block_m().LMHead, OptimizerState->non_block_v().LMHead, m_scales.NonBlocks.LMHead, weight_decay);
-        comm.reduce_max(Parameters->get_master_lmhead().Scales);
+        comm.reduce_max(Parameters->get_master_lmhead().abs_max());
     }
     comm.wait_on_comms(main_stream);
     CUDA_CHECK(cudaEventRecord(rs->OptimizerDone, main_stream));

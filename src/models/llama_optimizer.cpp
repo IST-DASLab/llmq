@@ -23,10 +23,10 @@ void LLamaOptimizerStateManager::fetch_block(int layer_idx, cudaStream_t fetch_s
         // tensors on the same device are handled by pointer assignment
         if(dst.Device == src.Device) {
             dst.Data = src.Data;
-            dst.Scales = src.Scales;
+            dst.Stats = src.Stats;
         } else {
             CUDA_CHECK(cudaMemcpyAsync(dst.Data, src.Data, dst.bytes(), cudaMemcpyHostToDevice, fetch_stream));
-            dst.Scales = src.Scales;
+            dst.Stats = src.Stats;
             stat.Fetch = true;
         }
     };
