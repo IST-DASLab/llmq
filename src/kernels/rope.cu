@@ -67,11 +67,14 @@ __global__ void rope_kernel(floatX *out, const floatX *inp, const floatX *freqs_
         if(abs_max_ptr) {
             x128 val = x128::load_cs(inp + 2 * idx);
             for(int k = 0; k < x128::size; k++) {
-                thread_max = std::max(thread_max, fabsf(val[k]));
+                thread_max = fmaxf(thread_max, fabsf(val[k]));
             }
             if (out != inp) {
                 val.store(out + 2 * idx);
             }
+            // this thread is not participating in the block-level reduction, so we need to update
+            // globally before exiting
+            atomicMax(reinterpret_cast<unsigned int*>(abs_max_ptr), __float_as_uint(thread_max));
             return;
         } else {
             // if not in place, need to copy the value heads
@@ -105,8 +108,8 @@ __global__ void rope_kernel(floatX *out, const floatX *inp, const floatX *freqs_
         o_real[k] = real * cos - imag * sin;
         o_imag[k] = real * sin + imag * cos;
         if (abs_max_ptr) {
-            thread_max = std::max(thread_max, fabsf(o_real[k]));
-            thread_max = std::max(thread_max, fabsf(o_imag[k]));
+            thread_max = fmaxf(thread_max, fabsf(o_real[k]));
+            thread_max = fmaxf(thread_max, fabsf(o_imag[k]));
         }
     }
     o_real.store(out + idxi);
