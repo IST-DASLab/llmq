@@ -73,10 +73,7 @@ __global__ void rope_kernel(floatX *out, const floatX *inp, const floatX *freqs_
             if (out != inp) {
                 val.store(out + 2 * idx);
             }
-            // this thread is not participating in the block-level reduction, so we need to update
-            // globally before exiting
-            atomicMax(reinterpret_cast<unsigned int*>(abs_max_ptr), __float_as_uint(thread_abs_max));
-            return;
+            // can't return yet, need to participate in abs max computation
         } else {
             // if not in place, need to copy the value heads
             if (out != inp) {
@@ -84,37 +81,38 @@ __global__ void rope_kernel(floatX *out, const floatX *inp, const floatX *freqs_
             }
             return;
         }
-    }
-    // decode the individual indices and get the input index
-    int b = idx / (T * N * head_dim_half);
-    int t = (idx / (N * head_dim_half)) % T;
-    int d = idx % head_dim_half;
-    int idx_bt = b * (T * N * head_dim) + t * (N * head_dim);
-    int idx_bth = idx_bt + qkv * (Nq * head_dim) + h * head_dim;
-    int idxi = idx_bth + d; // index in the input
+    } else {
+        // decode the individual indices and get the input index
+        int b = idx / (T * N * head_dim_half);
+        int t = (idx / (N * head_dim_half)) % T;
+        int d = idx % head_dim_half;
+        int idx_bt = b * (T * N * head_dim) + t * (N * head_dim);
+        int idx_bth = idx_bt + qkv * (Nq * head_dim) + h * head_dim;
+        int idxi = idx_bth + d; // index in the input
 
-    x128 freqs_vec = x128::load_ldg(freqs_cis + t * head_dim + 2 * d);
-    x64 v_real = x64::load(inp + idxi);
-    x64 v_imag = x64::load(inp + idxi + head_dim_half);
-    x64 o_real;
-    x64 o_imag;
-    for(int k = 0; k < x64::size; k++) {
-        float cos = (float)freqs_vec[2*k];
-        float sin = (float)freqs_vec[2*k+1];
-        if constexpr (Backward) {
-            sin = -sin;
+        x128 freqs_vec = x128::load_ldg(freqs_cis + t * head_dim + 2 * d);
+        x64 v_real = x64::load(inp + idxi);
+        x64 v_imag = x64::load(inp + idxi + head_dim_half);
+        x64 o_real;
+        x64 o_imag;
+        for(int k = 0; k < x64::size; k++) {
+            float cos = (float)freqs_vec[2*k];
+            float sin = (float)freqs_vec[2*k+1];
+            if constexpr (Backward) {
+                sin = -sin;
+            }
+            float real = (float)v_real[k];
+            float imag = (float)v_imag[k];
+            o_real[k] = real * cos - imag * sin;
+            o_imag[k] = real * sin + imag * cos;
+            if (abs_max_ptr) {
+                thread_abs_max = fmaxf(thread_abs_max, fabsf(o_real[k]));
+                thread_abs_max = fmaxf(thread_abs_max, fabsf(o_imag[k]));
+            }
         }
-        float real = (float)v_real[k];
-        float imag = (float)v_imag[k];
-        o_real[k] = real * cos - imag * sin;
-        o_imag[k] = real * sin + imag * cos;
-        if (abs_max_ptr) {
-            thread_abs_max = fmaxf(thread_abs_max, fabsf(o_real[k]));
-            thread_abs_max = fmaxf(thread_abs_max, fabsf(o_imag[k]));
-        }
+        o_real.store(out + idxi);
+        o_imag.store(out + idxi + head_dim_half);
     }
-    o_real.store(out + idxi);
-    o_imag.store(out + idxi + head_dim_half);
 
     handle_absmax_reduction(abs_max_ptr, &block_abs_max, thread_abs_max);
 }
