@@ -3,35 +3,28 @@
 //
 
 #include "transpose_template.cuh"
+#include "kernel_utils.cuh"
 #include "utilities/tensor.h"
 #include "utilities/vec.cuh"
-
-extern thread_local float* device_zero;
-extern thread_local float* device_one;
 
 template<class floatX>
 __global__ void reduce_abs_max_kernel(float* __restrict__ result, const floatX* __restrict__ in, long N) {
     using vec_t = GenericVector<floatX, 16 / sizeof(floatX)>;
 
-    __shared__ float local_max;
+    __shared__ float block_abs_max;
     if(threadIdx.x == 0) {
-        local_max = 1e-10f;
+        block_abs_max = 1e-10f;
     }
     __syncthreads();
-    float thread_max = 0.f;
+    float thread_abs_max = 0.f;
     for (int i = vec_t::size * (blockIdx.x * blockDim.x + threadIdx.x); i < N; i += blockDim.x * gridDim.x * vec_t::size) {
         vec_t values = vec_t::load(in + i);
         for(int j = 0; j < vec_t::size; ++j) {
-            thread_max = fmaxf(thread_max, fabsf((float)values[j]));
+            thread_abs_max = fmaxf(thread_abs_max, fabsf((float)values[j]));
         }
     }
-    atomicMax_block(reinterpret_cast<unsigned int*>(&local_max), *reinterpret_cast<unsigned int*>(&thread_max));
-    __syncthreads();
-    if(threadIdx.x == 0) {
-        thread_max = local_max;
-        atomicMax(reinterpret_cast<unsigned int*>(result), *reinterpret_cast<unsigned int*>(&thread_max));
-    }
-    __syncthreads();
+
+    handle_absmax_reduction(result, &block_abs_max, thread_abs_max);
 }
 
 template<class floatX>

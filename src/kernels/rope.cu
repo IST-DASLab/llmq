@@ -7,6 +7,7 @@
 
 #include <cassert>
 
+#include "kernel_utils.cuh"
 #include "utilities/utils.h"
 #include "utilities/vec.cuh"
 
@@ -41,13 +42,13 @@ __global__ void rope_kernel(floatX *out, const floatX *inp, const floatX *freqs_
                             int B, int T, int Nq, int Nkv, int head_dim, std::bool_constant<Backward> bw = {}) {
     using x64 = GenericVector<floatX, 8/sizeof(floatX)>;
     using x128 = GenericVector<floatX, 16/sizeof(floatX)>;
-    __shared__ float block_max;
+    __shared__ float block_abs_max;
     if (abs_max_ptr) {
         if(threadIdx.x == 0)
-            block_max = 1e-10f;
+            block_abs_max = 1e-10f;
         __syncthreads();
     }
-    float thread_max = 1e-10f;
+    float thread_abs_max = 1e-10f;
 
     int idx = (blockIdx.x * blockDim.x + threadIdx.x) * x64::size;
     int head_dim_half = head_dim / 2;
@@ -67,14 +68,14 @@ __global__ void rope_kernel(floatX *out, const floatX *inp, const floatX *freqs_
         if(abs_max_ptr) {
             x128 val = x128::load_cs(inp + 2 * idx);
             for(int k = 0; k < x128::size; k++) {
-                thread_max = fmaxf(thread_max, fabsf(val[k]));
+                thread_abs_max = fmaxf(thread_abs_max, fabsf(val[k]));
             }
             if (out != inp) {
                 val.store(out + 2 * idx);
             }
             // this thread is not participating in the block-level reduction, so we need to update
             // globally before exiting
-            atomicMax(reinterpret_cast<unsigned int*>(abs_max_ptr), __float_as_uint(thread_max));
+            atomicMax(reinterpret_cast<unsigned int*>(abs_max_ptr), __float_as_uint(thread_abs_max));
             return;
         } else {
             // if not in place, need to copy the value heads
@@ -108,20 +109,14 @@ __global__ void rope_kernel(floatX *out, const floatX *inp, const floatX *freqs_
         o_real[k] = real * cos - imag * sin;
         o_imag[k] = real * sin + imag * cos;
         if (abs_max_ptr) {
-            thread_max = fmaxf(thread_max, fabsf(o_real[k]));
-            thread_max = fmaxf(thread_max, fabsf(o_imag[k]));
+            thread_abs_max = fmaxf(thread_abs_max, fabsf(o_real[k]));
+            thread_abs_max = fmaxf(thread_abs_max, fabsf(o_imag[k]));
         }
     }
     o_real.store(out + idxi);
     o_imag.store(out + idxi + head_dim_half);
 
-    if (abs_max_ptr) {
-        atomicMax_block(reinterpret_cast<unsigned int*>(&block_max), __float_as_uint(thread_max));
-        __syncthreads();
-        if(threadIdx.x == 0) {
-            atomicMax(reinterpret_cast<unsigned int*>(abs_max_ptr), __float_as_uint(block_max));
-        }
-    }
+    handle_absmax_reduction(abs_max_ptr, &block_abs_max, thread_abs_max);
 }
 
 template<bool Backward, class floatX>
