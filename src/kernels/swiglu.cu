@@ -6,6 +6,7 @@
 #include <cassert>
 
 #include <cuda_bf16.h>
+#include <cuda_pipeline_primitives.h>
 
 #include "kernels.h"
 #include "utilities/utils.h"
@@ -13,6 +14,20 @@
 
 // ----------------------------------------------------------------------------
 // CUDA kernels
+
+static __forceinline__ __device__ void handle_absmax_reduction(float* __restrict__ abs_max_ptr, float* __restrict__ block_max, float thread_max) {
+    if (abs_max_ptr) {
+        auto mask = __activemask();
+        auto warp_max = __reduce_max_sync(mask, __float_as_uint(thread_max));
+        if(threadIdx.x % 32 == 0) {
+            atomicMax_block(reinterpret_cast<unsigned*>(block_max), warp_max);
+        }
+        __syncthreads();
+        if(threadIdx.x == 0) {
+            atomicMax(reinterpret_cast<unsigned int*>(abs_max_ptr), __float_as_uint(*block_max));
+        }
+    }
+}
 
 template<typename floatX>
 __global__ void swiglu_forward_kernel(floatX* out, const floatX* inp, float* abs_max_ptr, int B, int T, int C) {
@@ -47,19 +62,80 @@ __global__ void swiglu_forward_kernel(floatX* out, const floatX* inp, float* abs
         float x2 = (float)gate_inp[k];
         packed_out[k] = (floatX)((x1 * x2) / (1.0f + expf(-x2)));
         if (abs_max_ptr) {
-            thread_max = std::max(thread_max, fabsf(packed_out[k]));
+            thread_max = fmaxf(thread_max, fabsf(packed_out[k]));
         }
     }
     packed_out.store(out_ptr);
 
-    // if we requested an absmax, do the block-wise and global reduction
+    handle_absmax_reduction(abs_max_ptr, &block_max, thread_max);
+}
+
+//! persistent kernel for swiglu. If the input tensor is large enough, the persistent kernel gives maybe 5-10% speed-up
+//! over the simple baseline.
+template<typename floatX>
+__global__ __launch_bounds__(128) void swiglu_forward_persistent_kernel(floatX* out, const floatX* inp, float* abs_max_ptr, int B, int T, int C) {
+    using x128 = GenericVector<floatX, 16/sizeof(floatX)>;
+
+    long start = (blockIdx.x * blockDim.x + threadIdx.x) * x128::size;
+    long stride = gridDim.x * blockDim.x * x128::size;
+
+    __shared__ float block_max;
+    __shared__ alignas(16) floatX up_buffer[2 * 128 * (16/sizeof(floatX))];
+    __shared__ alignas(16) floatX gate_buffer[2 * 128 * (16/sizeof(floatX))];
+    // only handle abs-max if requested; these are guaranteed to be warp-convergent branches,
+    // so they don't cost us in this memory-bound kernel.
     if (abs_max_ptr) {
-        atomicMax_block(reinterpret_cast<unsigned int*>(&block_max), __float_as_uint(thread_max));
-        __syncthreads();
         if(threadIdx.x == 0) {
-            atomicMax(reinterpret_cast<unsigned int*>(abs_max_ptr), __float_as_uint(block_max));
+            block_max = 1e-10f;
         }
+        __syncthreads();
     }
+    float thread_max = 0.f;
+    // Per-thread slice within shared buffers
+    const int lane_base = threadIdx.x * x128::size;
+    if(start < B*T*C) {
+        int bt = start / C;
+        int c = start % C;
+        __pipeline_memcpy_async(up_buffer + lane_base, inp + (bt * C * 2 + c), 16);
+        __pipeline_memcpy_async(gate_buffer + lane_base,  inp + (bt * C * 2 + c + C), 16);
+    }
+    __pipeline_commit();
+    if(start + stride < B*T*C) {
+        int bt = (start + stride) / C;
+        int c = (start + stride) % C;
+        __pipeline_memcpy_async(up_buffer + lane_base + 128 * x128::size, inp + (bt * C * 2 + c), 16);
+        __pipeline_memcpy_async(gate_buffer + lane_base + 128 * x128::size,  inp + (bt * C * 2 + c + C), 16);
+    }
+    __pipeline_commit();
+
+    int phase = 0;
+    for(long idx = start; idx < B*T*C; idx += stride) {
+        __pipeline_wait_prior(1);
+        x128 up_inp = x128::load(up_buffer + lane_base + 128 * x128::size * phase);
+        x128 gate_inp = x128::load(gate_buffer + lane_base + 128 * x128::size * phase);
+        if(idx + 2*stride < B*T*C) {
+            int bt = (idx + 2*stride) / C;
+            int c = (idx + 2*stride) % C;
+            __pipeline_memcpy_async(up_buffer + lane_base + 128 * x128::size * phase, inp + (bt * C * 2 + c), 16);
+            __pipeline_memcpy_async(gate_buffer + lane_base + 128 * x128::size * phase,  inp + (bt * C * 2 + c + C), 16);
+        }
+        __pipeline_commit();
+
+        floatX* out_ptr = out + idx;
+        x128 packed_out;
+        for(int k = 0; k < up_inp.size; ++k) {
+            float x1 = (float)up_inp[k];
+            float x2 = (float)gate_inp[k];
+            packed_out[k] = (floatX)((x1 * x2) / (1.0f + expf(-x2)));
+            if (abs_max_ptr) {
+                thread_max = fmaxf(thread_max, fabsf((float)packed_out[k]));
+            }
+        }
+        packed_out.store(out_ptr);
+        phase = (phase + 1) % 2;
+    }
+
+    handle_absmax_reduction(abs_max_ptr, &block_max, thread_max);
 }
 
 template<typename floatX>
@@ -152,14 +228,7 @@ __global__ void swiglu_backward_kernel1(floatX* dinp, const floatX* dout, const 
     dinp1.store(dinp1_ptr);
     dinp2.store(dinp2_ptr);
 
-    // if we requested an absmax, do the block-wise and global reduction
-    if (abs_max_ptr) {
-        atomicMax_block(reinterpret_cast<unsigned int*>(&block_max), __float_as_uint(thread_max));
-        __syncthreads();
-        if(threadIdx.x == 0) {
-            atomicMax(reinterpret_cast<unsigned int*>(abs_max_ptr), __float_as_uint(block_max));
-        }
-    }
+    handle_absmax_reduction(abs_max_ptr, &block_max, thread_max);
 }
 
 // ----------------------------------------------------------------------------
@@ -176,8 +245,18 @@ void swiglu_forward_impl(floatX* out, const floatX* inp, float* abs_max_ptr, int
     const int block_size = 128;
     assert(C % x128::size == 0);
     assert((B*T*C) % (block_size * x128::size) == 0);
-    const int grid_size = div_ceil(B*T*C, (int)(block_size * x128::size));
-    swiglu_forward_kernel<<<grid_size, block_size, 0, stream>>>(out, inp, abs_max_ptr, B, T, C);
+    int bpsm;
+    CUDA_CHECK(cudaOccupancyMaxActiveBlocksPerMultiprocessor(&bpsm, swiglu_forward_persistent_kernel<floatX>, block_size, 0));
+    int sms;
+    CUDA_CHECK(cudaDeviceGetAttribute(&sms, cudaDevAttrMultiProcessorCount, 0));
+
+    // only use persistent kernel if we get enough blocks
+    const int num_blocks = div_ceil(B*T*C, (int)(block_size * x128::size));
+    if (num_blocks < bpsm * sms) {
+        swiglu_forward_kernel<<<num_blocks, block_size, 0, stream>>>(out, inp, abs_max_ptr, B, T, C);
+    } else {
+        swiglu_forward_persistent_kernel<<<bpsm * sms, block_size, 0, stream>>>(out, inp, abs_max_ptr, B, T, C);
+    }
     CUDA_CHECK(cudaGetLastError());
 }
 
