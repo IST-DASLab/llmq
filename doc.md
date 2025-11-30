@@ -197,29 +197,27 @@ void forward_qmm(Tensor& out, QuantizableTensor& inp, Tensor& weight, std::optio
                  const cudaDeviceProp& dp, bool reuse_inp_quant,
                  cudaStream_t stream) {
     if (weight.DType == inp.Value.DType) {
-        matmul(out, weight, inp.Value, bias, nullptr, handle, workspace, OC, B*T, C, EMMTranspose::TN, false, stream);
+        matmul(out, weight, inp.Value, bias, nullptr, nullptr, handle, workspace, OC, B*T, C, EMMTranspose::TN, false, stream);
+        return;
+   }
+
+    if (!reuse_inp_quant) {
+        quantize_with_abs_max(inp.Quant.value(), inp.Quant->scale(), inp.Value, inp.Quant->abs_max(), B*T*C, dp, stream);
+    }
+
+    if (weight.DType == ETensorDType::BF16) {
+        matmul(out, weight, inp.Quant.value(), bias, nullptr, nullptr, handle, workspace, OC, B*T, C, EMMTranspose::TN, false, stream);
     } else {
-        float* act_scale = inp.Quant->Scales;
-        float* wgt_scale = weight.Scales;
-        float* out_scale = out.Scales;
-
-        if (!reuse_inp_quant) {
-            quantize_with_abs_max(inp.Quant.value(), inp.Value, act_scale, B*T*C, dp, stream);
-        }
-
-        float scale = weight.DType == ETensorDType::FP8_E4M3 ? 448.f : std::numeric_limits<std::int8_t>::max();
-        matmul_out_scale(out_scale, act_scale, wgt_scale, 1.f / scale / scale, stream);
-        matmul(out, weight, inp.Quant.value(), bias, out_scale, handle, workspace, OC, B*T, C, EMMTranspose::TN, false, stream);
+        matmul(out, weight, inp.Quant.value(), bias, weight.scale(), inp.Quant->scale(), handle, workspace, OC, B*T, C, EMMTranspose::TN, false, stream);
     }
 }
 ```
-There is the trivial code-path, when the matmul is not quantized (in the sense of not having any scale factors), identified by weights having the same dtype as unquantized inputs.
+There is the trivial code-path, when the matmul is not quantized, identified by weights having the same dtype as unquantized inputs.
 If the weights are quantized, we need to ensure the input dtype matches. In the ideal case,
 a quantized version of the input is already available (`reuse_inp_quant`), otherwise, we need to quantize the input.
 We assume, however, that at least the abs-max has already been computed (usually, we fuse this into the previous op anyway).
-
-After both operands to the matmul are quantized, there is a slightly peculiar operation: `matmul_out_scale` launches a cuda kernel with exactly one thread. This kernel computes the scale factor for the output of the subsequent matmul. To avoid a CPU-GPU sync, this single calculation is done inside a cuda kernel.
-Finally, the actual matmul is launched.
+In addition to converting the input, `quantize_with_abs_max` also sets up the correct scale to be used for the matmul.
+Then we can launch the matmul, supplying the scale factors in case of fp8 quantization.
 
 ### Implementation of weight management
 Finally, let's break open the gather/get/release black-boxes and see how these functions are implemented.

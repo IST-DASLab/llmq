@@ -3,26 +3,15 @@
 //
 // Based on llm.c https://github.com/karpathy/llm.c
 
-#include <cstdio>
-#include <optional>
-
 #include <cublasLt.h>
 #include <cublas_v2.h>
 #include <fmt/core.h>
 
 #include "kernels.h"
-#include "utilities/tensor.h"
 #include "utilities/utils.h"
 #include "utilities/vec.cuh"
 
 cublasComputeType_t cublas_compute = CUBLAS_COMPUTE_32F;
-
-thread_local float* device_zero;
-thread_local float* device_one;
-
-float* get_device_one() {
-    return device_one;
-}
 
 // ----------------------------------------------------------------------------
 // Error checking
@@ -45,19 +34,6 @@ cublasLtHandle_t create_cublaslt_handle() {
     return handle;
 }
 
-void setup_cublas() {
-    // set up cuBLAS and cuBLASLt
-    CUDA_CHECK(cudaMalloc(&device_zero, sizeof(float)));
-    CUDA_CHECK(cudaMalloc(&device_one, sizeof(float)));
-    const float zero = 0.f;
-    CUDA_CHECK(cudaMemcpy(device_zero, &zero, sizeof(float), cudaMemcpyHostToDevice));
-    const float one = 1.f;
-    CUDA_CHECK(cudaMemcpy(device_one, &one, sizeof(float), cudaMemcpyHostToDevice));
-    // TF32 precision is equivalent to torch.set_float32_matmul_precision('high')
-    bool enable_tf32 = false;//PRECISION_MODE == PRECISION_FP32 && deviceProp.major >= 8 && override_enable_tf32;
-    cublas_compute = enable_tf32 ? CUBLAS_COMPUTE_32F_FAST_TF32 : CUBLAS_COMPUTE_32F;
-}
-
 // ----------------------------------------------------------------------------
 // kernel launchers
 
@@ -78,11 +54,7 @@ void matmul_cublaslt(FloatC* d, const FloatA* a, const FloatB* b, const FloatBia
 
     // create the operation descriptor
     cublasLtMatmulDesc_t operationDesc;
-    if(std::is_same_v<FloatA, std::int8_t>) {
-        CUBLAS_CHECK(cublasLtMatmulDescCreate(&operationDesc, CUBLAS_COMPUTE_32F, CUDA_R_32F));
-    } else {
-        CUBLAS_CHECK(cublasLtMatmulDescCreate(&operationDesc, cublas_compute, CUDA_R_32F));
-    }
+    CUBLAS_CHECK(cublasLtMatmulDescCreate(&operationDesc, CUBLAS_COMPUTE_32F, CUDA_R_32F));
 
     int returnedResults = 0;
     cublasLtMatmulPreference_t preference;
