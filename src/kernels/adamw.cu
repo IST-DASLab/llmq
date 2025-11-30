@@ -7,6 +7,7 @@
 #include <algorithm>
 
 #include "squirrel_noise.cuh"
+#include "kernel_utils.cuh"
 #include "utilities/utils.h"
 #include "utilities/vec.cuh"
 
@@ -116,15 +117,15 @@ __device__ auto adamw_update(floatX* params_memory, const floatX* grads_memory, 
 template <typename floatX, typename floatM, typename floatV>
 __global__ void adamw_kernel(floatX* params_memory, const floatX* grads_memory, floatM* m_memory, floatV* v_memory, size_t num_parameters,
                              float learning_rate, float beta1, float beta2, float beta1_correction, float beta2_correction, float eps, float weight_decay,
-                             const float* grad_scale, float* m_scales, float* abs_max, unsigned int seed) {
+                             const float* grad_scale, float* m_scales, float* abs_max_ptr, unsigned int seed) {
     constexpr int VecElems = std::min({16 / sizeof(floatX), 16 / sizeof(floatM), 16 / sizeof(floatV)});
     using vec_x_t = GenericVector<floatX, VecElems>;
-    __shared__ float local_max;
+    __shared__ float block_abs_max;
     if(threadIdx.x == 0) {
-        local_max = 1e-10f;
+        block_abs_max = 1e-10f;
     }
 
-    float abs_max_local = 0.0f;
+    float thread_abs_max = 0.0f;
     vec_x_t p_new = adamw_update(params_memory,
                  grads_memory,
                  m_memory,
@@ -134,15 +135,10 @@ __global__ void adamw_kernel(floatX* params_memory, const floatX* grads_memory, 
                  seed,
                  VecElems * (blockIdx.x * blockDim.x + threadIdx.x));
     for (int i = 0; i < VecElems; i++) {
-        abs_max_local = std::max(abs_max_local, (float)p_new[i]);
+        thread_abs_max = std::max(thread_abs_max, (float)p_new[i]);
     }
 
-    __syncthreads();
-    atomicMax_block(reinterpret_cast<unsigned int*>(&local_max), *reinterpret_cast<unsigned int*>(&abs_max_local));
-    __syncthreads();
-    if(threadIdx.x == 0) {
-        atomicMax(reinterpret_cast<unsigned int*>(abs_max), *reinterpret_cast<unsigned int*>(&local_max));
-    }
+    handle_absmax_reduction(abs_max_ptr, &block_abs_max, thread_abs_max);
 }
 
 template <typename floatX, typename floatM, typename floatV>

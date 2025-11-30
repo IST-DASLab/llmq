@@ -11,23 +11,10 @@
 #include "kernels.h"
 #include "utilities/utils.h"
 #include "utilities/vec.cuh"
+#include "kernel_utils.cuh"
 
 // ----------------------------------------------------------------------------
 // CUDA kernels
-
-static __forceinline__ __device__ void handle_absmax_reduction(float* __restrict__ abs_max_ptr, float* __restrict__ block_max, float thread_max) {
-    if (abs_max_ptr) {
-        auto mask = __activemask();
-        auto warp_max = __reduce_max_sync(mask, __float_as_uint(thread_max));
-        if(threadIdx.x % 32 == 0) {
-            atomicMax_block(reinterpret_cast<unsigned*>(block_max), warp_max);
-        }
-        __syncthreads();
-        if(threadIdx.x == 0) {
-            atomicMax(reinterpret_cast<unsigned int*>(abs_max_ptr), __float_as_uint(*block_max));
-        }
-    }
-}
 
 template<typename floatX>
 __global__ void swiglu_forward_kernel(floatX* out, const floatX* inp, float* abs_max_ptr, int B, int T, int C) {
@@ -110,6 +97,7 @@ __global__ __launch_bounds__(128) void swiglu_forward_persistent_kernel(floatX* 
 
     int phase = 0;
     for(long idx = start; idx < B*T*C; idx += stride) {
+        // note: each thread reads only what it writes itself, so there is no need for further synchronization here
         __pipeline_wait_prior(1);
         x128 up_inp = x128::load(up_buffer + lane_base + 128 * x128::size * phase);
         x128 gate_inp = x128::load(gate_buffer + lane_base + 128 * x128::size * phase);
