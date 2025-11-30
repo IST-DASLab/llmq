@@ -17,6 +17,7 @@
 #include <catch2/catch_approx.hpp>
 
 #include "kernels/kernels.h"
+#include "utilities/utils.h"
 #include "test_config.h"
 #include "test_utils.h"
 
@@ -237,4 +238,78 @@ TEST_CASE("swiglu forward/backward bfloat16 matches CPU (emulated)", "[swiglu][b
     }
     thrust::copy(d_absmax.begin(), d_absmax.end(), &h_absmax);
     REQUIRE(h_absmax == Catch::Approx(cpu_absmax_bwd).margin(5e-3f));
+}
+
+TEST_CASE("swiglu_forward_quant is bit-perfect to swiglu_forward + quant_with_absmax", "[swiglu][quant][fp8]") {
+    // This test verifies that directly computing SwiGLU in bf16 and writing fp8 (swiglu_forward_quant)
+    // is bit-identical to: bf16 swiglu_forward -> take absmax -> quantize_with_abs_max to fp8.
+    const auto& cfg = testing_config::get_test_config();
+    const int B = cfg.B;
+    const int T = cfg.T;
+    const int C = cfg.C;
+
+    // Kernel constraints: bf16 path requires C % 8 == 0 and (B*T*C) % 1024 == 0 (we choose stronger 2048 to match other test)
+    long long prod = 1LL * B * T * C;
+    bool ok = (C % 8 == 0) && (prod % 2048 == 0);
+    if (!ok) {
+        INFO("Invalid sizes for bf16/fp8 quant test: require C % 8 == 0 and (B*T*C) % 2048 == 0");
+        INFO("Provided: B=" << B << ", T=" << T << ", C=" << C << ", B*T*C=" << prod);
+        FAIL("Aborting swiglu quant test due to invalid size configuration");
+    }
+
+    const int C2 = 2 * C;
+    const size_t n_inp = static_cast<size_t>(B) * T * C2;
+    const size_t n_out = static_cast<size_t>(B) * T * C;
+
+    // Prepare deterministic inputs in bf16
+    std::vector<float> h_inp_f = uniform_host(n_inp, -1.f, 1.f, 1337ull);
+    std::vector<nv_bfloat16> h_inp_bf16 = to_bf16(h_inp_f);
+
+    thrust::device_vector<nv_bfloat16> d_inp = to_device(h_inp_bf16);
+    thrust::device_vector<nv_bfloat16> d_out_bf16(n_out);
+    thrust::device_vector<float> d_absmax(1);
+
+    // Path A: swiglu_forward (bf16) with absmax, then quantize_with_abs_max to fp8
+    swiglu_forward(thrust::raw_pointer_cast(d_out_bf16.data()),
+                   thrust::raw_pointer_cast(d_inp.data()),
+                   thrust::raw_pointer_cast(d_absmax.data()), B, T, C, 0);
+
+    // Device properties for quantize_with_abs_max launcher
+    cudaDeviceProp dp{};
+    int dev = 0;
+    CUDA_CHECK(cudaGetDevice(&dev));
+    CUDA_CHECK(cudaGetDeviceProperties(&dp, dev));
+
+    thrust::device_vector<__nv_fp8_e4m3> d_fp8_from_two_step(n_out);
+    thrust::device_vector<float> d_scale_two_step(1);
+
+    quantize_with_abs_max(thrust::raw_pointer_cast(d_fp8_from_two_step.data()),
+                          thrust::raw_pointer_cast(d_scale_two_step.data()),
+                          thrust::raw_pointer_cast(d_out_bf16.data()),
+                          thrust::raw_pointer_cast(d_absmax.data()),
+                          static_cast<long>(n_out), dp, 0);
+
+    // Path B: swiglu_forward_quant (direct bf16 -> fp8) using the same absmax pointer
+    thrust::device_vector<__nv_fp8_e4m3> d_fp8_direct(n_out);
+    thrust::device_vector<float> d_scale_direct(1);
+
+    swiglu_forward_quant(thrust::raw_pointer_cast(d_fp8_direct.data()),
+                         thrust::raw_pointer_cast(d_scale_direct.data()),
+                         thrust::raw_pointer_cast(d_inp.data()),
+                         thrust::raw_pointer_cast(d_absmax.data()),
+                         B, T, C, 0);
+
+    // Compare: scales must match bit-perfectly
+    std::vector<float> h_scale_two_step = from_device(d_scale_two_step);
+    std::vector<float> h_scale_direct   = from_device(d_scale_direct);
+    REQUIRE(h_scale_two_step.size() == 1);
+    REQUIRE(h_scale_direct.size() == 1);
+    REQUIRE(h_scale_two_step[0] == h_scale_direct[0]);
+
+    // Compare: fp8 buffers must be byte-identical
+    std::vector<__nv_fp8_e4m3> h_fp8_two_step = from_device(d_fp8_from_two_step);
+    std::vector<__nv_fp8_e4m3> h_fp8_direct  = from_device(d_fp8_direct);
+    REQUIRE(h_fp8_two_step.size() == h_fp8_direct.size());
+    const size_t nbytes = h_fp8_two_step.size() * sizeof(__nv_fp8_e4m3);
+    REQUIRE(std::memcmp(h_fp8_two_step.data(), h_fp8_direct.data(), nbytes) == 0);
 }
