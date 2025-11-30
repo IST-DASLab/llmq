@@ -17,17 +17,16 @@
 // CUDA kernels
 
 template<typename floatX>
-__global__ void swiglu_forward_kernel(floatX* out, const floatX* inp, float* abs_max_ptr, int B, int T, int C) {
+__global__ void swiglu_forward_kernel(floatX* out, const floatX* inp, float* abs_max_ptr, int C) {
     using x128 = GenericVector<floatX, 16/sizeof(floatX)>;
 
-    int idx = (blockIdx.x * blockDim.x + threadIdx.x) * x128::size;
+    long idx = (blockIdx.x * blockDim.x + threadIdx.x) * x128::size;
     floatX* out_ptr = out + idx;
     // b,t,c in the output
-    int b = idx / (T * C);
-    int t = (idx / C) % T;
+    int bt = (idx / C);
     int c = idx % C;
 
-    const floatX* up_ptr = inp + (b * T * C * 2 + t * C * 2 + c);
+    const floatX* up_ptr = inp + (bt * C * 2 + c);
     const floatX* gate_ptr = up_ptr + C;
 
     __shared__ float block_max;
