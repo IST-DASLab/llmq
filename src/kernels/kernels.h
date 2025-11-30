@@ -240,7 +240,4 @@ void convert_dtype(float* target, const nv_bfloat16* source, std::size_t size);
 void convert_dtype(nv_bfloat16* target, const float* source, std::size_t size);
 void convert_dtype(nv_bfloat16* target, const half* source, std::size_t size);
 
-// setup functions
-void setup_cublas();
-
 #endif //LLMQ_SRC_KERNELS_KERNELS_H

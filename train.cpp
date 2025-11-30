@@ -359,8 +359,6 @@ void TrainingRunner::run_training(int argc, const char** argv, NCCLCommunicator&
     });
     logger.log_gpu_model(comm);
 
-    setup_cublas();
-
     auto allocator = std::make_shared<TensorAllocator>();
     if (LogAllocations >= 0 && comm.rank() == 0) {
         allocator->set_callback([this](const std::string& ctx, const std::string& name, EAllocationType kind, std::size_t amount){

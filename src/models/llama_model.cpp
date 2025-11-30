@@ -14,8 +14,6 @@
 #include "llama_weights.h"
 #include "utilities/comm.h"
 
-extern float* get_device_one();
-
 LLamaModel::LLamaModel(LLamaConfig config, const LLamaOptions& options, int rank, int world, const std::shared_ptr<TensorAllocator>& alloc) :
         Config(config), Options(options), Allocator(alloc ? alloc : std::make_shared<TensorAllocator>())
 {
@@ -478,8 +476,6 @@ void LLamaModel::_backward_lmhead(long B, long T, int micro_step, int grad_accum
             Grads->notify_lmhead(main_stream, comm);
         }
 
-        // for some reason, we cannot set scale == nullptr here ?!
-        // so instead supply the value one (get_device_one())
         matmul(dlnf_slice, Parameters->get_head(main_stream), rs->Output, std::nullopt, nullptr, nullptr,
                rs->CublasLtHandle, rs->CuBlasWorkspace, C, nano_batch_size, V, EMMTranspose::NN, false, main_stream);
 

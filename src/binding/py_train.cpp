@@ -208,7 +208,6 @@ void MultiGPUPyTrainer::main_loop(NCCLCommunicator& comm) {
 
     ctx.Communicator = &comm;
     ctx.GPUUtil = IGPUUtilTracker::create();
-    setup_cublas();
     ctx.Model = std::make_unique<LLamaModel>(mConfig, mOptions, comm.rank(), comm.world_size());
     ctx.Model->allocate_run_state(mOptions, comm, B, T);
 
