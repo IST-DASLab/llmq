@@ -167,7 +167,7 @@ void LLamaGradientsUnsharded::notify_block(int layer_idx, cudaStream_t stream, N
 // shard the transformer blocks, but not the embeddings and lmhead.
 class LLamaGradientsBlockShardedBase : public LLamaGradsManager {
 public:
-    LLamaGradientsBlockShardedBase(std::uint64_t seed, int step, const LLamaConfig& config, int rank, int world, const std::shared_ptr<TensorAllocator>& alloc);
+    LLamaGradientsBlockShardedBase(std::uint64_t seed, int step, const LLamaConfig& config, const LLamaOptions& options, int rank, int world, const std::shared_ptr<TensorAllocator>& alloc);
 
     void on_first_micro_step(cudaStream_t stream) override;
     void end_micro_step(cudaStream_t stream, NCCLCommunicator& comm) override;
@@ -207,7 +207,7 @@ private:
     cudaEvent_t mNonBlockEvent;
 };
 
-LLamaGradientsBlockShardedBase::LLamaGradientsBlockShardedBase(std::uint64_t seed, int step, const LLamaConfig& config, int rank, int world, const std::shared_ptr<TensorAllocator>& alloc):
+LLamaGradientsBlockShardedBase::LLamaGradientsBlockShardedBase(std::uint64_t seed, int step, const LLamaConfig& config, const LLamaOptions& options, int rank, int world, const std::shared_ptr<TensorAllocator>& alloc):
     LLamaGradsManager(seed, step),
     mFullNonBlock( allocate_non_block_full(config, config.DType, EAllocationType::ON_DEVICE, *alloc))
 {
@@ -218,7 +218,8 @@ LLamaGradientsBlockShardedBase::LLamaGradientsBlockShardedBase(std::uint64_t see
     mNonBlockEvent = create_named_event("grad_nonblock_event");
     mGradShards.reserve(config.NumLayers);
     for(int i = 0; i < config.NumLayers; ++i) {
-        mGradShards.push_back(allocate_block_shard(config, config.DType, config.DType, EAllocationType::ON_DEVICE, rank, world, *alloc));
+        EAllocationType kind = options.OffloadGrads ? EAllocationType::PINNED : EAllocationType::ON_DEVICE;
+        mGradShards.push_back(allocate_block_shard(config, config.DType, config.DType, kind, rank, world, *alloc));
     }
 
     mNonBlockShards = shard_non_block(mFullNonBlock, rank, world);
@@ -473,9 +474,9 @@ void LLamaGradientsBlockSharded_AllToAll::sr_accumulate_layer(int layer_idx,
 std::unique_ptr<LLamaGradsManager> LLamaGradsManager::create(std::uint64_t seed, int step, const LLamaConfig& config, const LLamaOptions& options, int rank, int world, const std::shared_ptr<TensorAllocator>& alloc) {
     if (options.ShardGradients) {
         if(options.UseAllToAllReduce) {
-            return std::make_unique<LLamaGradientsBlockSharded_AllToAll>(seed, step, config, rank, world, alloc);
+            return std::make_unique<LLamaGradientsBlockSharded_AllToAll>(seed, step, config, options, rank, world, alloc);
         } else {
-            return std::make_unique<LLamaGradientsBlockSharded_ScatterReduce>(seed, step, config, rank, world, alloc);
+            return std::make_unique<LLamaGradientsBlockSharded_ScatterReduce>(seed, step, config, options, rank, world, alloc);
         }
 
     } else {
