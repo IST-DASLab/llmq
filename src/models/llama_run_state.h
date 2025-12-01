@@ -119,7 +119,7 @@ struct LLamaRunState {
     void temp_acquire(Tensor& target);
     void temp_free(Tensor& tensor);
 
-    DeviceMemoryStack mTempStack;
+    DeviceMemoryStack Stack;
 
     // cached GPU info
     cudaDeviceProp DeviceProp;

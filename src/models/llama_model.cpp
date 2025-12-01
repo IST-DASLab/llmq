@@ -735,7 +735,8 @@ void LLamaModel::update(NCCLCommunicator& comm, float learning_rate, float beta_
         CUDA_CHECK(cudaEventRecord(rs->TimingOptimizerStart, main_stream));
     }
 
-    Parameters->begin_optimizer(rs->mTempStack, rs->MainStream);
+    Parameters->begin_optimizer(rs->Stack, rs->MainStream);
+    OptimizerState->begin_optimizer(rs->Stack);
 
     // grad_scale gets deposited into NormBuffer[1] and can be used on main_stream after this.
     calculate_gradient_norm(comm, grad_clip);
@@ -799,7 +800,8 @@ void LLamaModel::update(NCCLCommunicator& comm, float learning_rate, float beta_
         comm.reduce_max(Parameters->get_master_lmhead().abs_max());
     }
     comm.wait_on_comms(main_stream);
-    Parameters->end_optimizer(rs->mTempStack);
+    OptimizerState->end_optimizer(rs->Stack);
+    Parameters->end_optimizer(rs->Stack);
     CUDA_CHECK(cudaEventRecord(rs->OptimizerDone, main_stream));
     if(Options.TriggerTimingEvents) {
         CUDA_CHECK(cudaEventRecord(rs->TimingOptimizerEnd, main_stream));
@@ -820,14 +822,17 @@ void LLamaModel::allocate_run_state(const LLamaOptions& options, NCCLCommunicato
         acts = ::allocate_run_state(Config, options, B, T, stack, Allocator);
     }
 
+    OptimizerState = std::make_unique<LLamaOptimizerStateManager>(Config, options, acts.MainStream, comm, *Allocator);
+
     Parameters->begin_optimizer(stack, comm.stream());
-    printf("Allocated %zu MiB of run state\n", stack.bytes_used()  / 1024/ 1024);
+    OptimizerState->begin_optimizer(stack);
+    OptimizerState->end_optimizer(stack);
     Parameters->end_optimizer(stack);
 
     {
         auto ctx = Allocator->with_context("Stack");
         long required_size = stack.max_utilization();
-        acts.mTempStack = DeviceMemoryStack{Allocator->allocate(ETensorDType::BYTE, "stack", {required_size}).Data, (std::size_t)required_size, dev};
+        acts.Stack = DeviceMemoryStack{Allocator->allocate(ETensorDType::BYTE, "stack", {required_size}).Data, (std::size_t)required_size, dev};
     }
 
     {
@@ -837,7 +842,6 @@ void LLamaModel::allocate_run_state(const LLamaOptions& options, NCCLCommunicato
 
     OptimizerRNG = std::minstd_rand{42};
     RunState = std::make_unique<LLamaRunState>(std::move(acts));
-    OptimizerState = std::make_unique<LLamaOptimizerStateManager>(Config, options, RunState->MainStream, comm, *Allocator);
     comm.barrier();     // make sure *all* GPUs have allocated the model before returning
 }
 
