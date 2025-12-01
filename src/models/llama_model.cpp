@@ -735,8 +735,7 @@ void LLamaModel::update(NCCLCommunicator& comm, float learning_rate, float beta_
         CUDA_CHECK(cudaEventRecord(rs->TimingOptimizerStart, main_stream));
     }
 
-    // make sure we can run abs_max again
-    Parameters->reset_scales(main_stream);
+    Parameters->begin_optimizer(rs->mTempStack, rs->MainStream);
 
     // grad_scale gets deposited into NormBuffer[1] and can be used on main_stream after this.
     calculate_gradient_norm(comm, grad_clip);
@@ -800,6 +799,7 @@ void LLamaModel::update(NCCLCommunicator& comm, float learning_rate, float beta_
         comm.reduce_max(Parameters->get_master_lmhead().abs_max());
     }
     comm.wait_on_comms(main_stream);
+    Parameters->end_optimizer(rs->mTempStack);
     CUDA_CHECK(cudaEventRecord(rs->OptimizerDone, main_stream));
     if(Options.TriggerTimingEvents) {
         CUDA_CHECK(cudaEventRecord(rs->TimingOptimizerEnd, main_stream));
@@ -808,11 +808,26 @@ void LLamaModel::update(NCCLCommunicator& comm, float learning_rate, float beta_
 
 void LLamaModel::allocate_run_state(const LLamaOptions& options, NCCLCommunicator& comm, int B, int T) {
     NVTX_RANGE_FN();
+
+    // create a dummy stack and simulate the way we're going to use temporaries later, to determine how much we need to allocate
+    int dev;
+    CUDA_CHECK(cudaGetDevice(&dev));
+    DeviceMemoryStack stack(nullptr, 1024 * 1024 * 1024 * 1024ll, dev);
+
     LLamaRunState acts;
     {
         auto ctx = Allocator->with_context("Activations");
-        acts = ::allocate_run_state(Config, options, B, T, Allocator);
+        acts = ::allocate_run_state(Config, options, B, T, stack, Allocator);
+    }
 
+    Parameters->begin_optimizer(stack, comm.stream());
+    printf("Allocated %zu MiB of run state\n", stack.bytes_used()  / 1024/ 1024);
+    Parameters->end_optimizer(stack);
+
+    {
+        auto ctx = Allocator->with_context("Stack");
+        long required_size = stack.max_utilization();
+        acts.mTempStack = DeviceMemoryStack{Allocator->allocate(ETensorDType::BYTE, "stack", {required_size}).Data, (std::size_t)required_size, dev};
     }
 
     {

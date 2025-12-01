@@ -254,7 +254,7 @@ void LLamaRunState::release_res_ffn(int layer_idx, cudaStream_t main_stream) {
     CUDA_CHECK(cudaEventRecord(status.Event, main_stream));
 }
 
-void LLamaRunState::init(LLamaConfig config, long B, long T) {
+void LLamaRunState::init(LLamaConfig config, long B, long T, DeviceMemoryStack& stack) {
     long V = config.VocabSize;
     long C = config.HiddenSize;
     long H = config.IntermediateSize;
@@ -375,39 +375,33 @@ void LLamaRunState::init(LLamaConfig config, long B, long T) {
         }
     }
 
-    // create a dummy stack and simulate the way we're going to use temporaries later, to determine how much we need to allocate
-    DeviceMemoryStack activation_stack(nullptr, 1024*1024*1024*1024ll, Inputs.Device);
-
     bool use_fp8 = Options.grad_dtype() == ETensorDType::FP8_E4M3 || Options.grad_dtype() == ETensorDType::FP8_E5M2;
     auto bw_qmm = [&](int B, int T, int C, int OC) {
         if(use_fp8) {
-            auto wgt_tp = activation_stack.allocate(ETensorDType::FP8_E4M3, {C, OC});
-            activation_stack.free(wgt_tp.Data);
-            auto act_tp = activation_stack.allocate(ETensorDType::FP8_E4M3, {C, B * T});
-            auto grd_tp = activation_stack.allocate(Options.grad_dtype(), {OC, B * T});
-            activation_stack.free(grd_tp.Data);
-            activation_stack.free(act_tp.Data);
+            auto wgt_tp = stack.allocate(ETensorDType::FP8_E4M3, {C, OC});
+            stack.free(wgt_tp.Data);
+            auto act_tp = stack.allocate(ETensorDType::FP8_E4M3, {C, B * T});
+            auto grd_tp = stack.allocate(Options.grad_dtype(), {OC, B * T});
+            stack.free(grd_tp.Data);
+            stack.free(act_tp.Data);
         }
     };
 
     // simulate to determine required stack size
-    auto ws = activation_stack.allocate(CuDNNWorkspace.bytes());
-    activation_stack.free(activation_stack.allocate(DActs[0].DQKV.Value.bytes()));   // attention
-    activation_stack.free(ws);   // attention
+    auto ws = stack.allocate(CuDNNWorkspace.bytes());
+    stack.free(stack.allocate(DActs[0].DQKV.Value.bytes()));   // attention
+    stack.free(ws);   // attention
 
-    auto dswi = activation_stack.allocate(DActs[0].DSwiGLU.bytes());
+    auto dswi = stack.allocate(DActs[0].DSwiGLU.bytes());
     bw_qmm(B, T, H, C);         // backward qmm swiglu
-    activation_stack.free(dswi);
+    stack.free(dswi);
 
     if(use_fp8) {
-        auto dupq = activation_stack.allocate(DActs[0].DMlpUp.Quant->bytes());
+        auto dupq = stack.allocate(DActs[0].DMlpUp.Quant->bytes());
         bw_qmm(B, T, C, 2 * H);     // backward qmm up
-        activation_stack.free(dupq);
+        stack.free(dupq);
     }
-    activation_stack.free(activation_stack.allocate(Output.bytes()));  // lm-head
-
-    long required_size = activation_stack.max_utilization();
-    mTempStack = DeviceMemoryStack{alloc->allocate(ETensorDType::BYTE, "temporaries", {required_size}).Data, (std::size_t)required_size, Inputs.Device};
+    stack.free(stack.allocate(Output.bytes()));  // lm-head
 
     MatmulScales = alloc->allocate(ETensorDType::FP32, "mm_scales", {2});
 
@@ -418,9 +412,9 @@ void LLamaRunState::init(LLamaConfig config, long B, long T) {
     }
 }
 
-LLamaRunState allocate_run_state(LLamaConfig config, LLamaOptions options, long B, long T, std::shared_ptr<TensorAllocator> alloc) {
+LLamaRunState allocate_run_state(LLamaConfig config, LLamaOptions options, long B, long T, DeviceMemoryStack& stack, std::shared_ptr<TensorAllocator> alloc) {
     LLamaRunState state{options, std::move(alloc)};
-    state.init(config, B, T);
+    state.init(config, B, T, stack);
     return state;
 }
 

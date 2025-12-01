@@ -156,10 +156,10 @@ struct LLamaRunState {
     cudnnHandle_t CudnnHandle;
     cublasLtHandle_t CublasLtHandle;
 
-    void init(LLamaConfig config, long B, long T);
+    void init(LLamaConfig config, long B, long T, DeviceMemoryStack& stack);
 };
 
-LLamaRunState allocate_run_state(LLamaConfig config, LLamaOptions options, long B, long T, std::shared_ptr<TensorAllocator> alloc);
+LLamaRunState allocate_run_state(LLamaConfig config, LLamaOptions options, long B, long T, DeviceMemoryStack& stack, std::shared_ptr<TensorAllocator> alloc);
 
 float get_loss(LLamaRunState& acts);
 float get_norm(LLamaRunState& acts);
