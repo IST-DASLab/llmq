@@ -480,6 +480,9 @@ std::unique_ptr<LLamaGradsManager> LLamaGradsManager::create(std::uint64_t seed,
         }
 
     } else {
+        if(options.OffloadGrads) {
+            throw std::logic_error("Offloading gradients is not supported for unsharded gradients");
+        }
         return std::make_unique<LLamaGradientsUnsharded>(seed, step, config, rank, world, alloc);
     }
 }
