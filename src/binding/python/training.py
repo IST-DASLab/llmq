@@ -80,6 +80,7 @@ class TrainingConfig:
     offload_quants: bool = False
     offload_opt_m: bool = False
     offload_opt_v: bool = False
+    offload_grads: bool = False
     persistent_quants: bool = False
 
     # Performance options
@@ -174,6 +175,7 @@ def add_training_args(parser: argparse.ArgumentParser, default: Optional[Trainin
     parser.add_argument("--offload-quants", action="store_true", help="Offload quantized weights")
     parser.add_argument("--offload-opt-m", action="store_true", help="Offload first-order momentum")
     parser.add_argument("--offload-opt-v", action="store_true", help="Offload second-order momentum")
+    parser.add_argument("--offload-grads", action="store_true", help="Offload gradients")
     parser.add_argument("--persistent-quants", action="store_true", help="Keep quantized weights")
     parser.add_argument("--use-zero-copy", action="store_true", help="Use zero-copy DMA for offloaded optimizer states")
 

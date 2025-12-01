@@ -72,6 +72,7 @@ def _create_options(config: TrainingConfig) -> pyllmq.LLamaOptions:
     options.offload_opt_v = config.offload_opt_v
     options.offload_quants = config.offload_quants
     options.offload_master = config.offload_master
+    options.offload_grads = config.offload_grads
     options.persistent_quants = config.persistent_quants
 
     if config.matmul_dtype:
