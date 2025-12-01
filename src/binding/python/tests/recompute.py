@@ -34,6 +34,7 @@ def disable_recompute(config: TrainingConfig):
     baseline_config.offload_quants = False
     baseline_config.offload_opt_v = False
     baseline_config.offload_opt_m = False
+    baseline_config.offload_grads = False
     baseline_config.attn_bwd_chunks = 1
     baseline_config.memcpy_all_gather = False
     baseline_config.shard_weights = False
