@@ -10,12 +10,13 @@
 
 #include "utilities/tensor.h"
 #include "utilities/tensor_container.h"
+#include "llama_config.h"
 
-struct LLamaConfig;
 struct LLamaOptions;
 struct LLamaRunState;
 class TensorAllocator;
 class NCCLCommunicator;
+class DeviceMemoryStack;
 enum class EAllocationType : int;
 typedef struct CUevent_st* cudaEvent_t;
 
@@ -64,6 +65,9 @@ public:
     void invalidate();
     void reset_scales(cudaStream_t stream);
     std::pair<float*, float*> get_scales_for_block(int layer_idx);
+
+    void begin_optimizer(DeviceMemoryStack& memory, cudaStream_t stream);
+    void end_optimizer(DeviceMemoryStack& memory);
 
     // Weight shards that get updated by the optimizer
     TensorShard& get_master_embeddings();
@@ -158,6 +162,7 @@ protected:
 
     void convert_dtype_for_gather(TensorShard& src, TensorShard& qnt, bool& convert, LLamaRunState& run_state);
 
+    LLamaConfig mConfig;
     long HQ;    // number of query heads
     long HKV;   // number of key/value heads
     int mShardIdx;
@@ -171,12 +176,6 @@ protected:
 
     bool mOffloadMaster;
     bool mUseZeroCopy;
-};
-
-class LLamaOptimizerParamManager {
-public:
-private:
-
 };
 
 sLLamaNonBlockWeights<Tensor> allocate_non_block_full(LLamaConfig config, ETensorDType dtype, EAllocationType kind, TensorAllocator& alloc);

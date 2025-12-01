@@ -21,6 +21,7 @@ public:
     void free(Tensor& tensor);
 
     std::size_t unused_capacity() const;
+    std::size_t bytes_used() const;
     std::size_t max_utilization() const;
     int device_id() const;
 private:

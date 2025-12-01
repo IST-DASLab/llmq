@@ -20,7 +20,7 @@ std::byte* DeviceMemoryStack::allocate(std::size_t amount) {
 
     mAlloc.emplace_back(mTop, aligned_amount);
     mTop = new_top;
-    mMaxUtilization = std::max(mMaxUtilization, mCapacity - unused_capacity());
+    mMaxUtilization = std::max(mMaxUtilization, bytes_used());
     return mAlloc.back().first;
 }
 
@@ -42,6 +42,10 @@ void DeviceMemoryStack::free(std::byte* ptr) {
 
 std::size_t DeviceMemoryStack::unused_capacity() const {
     return mCapacity - (mTop - mBackingMemory);
+}
+
+std::size_t DeviceMemoryStack::bytes_used() const {
+    return mCapacity - unused_capacity();
 }
 
 std::size_t DeviceMemoryStack::max_utilization() const {

@@ -39,6 +39,44 @@ void allocate_matrix_params(sLLamaBlockWeights<T>& target, const LLamaConfig& co
     target.MLP_Down_w = alloc.allocate_shard(dtype, shard_idx, num_shards, "mlp_down_w", {C, H}, kind);
 }
 
+template<class T>
+void matrix_params_from_stack(sLLamaBlockWeights<T>& target, const LLamaConfig& config, ETensorDType dtype, int shard_idx, int num_shards, DeviceMemoryStack& memory) {
+    long C = config.HiddenSize;
+    long H = config.IntermediateSize;
+
+    auto create_matrix_shard = [&](long rows, long cols) {
+        Tensor raw = memory.allocate(dtype, {div_exact(rows, (long)num_shards), cols});
+        return TensorShard{raw, shard_idx, num_shards, std::vector<long>{rows, cols}};
+    };
+
+    long head_size = C / config.NumQueryHeads;
+    long attn_intermediate_size = (config.NumQueryHeads + 2 * config.NumKeyValHeads) * head_size;
+    target.Attn_QKV_w = create_matrix_shard(attn_intermediate_size, C);
+    target.Attn_Out_w = create_matrix_shard(C, C);
+    target.MLP_Up_w = create_matrix_shard(2 * H, C);
+    target.MLP_Down_w = create_matrix_shard(C, H);
+}
+
+template<class T>
+void non_matrix_params_from_stack(sLLamaBlockWeights<T>& target, const LLamaConfig& config, ETensorDType dtype, int shard_idx, int num_shards, DeviceMemoryStack& memory) {
+    long C = config.HiddenSize;
+    long HS = config.head_size();
+
+    auto create_vector_shard = [&](long elems) {
+        Tensor raw = memory.allocate(dtype, {div_exact(elems, (long)num_shards)});
+        return TensorShard{raw, shard_idx, num_shards, std::vector<long>{elems}};
+    };
+
+    target.LN1_w = create_vector_shard(C);
+    target.LN2_w = create_vector_shard(C);
+    long attn_intermediate_size = (config.NumQueryHeads + 2 * config.NumKeyValHeads) * HS;
+    if(config.UseQKVBias) {
+        target.Attn_QKV_b = create_vector_shard(attn_intermediate_size);
+    } else {
+        target.Attn_QKV_b = std::nullopt;
+    }
+}
+
 std::size_t aligned_size(std::size_t raw, int num_shards) {
     return div_ceil(div_exact(raw, static_cast<std::size_t>(num_shards)), static_cast<std::size_t>(4096)) * 4096;
 }
@@ -163,7 +201,7 @@ sLLamaWeights allocate_weights(const LLamaConfig& config, EAllocationType kind, 
 
 LLamaWeightsManager::LLamaWeightsManager(const LLamaConfig& config, const LLamaOptions& options, int rank, int world) :
     mMasterDType(options.MasterDType.value_or(config.DType)), mWorkMatDType(options.matmul_dtype()),
-    mShardIdx(rank), mNumShards(world)
+    mShardIdx(rank), mNumShards(world), mConfig(config)
 {
     mEmbStatus.DoneEvent = create_named_event("emb_done");
     mLnfStatus.DoneEvent = create_named_event("lnf_done");
@@ -217,29 +255,6 @@ std::pair<float*, float*> LLamaWeightsManager::get_scales_for_block(int layer_id
 void LLamaWeightsManager::setup_master_buffers(const LLamaConfig& config, TensorAllocator& alloc) {
     if (mOffloadMaster && !mUseZeroCopy) {
         for(int i = 0; i < 2; ++i) {
-            auto& buf = mMasterDeviceDoubleBuffer.at(i);
-            if (mWorkMatDType != mMasterDType) {
-                auto c = alloc.with_context("Master");
-                allocate_matrix_params(buf, config, mMasterDType, EAllocationType::ON_DEVICE, mShardIdx, mNumShards,
-                                       alloc);
-            } else {
-                // note: the actual data pointers will be overwritten before use, so this is safe
-                buf.Attn_QKV_w = mMaster.Blocks[0].Attn_QKV_w;
-                buf.Attn_Out_w = mMaster.Blocks[0].Attn_Out_w;
-                buf.MLP_Up_w = mMaster.Blocks[0].MLP_Up_w;
-                buf.MLP_Down_w = mMaster.Blocks[0].MLP_Down_w;
-            }
-
-            if (config.DType != mMasterDType) {
-                auto c = alloc.with_context("Master");
-                allocate_non_matrix_params(buf, config, mMasterDType, EAllocationType::ON_DEVICE, mShardIdx,
-                                           mNumShards, alloc);
-            } else {
-                buf.LN1_w = mMaster.Blocks[0].LN1_w;
-                buf.LN2_w = mMaster.Blocks[0].LN2_w;
-                buf.Attn_QKV_b = mMaster.Blocks[0].Attn_QKV_b;
-            }
-
             mMasterDeviceBufferStatus.at(i) = sGatherData{i, create_named_event(("master_event_" + std::to_string(i)).c_str())};
         }
     }
@@ -264,6 +279,55 @@ TensorShard& LLamaWeightsManager::get_master_lmhead() {
 
 TensorShard& LLamaWeightsManager::get_master_lnf_w() {
     return mMaster.NonBlocks.LNF_w;
+}
+
+void LLamaWeightsManager::begin_optimizer(DeviceMemoryStack& memory, cudaStream_t stream) {
+    reset_scales(stream);
+    if (mOffloadMaster && !mUseZeroCopy) {
+        for (int i = 0; i < 2; ++i) {
+            auto& buf = mMasterDeviceDoubleBuffer.at(i);
+            if (mMaster.Blocks[0].Attn_QKV_w.Device == -1) {
+                matrix_params_from_stack(buf, mConfig, mMasterDType, mShardIdx, mNumShards, memory);
+            } else {
+                // note: the actual data pointers will be overwritten before use, so this is safe
+                buf.Attn_QKV_w = mMaster.Blocks[0].Attn_QKV_w;
+                buf.Attn_Out_w = mMaster.Blocks[0].Attn_Out_w;
+                buf.MLP_Up_w = mMaster.Blocks[0].MLP_Up_w;
+                buf.MLP_Down_w = mMaster.Blocks[0].MLP_Down_w;
+            }
+
+            if (mMaster.Blocks[0].LN1_w.Device == -1) {
+                non_matrix_params_from_stack(buf, mConfig, mMasterDType, mShardIdx, mNumShards, memory);
+            } else {
+                buf.LN1_w = mMaster.Blocks[0].LN1_w;
+                buf.LN2_w = mMaster.Blocks[0].LN2_w;
+                buf.Attn_QKV_b = mMaster.Blocks[0].Attn_QKV_b;
+            }
+        }
+    }
+}
+
+void LLamaWeightsManager::end_optimizer(DeviceMemoryStack& memory) {
+    if (mOffloadMaster && !mUseZeroCopy) {
+        // it's a stack, so we need to free in reverse order
+        for (int i = 1; i >= 0; --i) {
+            auto& buf = mMasterDeviceDoubleBuffer.at(i);
+            if (mMaster.Blocks[0].LN1_w.Device == -1) {
+                if(buf.Attn_QKV_b.has_value()) {
+                    memory.free(buf.Attn_QKV_b.value());
+                }
+                memory.free(buf.LN2_w);
+                memory.free(buf.LN1_w);
+            }
+
+            if (mMaster.Blocks[0].Attn_QKV_w.Device == -1) {
+                memory.free(buf.MLP_Down_w);
+                memory.free(buf.MLP_Up_w);
+                memory.free(buf.Attn_Out_w);
+                memory.free(buf.Attn_QKV_w);
+            }
+        }
+    }
 }
 
 void LLamaWeightsManager::fetch_master_block(int layer_idx, cudaStream_t fetch_stream) {
