@@ -75,6 +75,9 @@ def _create_options(config: TrainingConfig) -> pyllmq.LLamaOptions:
     options.offload_grads = config.offload_grads
     options.persistent_quants = config.persistent_quants
 
+    options.shard_gradients = config.shard_gradients
+    options.shard_weights = config.shard_weights
+
     if config.matmul_dtype:
         options.matmul_type = config.matmul_dtype
     if config.gradient_dtype:

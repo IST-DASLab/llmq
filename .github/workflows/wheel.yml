@@ -127,6 +127,8 @@ jobs:
             args: "--recompute-swiglu --recompute-norm"
           - name: "Offload Opt"
             args: "--offload-opt-m --offload-opt-v --offload-master"
+          - name: "Offload Gradient"
+            args: "--shard-gradients --offload-grads"
           # While not strictly a recomputation, chunked attention should be bitwise identical, too
           - name: "Chunked attention"
             args: "--recompute-att --attn-bwd-chunks=2"
