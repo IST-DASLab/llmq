@@ -43,6 +43,7 @@ def setup_options(config: pyllmq.TrainingConfig) -> pyllmq.LLamaOptions:
     options.offload_quants = config.offload_quants
     options.offload_opt_m = config.offload_opt_m
     options.offload_opt_v = config.offload_opt_v
+    options.offload_grads = config.offload_grads
     options.persistent_quants = config.persistent_quants
 
     # Performance options

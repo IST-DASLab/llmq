@@ -178,7 +178,7 @@ NB_MODULE(_pyllmq, m) {
         .def("__init__", [](LLamaOptions *t, bool recompute_swiglu, bool recompute_rmsnorm,
             bool recompute_ffn, bool recompute_qkv, bool recompute_att, bool recompute_block, bool offload_residual,
             bool use_cuda_graphs,
-            bool offload_master, bool offload_quants, bool offload_opt_m, bool offload_opt_v, bool use_zero_copy,
+            bool offload_master, bool offload_quants, bool offload_opt_m, bool offload_opt_v, bool offload_grads, bool use_zero_copy,
             bool use_write_combined, bool shard_weights, bool persistent_quants, bool shard_gradients, bool use_all_to_all_reduce,
             bool init_projections_to_zero, int lmhead_chunks, int attn_bwd_chunks,
             const std::string matmul_type, const std::string gradient_type, const std::string master_dtype, const std::string momentum_type, const std::string variance_type) {
@@ -197,6 +197,7 @@ NB_MODULE(_pyllmq, m) {
                 .OffloadQuants = offload_quants,
                 .OffloadOptM = offload_opt_m,
                 .OffloadOptV = offload_opt_v,
+                .OffloadGrads = offload_grads,
                 .UseZeroCopy = use_zero_copy,
                 .UseWriteCombined = use_write_combined,
                 .ShardWeights = shard_weights,
@@ -217,8 +218,8 @@ NB_MODULE(_pyllmq, m) {
              nb::arg("offload_residual") = false,
              nb::arg("use_cuda_graphs") = true,   nb::arg("offload_master") = false,
              nb::arg("offload_quants") = false,   nb::arg("offload_opt_m") = false,
-             nb::arg("offload_opt_v") = false,    nb::arg("use_zero_copy") = false,
-             nb::arg("use_write_combined") = false,
+             nb::arg("offload_opt_v") = false,    nb::arg("offload_grads") = false,
+             nb::arg("use_zero_copy") = false,    nb::arg("use_write_combined") = false,
              nb::arg("shard_weights") = false,    nb::arg("persistent_quants") = false,
              nb::arg("shard_gradients") = false,  nb::arg("use_all_to_all_reduce") = false,
              nb::arg("init_projections_to_zero") = false, nb::arg("lmhead_chunks") = 1,
@@ -241,6 +242,7 @@ NB_MODULE(_pyllmq, m) {
         .def_rw("offload_quants", &LLamaOptions::OffloadQuants)
         .def_rw("offload_opt_m", &LLamaOptions::OffloadOptM)
         .def_rw("offload_opt_v", &LLamaOptions::OffloadOptV)
+        .def_rw("offload_grads", &LLamaOptions::OffloadGrads)
         .def_rw("use_zero_copy", &LLamaOptions::UseZeroCopy)
         .def_rw("use_write_combined", &LLamaOptions::UseWriteCombined)
         .def_rw("shard_weights", &LLamaOptions::ShardWeights)
