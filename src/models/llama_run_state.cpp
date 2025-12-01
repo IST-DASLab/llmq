@@ -419,19 +419,19 @@ LLamaRunState allocate_run_state(LLamaConfig config, LLamaOptions options, long 
 }
 
 Tensor LLamaRunState::temp_alloc(ETensorDType dtype, const std::vector<long>& shape) {
-    return  mTempStack.allocate(dtype, shape);
+    return  Stack.allocate(dtype, shape);
 }
 
 void LLamaRunState::temp_acquire(Tensor& target) {
-    if(target.Device != mTempStack.device_id()) {
+    if(target.Device != Stack.device_id()) {
         throw std::logic_error("device mismatch");
     }
 
-    target.Data = mTempStack.allocate(target.bytes());
+    target.Data = Stack.allocate(target.bytes());
 }
 
 void LLamaRunState::temp_free(Tensor& tensor) {
-    mTempStack.free(tensor);
+    Stack.free(tensor);
 }
 
 void LLamaRunState::setup_timing_events(int micro_steps) {

@@ -39,8 +39,7 @@ void allocate_matrix_params(sLLamaBlockWeights<T>& target, const LLamaConfig& co
     target.MLP_Down_w = alloc.allocate_shard(dtype, shard_idx, num_shards, "mlp_down_w", {C, H}, kind);
 }
 
-template<class T>
-void matrix_params_from_stack(sLLamaBlockWeights<T>& target, const LLamaConfig& config, ETensorDType dtype, int shard_idx, int num_shards, DeviceMemoryStack& memory) {
+void matrix_params_from_stack(sLLamaBlockWeights<TensorShard>& target, const LLamaConfig& config, ETensorDType dtype, int shard_idx, int num_shards, DeviceMemoryStack& memory) {
     long C = config.HiddenSize;
     long H = config.IntermediateSize;
 
@@ -57,8 +56,7 @@ void matrix_params_from_stack(sLLamaBlockWeights<T>& target, const LLamaConfig& 
     target.MLP_Down_w = create_matrix_shard(C, H);
 }
 
-template<class T>
-void non_matrix_params_from_stack(sLLamaBlockWeights<T>& target, const LLamaConfig& config, ETensorDType dtype, int shard_idx, int num_shards, DeviceMemoryStack& memory) {
+void non_matrix_params_from_stack(sLLamaBlockWeights<TensorShard>& target, const LLamaConfig& config, ETensorDType dtype, int shard_idx, int num_shards, DeviceMemoryStack& memory) {
     long C = config.HiddenSize;
     long HS = config.head_size();
 

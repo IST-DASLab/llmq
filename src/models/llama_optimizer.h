@@ -15,6 +15,9 @@ public:
     sLLamaNonBlockWeights<TensorShard>& non_block_m();
     sLLamaNonBlockWeights<TensorShard>& non_block_v();
 
+    void begin_optimizer(DeviceMemoryStack& memory);
+    void end_optimizer(DeviceMemoryStack& memory);
+
     sLLamaWeights& full_m() { return mOptM; }
     sLLamaWeights& scales_m() { return mOptMScales; }
     sLLamaWeights& full_v() { return mOptV; }
@@ -24,6 +27,7 @@ public:
     sLLamaBlockWeights<TensorShard>& get_block_v(int layer_idx, cudaStream_t stream);
     void store_block(int layer_idx, cudaStream_t stream, cudaStream_t put_stream);
 private:
+    LLamaConfig mConfig;
     sLLamaWeights mOptM;
     sLLamaWeights mOptV;
     std::array<sLLamaBlockWeights<TensorShard>, 2> mOptMBuffer;
@@ -43,6 +47,9 @@ private:
     bool mOffloadM;
     bool mOffloadV;
     bool mUseZeroCopy;
+
+    int mRank;
+    int mWorld;
 
     sLLamaBlockWeights<TensorShard>& get_block_from(int layer_idx, cudaStream_t stream, sLLamaBlockWeights<TensorShard>& buf);
     void store_one_block(int layer_idx, cudaStream_t stream, cudaStream_t put_stream, sLLamaBlockWeights<TensorShard>& buf, sLLamaBlockWeights<TensorShard>& dst);
