@@ -359,7 +359,7 @@ The run marked with * uses additional arguments `--shard-weights --memcpy-all-ga
 
 ### RTX 4090
 
-All settings use `--lmhead-chunks=${BATCH_SIZE}`
+All settings use `--use-cuda-graphs --memcpy-all-gather --lmhead-chunks=${BATCH_SIZE}`
 
 | Model         | nGPU | DType | Batch | TPS  | SOL | TTB   |
 |---------------|------|-------|-------|------|-----|-------|
@@ -371,9 +371,9 @@ All settings use `--lmhead-chunks=${BATCH_SIZE}`
 | Qwen2.5-3B²   | 1    | bf16  | 4     | 7.0k | 80% | 40h   |
 | Qwen2.5-7B³   | 1    | fp8   | 4     | 3.9k | 56% | 71h   |
 | Qwen2.5-7B⁴   | 1    | bf16  | 4     | 2.4k | 64% | 116h  |
-| Qwen2.5-0.5B  | 4    | fp8   | 16    | 173k | 53% | 1:35h |
+| Qwen2.5-0.5B  | 4    | fp8   | 16    | 175k | 53% | 1:35h |
 | Qwen2.5-0.5B  | 4    | bf16  | 16    | 148k | 69% | 1:52h |
-| Qwen2.5-1.5B  | 4    | fp8   | 8     | 70k  | 60% | 3:56h |
+| Qwen2.5-1.5B  | 4    | fp8   | 8     | 71k  | 60% | 3:55h |
 | Qwen2.5-1.5B⁵ | 4    | bf16  | 8     | 50k  | 73% | 5:30h |
 | Qwen2.5-3B¹⁰  | 4    | fp8   | 4     | 36k  | 58% | 7:40h |
 | Qwen2.5-3B¹⁰  | 4    | bf16  | 4     | 25k  | 71% | 11h   |
@@ -385,11 +385,11 @@ All settings use `--lmhead-chunks=${BATCH_SIZE}`
 
 ^1: `--offload-opt-m --offload-opt-v --recompute-swiglu --offload-master`
 ^2: `--offload-opt-m --offload-opt-v --recompute-swiglu --recompute-norm`
-^3: `--offload-opt-m --offload-opt-v --recompute-ffn --recompute-norm --recompute-att --offload-master --shard-weights --persistent-quants --offload-quants --memcpy-all-gather`
-^4: `--offload-opt-m --offload-opt-v --recompute-ffn --recompute-norm --recompute-att --offload-master --shard-weights --memcpy-all-gather`
+^3: `--offload-opt-m --offload-opt-v --recompute-ffn --recompute-norm --recompute-att --offload-master --shard-weights --persistent-quants --offload-quants`
+^4: `--offload-opt-m --offload-opt-v --recompute-ffn --recompute-norm --recompute-att --offload-master --shard-weights`
 ^5: `--recompute-norm --recompute-swiglu`
-^6: `--offload-opt-m --offload-opt-v --recompute-ffn --recompute-norm --recompute-att --offload-master --shard-weights --memcpy-all-gather --shard-gradients --memcpy-send-recv --all-to-all-reduce --persistent-quants --offload-quants`
-^7: `--offload-opt-m --offload-opt-v --recompute-ffn --recompute-norm --recompute-att --offload-master --shard-weights --memcpy-all-gather --shard-gradients --memcpy-send-recv --all-to-all-reduce`
+^6: `--offload-opt-m --offload-opt-v --recompute-ffn --recompute-norm --recompute-att --offload-master --shard-weights --shard-gradients --memcpy-send-recv --all-to-all-reduce --persistent-quants --offload-quants`
+^7: `--offload-opt-m --offload-opt-v --recompute-ffn --recompute-norm --recompute-att --offload-master --shard-weights --shard-gradients --memcpy-send-recv --all-to-all-reduce`
 ^8: `--offload-opt-m --offload-opt-v --recompute-block --offload-master --offload-residual --shard-weights --memcpy-all-gather --shard-gradients --memcpy-send-recv --all-to-all-reduce --persistent-quants --offload-quants`
 ^9: `--offload-opt-m --offload-opt-v --recompute-block --offload-master --offload-residual --shard-weights --memcpy-all-gather --shard-gradients --memcpy-send-recv --all-to-all-reduce`
 ^10: `--offload-opt-m --recompute-swiglu --recompute-norm`
@@ -399,26 +399,26 @@ On the L40S system, we found zero-copy access to offloaded optimizer states (`--
 
 | Model        | nGPU | DType | Batch | TPS  | SOL | TTB   |
 |--------------|------|-------|-------|------|-----|-------|
-| Qwen2.5-0.5B | 1    | fp8   | 32    | 47k  | 52% | 5:55h |
-| Qwen2.5-0.5B | 1    | bf16  | 16    | 44k  | 74% | 6:20h |
-| Qwen2.5-1.5B | 1    | fp8   | 8     | 20k  | 63% | 14h   |
-| Qwen2.5-1.5B | 1    | bf16  | 8     | 17k  | 87% | 16h   |
-| Qwen2.5-3B   | 1    | fp8   | 4     | 11k  | 66% | 25h   |
-| Qwen2.5-3B   | 1    | bf16  | 4     | 8.9k | 93% | 31h   |
-| Qwen2.5-7B¹  | 1    | fp8   | 4     | 5.2k | 66% | 54h   |
-| Qwen2.5-7B²  | 1    | bf16  | 4     | 3.9k | 94% | 70h   |
-| Qwen2.5-14B³ | 1    | fp8   | 16    | 1.7k | 44% | 159h  |
-| Qwen2.5-14B⁴ | 1    | bf16  | 16    | 1.5k | 70% | 185h  |
-| Qwen2.5-0.5B | 4    | fp8   | 32    | 185k | 50% | 1:30h |
-| Qwen2.5-0.5B | 4    | bf16  | 16    | 169k | 71% | 1:38h |
-| Qwen2.5-1.5B | 4    | fp8   | 16    | 79k  | 60% | 3:30h |
-| Qwen2.5-1.5B | 4    | bf16  | 8     | 65k  | 85% | 4:16h |
-| Qwen2.5-3B   | 4    | fp8   | 8     | 44k  | 63% | 6:20h |
-| Qwen2.5-3B   | 4    | bf16  | 8     | 35k  | 90% | 7:56h |
-| Qwen2.5-7B¹  | 4    | fp8   | 4     | 18k  | 58% | 16h   |
-| Qwen2.5-7B²  | 4    | bf16  | 4     | 15k  | 87% | 18h   |
-| Qwen2.5-14B⁵ | 4    | fp8   | 64    | 8.7k | 54% | 32h   |
-| Qwen2.5-14B⁶ | 4    | bf16  | 64    | 6.3k | 73% | 44h   |
+| Qwen2.5-0.5B | 1    | fp8   | 32    | 47k  | 26% | 5:55h |
+| Qwen2.5-0.5B | 1    | bf16  | 16    | 44k  | 37% | 6:20h |
+| Qwen2.5-1.5B | 1    | fp8   | 8     | 20k  | 31% | 14h   |
+| Qwen2.5-1.5B | 1    | bf16  | 8     | 17k  | 43% | 16h   |
+| Qwen2.5-3B   | 1    | fp8   | 4     | 11k  | 33% | 25h   |
+| Qwen2.5-3B   | 1    | bf16  | 4     | 8.9k | 56% | 31h   |
+| Qwen2.5-7B¹  | 1    | fp8   | 4     | 5.2k | 33% | 54h   |
+| Qwen2.5-7B²  | 1    | bf16  | 4     | 3.9k | 47% | 70h   |
+| Qwen2.5-14B³ | 1    | fp8   | 16    | 1.7k | 22% | 159h  |
+| Qwen2.5-14B⁴ | 1    | bf16  | 16    | 1.5k | 35% | 185h  |
+| Qwen2.5-0.5B | 4    | fp8   | 32    | 185k | 25% | 1:30h |
+| Qwen2.5-0.5B | 4    | bf16  | 16    | 169k | 35% | 1:38h |
+| Qwen2.5-1.5B | 4    | fp8   | 16    | 79k  | 30% | 3:30h |
+| Qwen2.5-1.5B | 4    | bf16  | 8     | 65k  | 42% | 4:16h |
+| Qwen2.5-3B   | 4    | fp8   | 8     | 44k  | 31% | 6:20h |
+| Qwen2.5-3B   | 4    | bf16  | 8     | 35k  | 45% | 7:56h |
+| Qwen2.5-7B¹  | 4    | fp8   | 4     | 18k  | 28% | 16h   |
+| Qwen2.5-7B²  | 4    | bf16  | 4     | 15k  | 43% | 18h   |
+| Qwen2.5-14B⁵ | 4    | fp8   | 64    | 8.7k | 27% | 32h   |
+| Qwen2.5-14B⁶ | 4    | bf16  | 64    | 6.3k | 36% | 44h   |
 
 ^1: `--offload-opt-m --offload-opt-v --offload-master`
 ^2: `--offload-opt-m --offload-opt-v --recompute-swiglu --recompute-norm`
