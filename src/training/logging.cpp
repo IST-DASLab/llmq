@@ -257,12 +257,6 @@ void TrainingRunLogger::log_cmd(int argc, const char** argv)
     log_line(cmd);
 }
 
-void TrainingRunLogger::log_checkpoint(int step, std::string path, int duration_ms) {
-    if(mRank != 0) return;
-    log_line(fmt::format(R"(  {{"log": "checkpoint", "time": "{}", "step": {}, "path": "{}", "duration_ms": {}}})",
-        std::chrono::system_clock::now(), step, path, duration_ms ));
-}
-
 void TrainingRunLogger::log_line(std::string_view line) {
     if(mCallback)
         mCallback(line);

@@ -454,9 +454,6 @@ NB_MODULE(_pyllmq, m) {
             }
             logger->log_allocator(cpp_stats);
         }, nb::arg("stats"), "Log memory allocator statistics")
-        .def("log_checkpoint", &TrainingRunLogger::log_checkpoint,
-             nb::arg("step"), nb::arg("path"), nb::arg("duration_ms"),
-             "Log checkpoint save")
          .def("set_expected_time_per_token", [](TrainingRunLogger* logger, const MultiGPUPyTrainer* trainer){
              auto& config = trainer->config();
              auto& options = trainer->options();
