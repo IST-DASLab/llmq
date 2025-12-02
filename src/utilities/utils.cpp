@@ -36,9 +36,10 @@ cudaStream_t create_named_stream(const char* name) {
     return stream;
 }
 
-cudaEvent_t create_named_event(const char* name) {
+cudaEvent_t create_named_event(const char* name, bool timing) {
     cudaEvent_t event;
-    CUDA_CHECK(cudaEventCreate(&event));
+    int flags = timing ? cudaEventDefault : cudaEventDisableTiming;
+    CUDA_CHECK(cudaEventCreateWithFlags(&event, flags));
     nvtxNameCudaEventA(event, name);
     return event;
 }

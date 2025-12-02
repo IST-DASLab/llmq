@@ -410,6 +410,12 @@ void LLamaRunState::init(LLamaConfig config, long B, long T) {
     mTempStack = DeviceMemoryStack{alloc->allocate(ETensorDType::BYTE, "temporaries", {required_size}).Data, (std::size_t)required_size, Inputs.Device};
 
     MatmulScales = alloc->allocate(ETensorDType::FP32, "mm_scales", {2});
+
+    // debug timings
+    if(Options.TriggerTimingEvents) {
+        TimingOptimizerStart = create_named_event("timing_opt_start", true);
+        TimingOptimizerEnd = create_named_event("timing_opt_done", true);
+    }
 }
 
 LLamaRunState allocate_run_state(LLamaConfig config, LLamaOptions options, long B, long T, std::shared_ptr<TensorAllocator> alloc) {
@@ -432,6 +438,17 @@ void LLamaRunState::temp_acquire(Tensor& target) {
 
 void LLamaRunState::temp_free(Tensor& tensor) {
     mTempStack.free(tensor);
+}
+
+void LLamaRunState::setup_timing_events(int micro_steps) {
+    for(int i = TimingForwardStart.size(); i < micro_steps + 1; ++i) {
+        TimingForwardStart.push_back(create_named_event(("timing_fwd_" + std::to_string(i) + "_start").c_str(), true));
+        TimingForwardEnd.push_back(create_named_event(("timing_fwd_" + std::to_string(i) + "_end").c_str(), true));
+        TimingHeadStart.push_back(create_named_event(("timing_head_" + std::to_string(i) + "_start").c_str(), true));
+        TimingHeadEnd.push_back(create_named_event(("timing_head_" + std::to_string(i) + "_end").c_str(), true));
+        TimingBackwardStart.push_back(create_named_event(("timing_bwd_" + std::to_string(i) + "_start").c_str(), true));
+        TimingBackwardEnd.push_back(create_named_event(("timing_bwd_" + std::to_string(i) + "_end").c_str(), true));
+    }
 }
 
 float get_loss(LLamaRunState& acts) {
