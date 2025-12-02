@@ -15,6 +15,7 @@
 #include "utilities/gpu_info.h"
 #include "utilities/utils.h"
 #include "utilities/allocator.h"
+#include "utilities/sol.h"
 #include <iostream>
 
 TrainingRunLogger::TrainingRunLogger(const std::string& file_name, int rank, EVerbosity verbosity) :
@@ -34,10 +35,6 @@ TrainingRunLogger::TrainingRunLogger(const std::string& file_name, int rank, EVe
 TrainingRunLogger::~TrainingRunLogger()
 {
     if(mLogFile.is_open()) mLogFile.close();
-}
-
-void TrainingRunLogger::set_expected_time_per_token(long nanoseconds) {
-    mExpectedTimePerToken = nanoseconds;
 }
 
 std::string fmt_token_count(long num_tokens) {
@@ -255,6 +252,24 @@ void TrainingRunLogger::log_cmd(int argc, const char** argv)
     }
     cmd += "]}";
     log_line(cmd);
+}
+
+void TrainingRunLogger::log_sol_estimate(std::vector<std::pair<ETensorDType, long>> ops, int world_size) {
+    long ns_per_token = estimate_speed_of_light(get_gpu_name().c_str(), ops) / world_size;
+    long tps = 1'000'000'000l / ns_per_token;
+    if(mRank == 0 && mVerbosity >= 0 || mVerbosity >= 1) {
+        printf("%s", "[Speed of Light]\n");
+        printf("  Blocks:    %12ld in %s\n", ops[0].second, dtype_to_str(ops[0].first));
+        printf("  LM-Head:   %12ld in %s\n", ops[1].second, dtype_to_str(ops[1].first));
+        printf("  Attention: %12ld in %s\n", ops[2].second, dtype_to_str(ops[2].first));
+        printf("  SOL:       %12ld tokens per second\n", tps);
+        printf("%s", "\n");
+    }
+
+    log_line(fmt::format(R"(  {{"log": "sol", "time": "{}", "rank": {}, "step": {}, "blocks": {}, "lm_head": {}, "attention": {}, "tps": {}}})",
+                         std::chrono::system_clock::now(), mRank, 0, ops[0].second, ops[1].second, ops[2].second, tps ));
+
+    mExpectedTimePerToken = ns_per_token;
 }
 
 void TrainingRunLogger::log_line(std::string_view line) {

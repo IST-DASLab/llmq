@@ -17,6 +17,7 @@ struct GPUUtilInfo;
 struct sSegmentMemory;
 class NCCLCommunicator;
 class DataLoader;
+enum class ETensorDType : int;
 
 class TrainingRunLogger
 {
@@ -31,7 +32,7 @@ public:
     TrainingRunLogger(const std::string& file_name, int rank, EVerbosity verbosity);
     ~TrainingRunLogger();
 
-    void set_expected_time_per_token(long nanoseconds);
+    void log_sol_estimate(std::vector<std::pair<ETensorDType, long>> ops, int world_size);
     void set_callback(std::function<void(std::string_view)> cb);
 
     void log_cmd(int argc, const char** argv);
