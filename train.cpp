@@ -507,12 +507,11 @@ void TrainingRunner::run_training(int argc, const char** argv, NCCLCommunicator&
     float loss = run_evaluation(test_loader, model, logger, train_loader.epoch() + 0.01f*train_loader.progress(), MaxSteps, comm, test_loader.num_chunks(), inputs, targets);
     printf("done. validation loss %10f\n", loss);
 
-    printf("Saving model to %s...", OutDir.c_str());
+    auto log = logger.log_section_start(MaxSteps, fmt::format("Saving model to `{}`", OutDir.c_str()));
     std::filesystem::path p(OutDir);
     std::filesystem::create_directories(p);
     save_llama_config(config, (p / "config.json").c_str());
     model.export_weights((p / "model.safetensors").c_str(), comm);
-    printf("%s", " done\n");
 }
 
 float run_evaluation(DataLoader& test_loader, LLamaModel& model, TrainingRunLogger& logger, float epoch, int step,
