@@ -394,8 +394,6 @@ NB_MODULE(_pyllmq, m) {
                 });
             }
         }, nb::arg("file_name"), nb::arg("callback") = nb::none(), nb::arg("verbosity") = TrainingRunLogger::EVerbosity::DEFAULT)
-        .def("set_expected_time_per_token", &TrainingRunLogger::set_expected_time_per_token, nb::arg("nanoseconds"),
-             "Set the expected time per token for MFU estimation")
         .def("log_cmd", [](TrainingRunLogger* logger, const std::vector<std::string>& args) {
             std::vector<const char*> argv;
             argv.reserve(args.size());
@@ -461,7 +459,7 @@ NB_MODULE(_pyllmq, m) {
                     config.NumLayers * ((long)config.HiddenSize * (config.IntermediateSize * 3 + config.HiddenSize * 1 + config.qkv_channels())),
                     options.matmul_dtype(), (long)config.VocabSize * config.HiddenSize, config.DType,
                     config.NumQueryHeads * config.head_size(), config.NumLayers, trainer->seq_length());
-                 logger->set_expected_time_per_token(estimate_speed_of_light(get_gpu_name().c_str(), ops) / trainer->world_size());
+                 logger->log_sol_estimate(ops, trainer->world_size());
              })
         ;
 }

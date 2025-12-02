@@ -78,10 +78,21 @@ def convert_log(file_name: str, *, name: Optional[str], project: str, notes: str
             elif kind == "dataset":
                 pass
                 #run.config["dataset"] = entry
-            elif kind == "option":
+            elif kind in ["option", "info"]:
                 pass
-            elif kind == "checkpoint":
-                pass
+            elif kind == "sol":
+                if entry["rank"] != 0:
+                    continue
+                import plotly.express as px
+                names = ["Blocks", "LM-Head", "Attention"]
+                amounts = [entry["blocks"], entry["lm_head"], entry["attention"]]
+
+                fig = px.pie(
+                    names=names,
+                    values=amounts,
+                    title=f"FLOPs",
+                )
+                run.log({"ops": fig}, step=step)
             else:
                 raise RuntimeError(f"Unknown kind {kind}")
 
