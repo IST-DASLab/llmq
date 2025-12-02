@@ -458,13 +458,8 @@ void TrainingRunner::run_training(int argc, const char** argv, NCCLCommunicator&
         }
 
         if (CkptEvery > 0 && step % CkptEvery == 0 && step > latest_step) {
-            printf("saving checkpoint to %s ...", CkptDir.c_str());
-            std::chrono::high_resolution_clock::time_point start = std::chrono::high_resolution_clock::now();
+            auto log = logger.log_section_start(step, fmt::format("saving checkpoint to `{}`", CkptDir.c_str()));
             std::string save_path = save_checkpoint(CkptDir, step, model, &train_loader, comm);
-            std::chrono::high_resolution_clock::time_point end = std::chrono::high_resolution_clock::now();
-            long ms = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
-            logger.log_checkpoint(step, save_path, ms);
-            printf("%s", " done\n");
             if(CkptToKeep > 0) {
                 auto cleaned = clean_old_checkpoints(CkptDir, CkptToKeep, MajorCkptEvery);
                 printf("Cleaned %z checkpoints\n", cleaned.size());

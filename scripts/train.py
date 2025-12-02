@@ -217,10 +217,7 @@ def run_training_loop(config: pyllmq.TrainingConfig, trainer: pyllmq.LLMQTrainer
         # Checkpointing
         if config.ckpt_interval > 0 and step % config.ckpt_interval == 0 and step > latest_step:
             print(f"Saving checkpoint to {config.checkpoint_dir}...")
-            start_time = time.time()
-            ckpt_path = trainer.save_checkpoint(config.checkpoint_dir, step)
-            elapsed_ms = int((time.time() - start_time) * 1000)
-            logger.log_checkpoint(step, ckpt_path, elapsed_ms)
+            trainer.save_checkpoint(config.checkpoint_dir, step)
             print("done")
 
             # Clean old checkpoints

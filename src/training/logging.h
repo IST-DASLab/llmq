@@ -60,8 +60,6 @@ public:
     };
     RAII_Section log_section_start(int step, const std::string& info);
     void log_section_end();
-
-    void log_checkpoint(int step, std::string path, int duration_ms);
 private:
     void log_line(std::string_view line);
     std::string mFileName;
