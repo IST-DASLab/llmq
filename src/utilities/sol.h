@@ -17,4 +17,6 @@ std::vector<std::pair<ETensorDType, long>> get_transformer_ops(long non_embeddin
 // peak speed
 long estimate_speed_of_light(const char* device, const std::vector<std::pair<ETensorDType, long>>& ops);
 
+long get_peak_rate(const char* device, ETensorDType dtype);
+
 #endif // LLMQ_SRC_UTILITIES_SOL_H

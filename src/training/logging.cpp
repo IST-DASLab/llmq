@@ -124,6 +124,15 @@ std::string format_tps(long eval_tokens, long duration_ms) {
     }
 }
 
+
+std::string format_flop(long flop) {
+    if(flop > 2'000'000'000) {
+        return fmt::format("{:8.1f} G", float(flop) / 1'000'000'000.f);
+    } else {
+        return fmt::format("{:8.1f} M", float(flop) / 1'000'000.f);
+    }
+}
+
 std::string format_time(int duration_ms) {
     if (duration_ms >= 100'000) {
         return fmt::format("{:5d}  s", duration_ms / 1000);
@@ -255,19 +264,37 @@ void TrainingRunLogger::log_cmd(int argc, const char** argv)
 }
 
 void TrainingRunLogger::log_sol_estimate(std::vector<std::pair<ETensorDType, long>> ops, int world_size) {
-    long ns_per_token = estimate_speed_of_light(get_gpu_name().c_str(), ops) / world_size;
+    auto gpu_name = get_gpu_name();
+    long ns_per_token = estimate_speed_of_light(gpu_name.c_str(), ops) / world_size;
     long tps = 1'000'000'000l / ns_per_token;
     if(mRank == 0 && mVerbosity >= 0 || mVerbosity >= 1) {
         printf("%s", "[Speed of Light]\n");
-        printf("  Blocks:    %12ld in %s\n", ops[0].second, dtype_to_str(ops[0].first));
-        printf("  LM-Head:   %12ld in %s\n", ops[1].second, dtype_to_str(ops[1].first));
-        printf("  Attention: %12ld in %s\n", ops[2].second, dtype_to_str(ops[2].first));
-        printf("  SOL:       %12ld tokens per second\n", tps);
+
+        auto log_speed_if_needed = [&](ETensorDType dtype, const char* name){
+            if(ops[0].first == dtype || ops[1].first == dtype || ops[2].first == dtype) {
+                auto rate = get_peak_rate(gpu_name.c_str(), dtype);
+                if(rate > 0) {
+                    printf("  Peak %s: %8ld TFLOP/s\n", name, rate);
+                }
+            }
+        };
+
+        log_speed_if_needed(ETensorDType::FP32, "TF32");
+        log_speed_if_needed(ETensorDType::BF16, "BF16");
+        log_speed_if_needed(ETensorDType::FP16, "FP16");
+        log_speed_if_needed(ETensorDType::FP8_E4M3, " FP8");
+
+        printf("  Blocks:    %sFLOP   in %s\n", format_flop(ops[0].second).c_str(), dtype_to_str(ops[0].first));
+        printf("  LM-Head:   %sFLOP   in %s\n", format_flop(ops[1].second).c_str(), dtype_to_str(ops[1].first));
+        printf("  Attention: %sFLOP   in %s\n", format_flop(ops[2].second).c_str(), dtype_to_str(ops[2].first));
+        printf("  SOL:       %8ld tok/s\n", tps);
         printf("%s", "\n");
     }
 
-    log_line(fmt::format(R"(  {{"log": "sol", "time": "{}", "rank": {}, "step": {}, "blocks": {}, "lm_head": {}, "attention": {}, "tps": {}}})",
-                         std::chrono::system_clock::now(), mRank, 0, ops[0].second, ops[1].second, ops[2].second, tps ));
+    log_line(fmt::format(R"(  {{"log": "sol", "time": "{}", "rank": {}, "step": {}, "blocks": {}, "lm_head": {}, "attention": {}, "tps": {}, "tf32_peak": {}, "bf16_peak": {}, "fp16_peak": {}, "fp8_peak": {}}})",
+                         std::chrono::system_clock::now(), mRank, 0, ops[0].second, ops[1].second, ops[2].second, tps,
+                         get_peak_rate(gpu_name.c_str(), ETensorDType::FP32), get_peak_rate(gpu_name.c_str(), ETensorDType::BF16),
+                         get_peak_rate(gpu_name.c_str(), ETensorDType::FP16), get_peak_rate(gpu_name.c_str(), ETensorDType::FP8_E4M3)));
 
     mExpectedTimePerToken = ns_per_token;
 }
