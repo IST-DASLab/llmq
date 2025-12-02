@@ -247,24 +247,28 @@ sPerfSpecs get_device_perf(std::string_view device) {
     }
 }
 
+long get_peak_rate(const sPerfSpecs& spec, ETensorDType dtype) {
+    switch (dtype) {
+        case ETensorDType::FP32:
+            return spec.TF32_TFlops;
+        case ETensorDType::BF16:
+            return spec.BF16_TFlops;
+        case ETensorDType::FP16:
+            return spec.FP16_32_TFlops; // TODO ambiguous accumulator
+        case ETensorDType::INT8:
+            return spec.INT8_TFlops;
+        case ETensorDType::FP8_E4M3:
+        case ETensorDType::FP8_E5M2:
+            return spec.FP8_32_TFlops;
+        default:
+            throw std::logic_error("invalid dtype");
+    }
+}
+
 std::int64_t time_for_op_ns(const sPerfSpecs& spec, ETensorDType dtype, std::int64_t count) {
     // tera = 10^12; nano = 10^-9
     count /= 1000;
-    switch (dtype) {
-    case ETensorDType::FP32:
-        return count / spec.TF32_TFlops;
-    case ETensorDType::BF16:
-        return count / spec.BF16_TFlops;
-    case ETensorDType::FP16:
-        return count / spec.FP16_32_TFlops; // TODO ambiguous accumulator
-    case ETensorDType::INT8:
-        return count / spec.INT8_TFlops;
-    case ETensorDType::FP8_E4M3:
-    case ETensorDType::FP8_E5M2:
-        return count / spec.FP8_32_TFlops;
-    default:
-        throw std::logic_error("invalid dtype");
-    }
+    return count / get_peak_rate(spec, dtype);
 }
 
 long estimate_speed_of_light(const char* device, const std::vector<std::pair<ETensorDType, long>>& ops) {
@@ -275,6 +279,13 @@ long estimate_speed_of_light(const char* device, const std::vector<std::pair<ETe
     for (auto [op, count] : ops)
         nanoseconds += time_for_op_ns(spec, op, count);
     return nanoseconds;
+}
+
+long get_peak_rate(const char* device, ETensorDType dtype) {
+    sPerfSpecs spec = get_device_perf(device);
+    if (!spec.Chip)
+        return -1; // ¯\_(ツ)_/¯
+    return get_peak_rate(spec, dtype);
 }
 
 std::vector<std::pair<ETensorDType, long>> get_transformer_ops(long non_embedding_params, ETensorDType non_embedding_dtype, long embedding_params, ETensorDType embedding_dtype, long d_att, long n_layers, long ctx) {
