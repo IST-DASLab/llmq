@@ -274,7 +274,7 @@ void TrainingRunLogger::log_sol_estimate(std::vector<std::pair<ETensorDType, lon
             if(ops[0].first == dtype || ops[1].first == dtype || ops[2].first == dtype) {
                 auto rate = get_peak_rate(gpu_name.c_str(), dtype);
                 if(rate > 0) {
-                    printf("  Peak %s: %8ld TFLOP/s\n", name, rate);
+                    printf("  Peak %s: %8.1f TFLOP/s\n", name, rate);
                 }
             }
         };
@@ -283,6 +283,14 @@ void TrainingRunLogger::log_sol_estimate(std::vector<std::pair<ETensorDType, lon
         log_speed_if_needed(ETensorDType::BF16, "BF16");
         log_speed_if_needed(ETensorDType::FP16, "FP16");
         log_speed_if_needed(ETensorDType::FP8_E4M3, " FP8");
+
+        double true_bf16_rate = measure_real_peak();
+        float rate = (true_bf16_rate / 1e12) / get_peak_rate(gpu_name.c_str(), ETensorDType::BF16);
+        if(rate < 0.85) {
+            printf("  \033[31;1mBenchmark:  %6.1f%%         of spec sheet\033[0m\n", rate  * 100);
+        } else {
+            printf("  Benchmark:  %6.1f%%         of spec sheet\n", rate  * 100);
+        }
 
         printf("  Blocks:    %sFLOP   in %s\n", format_flop(ops[0].second).c_str(), dtype_to_str(ops[0].first));
         printf("  LM-Head:   %sFLOP   in %s\n", format_flop(ops[1].second).c_str(), dtype_to_str(ops[1].first));

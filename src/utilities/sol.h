@@ -17,6 +17,9 @@ std::vector<std::pair<ETensorDType, long>> get_transformer_ops(long non_embeddin
 // peak speed
 long estimate_speed_of_light(const char* device, const std::vector<std::pair<ETensorDType, long>>& ops);
 
-long get_peak_rate(const char* device, ETensorDType dtype);
+float get_peak_rate(const char* device, ETensorDType dtype);
+
+// Runs a large matmul to measure device peak flops in bf16
+double measure_real_peak();
 
 #endif // LLMQ_SRC_UTILITIES_SOL_H
