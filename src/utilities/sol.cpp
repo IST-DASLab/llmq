@@ -7,8 +7,12 @@
 #include <cstdint>
 #include <string_view>
 #include <unordered_map>
+#include <cublasLt.h>
+#include <chrono>
 
 #include "utilities/dtype.h"
+#include "kernels/kernels.h"        // for benchmarking matmul
+#include "utils.h"
 
 struct sPerfSpecs {
     const char* Chip = nullptr;
@@ -247,7 +251,7 @@ sPerfSpecs get_device_perf(std::string_view device) {
     }
 }
 
-long get_peak_rate(const sPerfSpecs& spec, ETensorDType dtype) {
+float get_peak_rate(const sPerfSpecs& spec, ETensorDType dtype) {
     switch (dtype) {
         case ETensorDType::FP32:
             return spec.TF32_TFlops;
@@ -281,7 +285,7 @@ long estimate_speed_of_light(const char* device, const std::vector<std::pair<ETe
     return nanoseconds;
 }
 
-long get_peak_rate(const char* device, ETensorDType dtype) {
+float get_peak_rate(const char* device, ETensorDType dtype) {
     sPerfSpecs spec = get_device_perf(device);
     if (!spec.Chip)
         return -1; // ¯\_(ツ)_/¯
@@ -294,4 +298,61 @@ std::vector<std::pair<ETensorDType, long>> get_transformer_ops(long non_embeddin
     ops.emplace_back(embedding_dtype, 6l * embedding_params);
     ops.emplace_back(embedding_dtype, 6l * n_layers * d_att * ctx);
     return ops;
+}
+
+cublasLtHandle_t create_cublaslt_handle();
+
+double measure_real_peak() {
+    nv_bfloat16* a;
+    nv_bfloat16* b;
+    nv_bfloat16* c;
+    CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&a), 2 * 16384 * 16384));
+    CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&b), 2 * 16384 * 16384));
+    CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&c), 2 * 16384 * 16384));
+    CUDA_CHECK(cudaMemset(a, 0b00010101, 2 * 16384 * 16384));
+    CUDA_CHECK(cudaMemset(b, 0b00010101, 2 * 16384 * 16384));
+
+    cublasLtHandle_t handle = create_cublaslt_handle();
+    std::byte* workspace = nullptr;
+    CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&workspace), 32*1024*1024));
+
+
+    cudaEvent_t start_event, stop_event;
+    CUDA_CHECK(cudaEventCreate(&start_event));
+    CUDA_CHECK(cudaEventCreate(&stop_event));
+    // warmup
+    std::chrono::steady_clock::time_point start = std::chrono::steady_clock::now();
+    int trip_count = 0;
+    while (true) {
+        auto dt = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start).count();
+        CUDA_CHECK(cudaDeviceSynchronize());
+        if(dt > 500) {
+            break;
+        }
+        ++trip_count;
+        matmul(c, a, b, nullptr, nullptr, nullptr, handle, workspace, 32 * 1024 * 1024,
+               16384, 16384, 16384, EMMTranspose::TN, false, nullptr);
+    }
+
+    // now, actual measurement
+    CUDA_CHECK(cudaEventRecord(start_event));
+    for(int i = 0; i < trip_count; ++i) {
+        matmul(c, a, b, nullptr, nullptr, nullptr, handle, workspace, 32 * 1024 * 1024,
+               16384, 16384, 16384, EMMTranspose::TN, false, nullptr);
+    }
+    CUDA_CHECK(cudaEventRecord(stop_event));
+    CUDA_CHECK(cudaEventSynchronize(stop_event));
+    float ms_total;
+    CUDA_CHECK(cudaEventElapsedTime(&ms_total, start_event, stop_event));
+
+    std::int64_t ops_total = 2 * 16384ll * 16384ll * 16384ll * trip_count;
+
+    CUDA_CHECK(cudaFree(a));
+    CUDA_CHECK(cudaFree(b));
+    CUDA_CHECK(cudaFree(c));
+    CUDA_CHECK(cudaFree(workspace));
+    cublasLtDestroy(handle);
+
+    double ops_per_sec = ops_total / ms_total * 1000;
+    return ops_per_sec;
 }

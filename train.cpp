@@ -379,6 +379,12 @@ void TrainingRunner::run_training(int argc, const char** argv, NCCLCommunicator&
         });
     }
 
+    logger.log_sol_estimate(get_transformer_ops(
+                                config.NumLayers * ((long)config.HiddenSize * (config.IntermediateSize * 3 + config.HiddenSize * 1 + config.qkv_channels())),
+                                Options.matmul_dtype(), (long)config.VocabSize * config.HiddenSize, config.DType,
+                                config.NumQueryHeads * config.head_size(), config.NumLayers, T),
+                            comm.world_size());
+
     LLamaModel model{config, Options, comm.rank(), comm.world_size(), allocator};
 
     // Note: cannot check for exact equality, because vocab_size differs in tokenizer vs model (implicit padding)
@@ -420,11 +426,6 @@ void TrainingRunner::run_training(int argc, const char** argv, NCCLCommunicator&
     }
 
     logger.log_dataset(train_loader, test_loader);
-    logger.log_sol_estimate(get_transformer_ops(
-        config.NumLayers * ((long)config.HiddenSize * (config.IntermediateSize * 3 + config.HiddenSize * 1 + config.qkv_channels())),
-        Options.matmul_dtype(), (long)config.VocabSize * config.HiddenSize, config.DType,
-        config.NumQueryHeads * config.head_size(), config.NumLayers, T),
-                            comm.world_size());
 
     logger.log_allocator(model.get_allocator().get_allocation_segments());
 
