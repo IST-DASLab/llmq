@@ -86,6 +86,24 @@ sPerfSpecs L40 = {
     .FP8_16_TFlops = 728 /* extrapolated */
 };
 
+// Note: I don't believe these numbers. Running a gigantic matmul (32k x 32k), I can get only
+// about 230 TFlop/s on our machine.
+sPerfSpecs L40S = {
+    .Chip = "AD102",
+    .SMs = 142,
+    .CoresPerSM = 128,
+    .TensorPerSM = 4,
+    .BoostClock = 2520,
+    .TF32_TFlops = 183,
+    .BF16_TFlops = 362.05,
+    .FP16_32_TFlops = 362.05,
+    .FP16_16_TFlops = 362.05,
+    .INT8_TFlops = 733,
+    .INT4_TFlops = 733,
+    .FP8_32_TFlops = 733,
+    .FP8_16_TFlops = 728
+};
+
 sPerfSpecs A40 = {
     .Chip = "GA102",
     .SMs = 84,
@@ -213,7 +231,7 @@ std::unordered_map<std::string_view, sPerfSpecs> create_device_map() {
 
     device_map["NVIDIA A40"] = A40;
     device_map["NVIDIA L40"] = L40;
-    device_map["NVIDIA L40S"] = interpolate(L40, 142, 2520);
+    device_map["NVIDIA L40S"] = L40S;
     device_map["NVIDIA L4"] = L4;
 
     device_map["NVIDIA GeForce RTX 4090"] = RTX_4090;
