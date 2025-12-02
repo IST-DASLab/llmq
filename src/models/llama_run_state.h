@@ -140,6 +140,19 @@ struct LLamaRunState {
     cudaGraphExec_t ForwardBlockGraph = nullptr;
     cudaGraphExec_t BackwardBlockGraph = nullptr;
 
+    // events for debugging timings
+    cudaEvent_t TimingOptimizerStart = nullptr;
+    cudaEvent_t TimingOptimizerEnd   = nullptr;
+
+    void setup_timing_events(int micro_steps);
+
+    std::vector<cudaEvent_t> TimingForwardStart;
+    std::vector<cudaEvent_t> TimingForwardEnd;
+    std::vector<cudaEvent_t> TimingHeadStart;
+    std::vector<cudaEvent_t> TimingHeadEnd;
+    std::vector<cudaEvent_t> TimingBackwardStart;
+    std::vector<cudaEvent_t> TimingBackwardEnd;
+
     cudnnHandle_t CudnnHandle;
     cublasLtHandle_t CublasLtHandle;
 

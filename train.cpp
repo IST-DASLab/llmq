@@ -16,6 +16,7 @@
 #include "training/checkpoint.h"
 
 #include "models/llama_model.h"
+#include "models/llama_run_state.h"     // only needed for debug timing
 #include <chrono>
 #include <CLI/CLI.hpp>
 #include <fmt/chrono.h>
@@ -121,6 +122,7 @@ void TrainingRunner::load_training_config(int argc, const char** argv) {
     // debug
     app.add_option("--name", RunName, "Associate a name with this run. This will not influence any computations. You can use %n as part of specifying log, output, and checkpoint file names.");
     app.add_option("--debug-log-allocations", LogAllocations, "Log all memory allocations larger than the given number (in MiB)");
+    app.add_flag("--debug-time-breakdown", Options.TriggerTimingEvents, "Log additional timing information");
 
     // optimizer
     app.add_option("--lr,--learning-rate", LearningRate, "Base learning rate");
@@ -482,6 +484,24 @@ void TrainingRunner::run_training(int argc, const char** argv, NCCLCommunicator&
         float step_loss = model.get_loss();
         float step_norm = model.get_norm();
         logger.log_step(step, train_loader.epoch() + 0.01f*train_loader.progress(), B*T*GradAccSteps*comm.world_size(), narrow<int>(ms), step_norm, step_loss / (B*T*GradAccSteps), lr);
+
+        if(Options.TriggerTimingEvents) {
+            // timing breakdown
+            printf("%s", "\nTiming breakdown:\n");
+            auto& rs = model.run_state();
+            for(int i = 0; i < GradAccSteps; ++i) {
+                float fwd, bwd, head;
+                CUDA_CHECK(cudaEventElapsedTime(&fwd, rs.TimingForwardStart[i], rs.TimingForwardEnd[i]));
+                CUDA_CHECK(cudaEventElapsedTime(&head, rs.TimingHeadStart[i], rs.TimingHeadEnd[i]));
+                CUDA_CHECK(cudaEventElapsedTime(&bwd, rs.TimingBackwardStart[i], rs.TimingBackwardEnd[i]));
+                // not: head events are nested in bwd, so need to subtract times
+                printf("  fwd %7.2fms, head %7.2fms, bwd %7.2fms\n", fwd, head, bwd - head);
+            }
+            float opt;
+            CUDA_CHECK(cudaEventElapsedTime(&opt, rs.TimingOptimizerStart, rs.TimingOptimizerEnd));
+            printf("  opt %7.2fms\n", opt);
+            printf("%s", "\n");
+        }
     }
 
     float loss = run_evaluation(test_loader, model, logger, train_loader.epoch() + 0.01f*train_loader.progress(), MaxSteps, comm, test_loader.num_chunks(), inputs, targets);

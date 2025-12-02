@@ -95,7 +95,7 @@ public:
 #define NVTX_RANGE_FN() NvtxRange nvtx_range_##__COUNTER__ (__FUNCTION__)
 
 cudaStream_t create_named_stream(const char* name);
-cudaEvent_t create_named_event(const char* name);
+cudaEvent_t create_named_event(const char* name, bool timing=false);
 
 
 // ----------------------------------------------------------------------------

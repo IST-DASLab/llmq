@@ -75,6 +75,11 @@ float* quant_abs_max_ptr(QuantizableTensor& tensor) {
 void LLamaModel::forward(Tensor inputs, NCCLCommunicator& comm, int micro_step) {
     NVTX_RANGE_FN();
 
+    if(Options.TriggerTimingEvents) {
+        RunState->setup_timing_events(micro_step);
+        CUDA_CHECK(cudaEventRecord(RunState->TimingForwardStart[micro_step], RunState->MainStream));
+    }
+
     assert(inputs.DType == ETensorDType::INT32);
     auto& rs = RunState;
     cudaStream_t main_stream = rs->MainStream;
@@ -162,6 +167,11 @@ void LLamaModel::forward(Tensor inputs, NCCLCommunicator& comm, int micro_step) 
     // do not return before inputs can be accessed again.
     CUDA_CHECK(cudaEventSynchronize(rs->TransferDone));
     CUDA_CHECK(cudaEventRecord(rs->ForwardDone, main_stream));
+
+    if(Options.TriggerTimingEvents) {
+        CUDA_CHECK(cudaEventRecord(RunState->TimingForwardEnd[micro_step], RunState->MainStream));
+    }
+
 }
 
 void LLamaModel::_forward_block(sLLamaBlockWeights<Tensor>& weights, sLLamaLayerActivations& acts, Tensor& residual)
@@ -327,6 +337,10 @@ void LLamaModel::backward(Tensor inputs, Tensor targets, NCCLCommunicator& comm,
 
     NVTX_RANGE_FN();
 
+    if(Options.TriggerTimingEvents) {
+        CUDA_CHECK(cudaEventRecord(rs->TimingBackwardStart[micro_step], main_stream));
+    }
+
     // convenience shortcuts, size_t instead of int so that pointer arithmetics don't overflow
     long B = inputs.Sizes[0];
     long T = inputs.Sizes[1];
@@ -421,6 +435,10 @@ void LLamaModel::backward(Tensor inputs, Tensor targets, NCCLCommunicator& comm,
 
     // do not return before inputs can be accessed again.
     CUDA_CHECK(cudaEventSynchronize(rs->TransferDone));
+
+    if(Options.TriggerTimingEvents) {
+        CUDA_CHECK(cudaEventRecord(rs->TimingBackwardEnd[micro_step], main_stream));
+    }
 }
 
 void LLamaModel::_backward_lmhead(long B, long T, int micro_step, int grad_accum_steps, NCCLCommunicator& comm) {
@@ -429,6 +447,10 @@ void LLamaModel::_backward_lmhead(long B, long T, int micro_step, int grad_accum
     const size_t V = Config.VocabSize;
     const size_t Vp = Config.VocabSize;
     cudaStream_t main_stream = rs->MainStream;
+
+    if(Options.TriggerTimingEvents) {
+        CUDA_CHECK(cudaEventRecord(rs->TimingHeadStart[micro_step], main_stream));
+    }
 
     long nano_batches = Options.LMHeadChunks;
     int nano_batch_size = div_exact(B * T, nano_batches);
@@ -482,6 +504,11 @@ void LLamaModel::_backward_lmhead(long B, long T, int micro_step, int grad_accum
     }
     rs->temp_free(rs->Output);
     Parameters->release_head(main_stream);
+
+
+    if(Options.TriggerTimingEvents) {
+        CUDA_CHECK(cudaEventRecord(rs->TimingHeadEnd[micro_step], main_stream));
+    }
 }
 
 void LLamaModel::_recompute_block(sLLamaBlockWeights<Tensor>& weights, sLLamaLayerActivations& acts, Tensor& residual) {
@@ -704,6 +731,10 @@ void LLamaModel::update(NCCLCommunicator& comm, float learning_rate, float beta_
 
     auto& rng = OptimizerRNG;
 
+    if(Options.TriggerTimingEvents) {
+        CUDA_CHECK(cudaEventRecord(rs->TimingOptimizerStart, main_stream));
+    }
+
     // make sure we can run abs_max again
     Parameters->reset_scales(main_stream);
 
@@ -770,6 +801,9 @@ void LLamaModel::update(NCCLCommunicator& comm, float learning_rate, float beta_
     }
     comm.wait_on_comms(main_stream);
     CUDA_CHECK(cudaEventRecord(rs->OptimizerDone, main_stream));
+    if(Options.TriggerTimingEvents) {
+        CUDA_CHECK(cudaEventRecord(rs->TimingOptimizerEnd, main_stream));
+    }
 }
 
 void LLamaModel::allocate_run_state(const LLamaOptions& options, NCCLCommunicator& comm, int B, int T) {
@@ -778,6 +812,7 @@ void LLamaModel::allocate_run_state(const LLamaOptions& options, NCCLCommunicato
     {
         auto ctx = Allocator->with_context("Activations");
         acts = ::allocate_run_state(Config, options, B, T, Allocator);
+
     }
 
     {

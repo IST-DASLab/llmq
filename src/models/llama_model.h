@@ -29,6 +29,7 @@ struct LLamaOptions {
     int LMHeadChunks = 1;
     int AttBwdChunks = 1;
     bool UseCudaGraphs = false;
+    bool TriggerTimingEvents = false;
 
     bool OffloadMaster = false;
     bool OffloadQuants = false;
@@ -119,6 +120,7 @@ public:
 
     const LLamaConfig& config() { return Config; }
     LLamaGradsManager& grads() { return *Grads; }
+    LLamaRunState& run_state() { return *RunState; }
 
 protected:
     void _calculate_gradient_norm(NCCLCommunicator& comm, float grad_clip);
