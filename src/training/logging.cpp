@@ -4,7 +4,6 @@
 
 #include "logging.h"
 
-#include <chrono>
 #include <cmath>
 #include <filesystem>
 
@@ -302,4 +301,31 @@ void TrainingRunLogger::log_allocator(const std::vector<std::pair<std::string, s
 
 void TrainingRunLogger::set_callback(std::function<void(std::string_view)> cb) {
     mCallback = std::move(cb);
+}
+
+TrainingRunLogger::RAII_Section TrainingRunLogger::log_section_start(int step, const std::string& info) {
+    if(mRank != 0) return RAII_Section{nullptr};
+    mSectionInfo = info;
+    mSectionStep = step;
+    mSectionStart = std::chrono::steady_clock::now();
+    if(mVerbosity >= 0) {
+        printf("%s ...\n", info.data());
+    }
+    return RAII_Section{this};
+}
+
+void TrainingRunLogger::log_section_end() {
+    auto duration = std::chrono::steady_clock::now() - mSectionStart;
+    long milliseconds = std::chrono::duration_cast<std::chrono::milliseconds>(duration).count();
+    if(mRank != 0) return;
+    log_line(fmt::format(R"(  {{"log": "info", "time": "{}", "step": {}, "message": {}, "duration_ms": {}}})",
+                         std::chrono::system_clock::now(), mSectionStep, mSectionInfo, milliseconds ));
+
+    if(mVerbosity >= 0) {
+        if(milliseconds < 2000) {
+            printf("  done in %ld ms\n\n", milliseconds);
+        } else {
+            printf("  done in %ld s\n\n", milliseconds / 1000);
+        }
+    }
 }

@@ -403,18 +403,17 @@ void TrainingRunner::run_training(int argc, const char** argv, NCCLCommunicator&
     }
 
     model.allocate_run_state(Options, comm, B, T);
+
     if (latest_step >= 0) {
-        printf("Loading checkpoint %d from %s ...", latest_step, CkptDir.c_str());
+        auto log = logger.log_section_start(0, fmt::format("Loading checkpoint {} from `{}`", latest_step, CkptDir.c_str()));
         load_checkpoint(CkptDir, latest_step, model, &train_loader, comm);
-        printf("%s", " done\n");
     } else if (FromScratch) {
-        printf("%s", "Initializing model from scratch...\n");
+        auto log = logger.log_section_start(0, "Initializing model from scratch");
         model.init_weights(comm);
         latest_step = 0;
     } else {
-        printf("Loading model from `%s`\n", model_path.c_str());
+        auto log = logger.log_section_start(0, fmt::format("Loading model from `{}`", model_path.c_str()));
         model.import_weights(model_path, true, comm);
-        printf("%s", " done\n");
         latest_step = 0;
     }
 

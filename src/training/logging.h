@@ -11,6 +11,7 @@
 #include <variant>
 #include <vector>
 #include <functional>
+#include <chrono>
 
 struct GPUUtilInfo;
 struct sSegmentMemory;
@@ -42,6 +43,24 @@ public:
     void log_gpu_state(int step, int gpu_id, const GPUUtilInfo& gpu_util);
     void log_allocator(const std::vector<std::pair<std::string, sSegmentMemory>>& stats);
 
+    // call at the beginning and end of a section of processing.
+    // will record the time between the two calls
+    class RAII_Section {
+    public:
+        ~RAII_Section() noexcept {
+            if(mLogger)
+                mLogger->log_section_end();
+        };
+    private:
+        RAII_Section(TrainingRunLogger* l) : mLogger(l) {}
+        RAII_Section(RAII_Section&&) = default;
+        TrainingRunLogger* mLogger;
+
+        friend class TrainingRunLogger;
+    };
+    RAII_Section log_section_start(int step, const std::string& info);
+    void log_section_end();
+
     void log_checkpoint(int step, std::string path, int duration_ms);
 private:
     void log_line(std::string_view line);
@@ -64,6 +83,11 @@ private:
 
     // arbitrary callback for log lines
     std::function<void(std::string_view)> mCallback;
+
+    // log section is a two-step process, here we safe intermediaries
+    std::string mSectionInfo;
+    int mSectionStep;
+    std::chrono::steady_clock::time_point mSectionStart;
 };
 
 #endif //LLMQ_TRAINING_LOGGING_H
