@@ -419,11 +419,20 @@ void TrainingRunner::run_training(int argc, const char** argv, NCCLCommunicator&
     }
 
     logger.log_dataset(train_loader, test_loader);
-    logger.set_expected_time_per_token(estimate_speed_of_light(get_gpu_name().c_str(),
-        get_transformer_ops(
+    {
+        auto ops_breakdown = get_transformer_ops(
             config.NumLayers * ((long)config.HiddenSize * (config.IntermediateSize * 3 + config.HiddenSize * 1 + config.qkv_channels())),
-        Options.matmul_dtype(), (long)config.VocabSize * config.HiddenSize, config.DType,
-        config.NumQueryHeads * config.head_size(), config.NumLayers, T)) / comm.world_size());
+            Options.matmul_dtype(), (long)config.VocabSize * config.HiddenSize, config.DType,
+            config.NumQueryHeads * config.head_size(), config.NumLayers, T);
+        long ns_per_token = estimate_speed_of_light(get_gpu_name().c_str(), ops_breakdown) / comm.world_size();
+        printf("%s", "[Speed of Light]\n");
+        printf("  Backbone:  %12ld in %s\n", ops_breakdown[0].second, dtype_to_str(ops_breakdown[0].first));
+        printf("  LM-Head:   %12ld in %s\n", ops_breakdown[1].second, dtype_to_str(ops_breakdown[1].first));
+        printf("  Attention: %12ld in %s\n", ops_breakdown[2].second, dtype_to_str(ops_breakdown[2].first));
+        printf("  SOL:       %12d tokens per second\n", 1'000'000'000 / ns_per_token);
+        printf("%s", "\n");
+        logger.set_expected_time_per_token(ns_per_token);
+    }
 
     logger.log_allocator(model.get_allocator().get_allocation_segments());
 
