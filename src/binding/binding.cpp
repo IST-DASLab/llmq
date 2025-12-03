@@ -264,6 +264,7 @@ NB_MODULE(_pyllmq, m) {
 
     nb::class_<MultiGPUPyTrainer>(m, "LLMQTrainer")
         .def("__init__", [](MultiGPUPyTrainer *t, int ngpu, LLamaConfig config, LLamaOptions options, int batch_size, int seq_len, int grad_accum, bool memcpy_all_gather, bool memcpy_send_recv) {
+            options.ModelType = config.DType;
             new (t) MultiGPUPyTrainer(ngpu, config, options, batch_size, seq_len, grad_accum, memcpy_all_gather, memcpy_send_recv);
         }, nb::arg("ngpu"), nb::arg("config"), nb::arg("options"), nb::arg("batch_size"), nb::arg("seq_len"), nb::arg("grad_accum"),
              nb::arg("memcpy_all_gather") = true, nb::arg("memcpy_send_recv") = true)

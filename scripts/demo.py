@@ -68,7 +68,7 @@ def main():
 
     print("\nmemory consumption:")
     for k, v in trainer.get_allocator_info(0).items():
-        print(f" {k:20}: {v // 1024 // 1024:6} MiB")
+        print(f" {k:20}: {v['device'] // 1024 // 1024:6} MiB")
 
     train_loader.load_batch(in_tokens, out_tokens)
 
