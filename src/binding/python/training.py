@@ -311,6 +311,7 @@ def training_logger_context(config: TrainingConfig):
         logger.log_cmd(sys.argv)
         log_options = asdict(config)
         log_options["matmul_dtype"] = log_options["matmul_dtype"] or config.model_dtype
+        log_options["gradient_dtype"] = log_options["gradient_dtype"] or log_options["matmul_dtype"]
         log_options["verbosity"] = str(config.verbosity)
         logger.log_options(log_options)
         yield logger
