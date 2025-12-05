@@ -13,7 +13,7 @@ __global__ void reduce_abs_max_kernel(float* __restrict__ result, const floatX* 
 
     __shared__ float block_abs_max;
     if(threadIdx.x == 0) {
-        block_abs_max = 1e-10f;
+        block_abs_max = 0.f;
     }
     __syncthreads();
     float thread_abs_max = 0.f;
@@ -76,7 +76,7 @@ __global__ void quantize_with_abs_max_kernel(FloatOut* __restrict__ out, float* 
                                              const FloatIn* __restrict__ in, const float* __restrict__ abs_max, long N) {
     using vec_t = GenericVector<FloatIn, 16 / sizeof(FloatIn)>;
     using f8v_t = GenericVector<FloatOut, 16 / sizeof(FloatIn)>;
-    float scale = 448.f / *abs_max;
+    float scale = 448.f / fmaxf(*abs_max, 1e-10f);
     if(threadIdx.x == 0 && blockIdx.x == 0 && scale_ptr) {
         *scale_ptr = 1.f / scale;
     }
@@ -150,7 +150,7 @@ __global__ void quantize_and_transpose_with_abs_max_kernel(std::int8_t* out, flo
 
 template<int BLK, class floatX>
 __global__ void quantize_and_transpose_with_abs_max_kernel(__nv_fp8_e4m3* out, float* scale_ptr, const floatX* in, const float* abs_max, int rows, int cols) {
-    float scale = 448.f / *abs_max;
+    float scale = 448.f / fmaxf(*abs_max, 1e-10f);
     if(threadIdx.x == 0 && blockIdx.x == 0 && scale_ptr) {
         *scale_ptr = 1.f / scale;
     }

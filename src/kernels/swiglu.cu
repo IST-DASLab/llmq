@@ -34,7 +34,7 @@ __global__ void swiglu_forward_kernel(floatX* out, const floatX* inp, float* abs
     // so they don't cost us in this memory-bound kernel.
     if (abs_max_ptr) {
         if(threadIdx.x == 0) {
-            block_max = 1e-10f;
+            block_max = 0.f;
         }
         __syncthreads();
     }
@@ -72,7 +72,7 @@ __global__ __launch_bounds__(128) void swiglu_forward_persistent_kernel(floatX* 
     // so they don't cost us in this memory-bound kernel.
     if (abs_max_ptr) {
         if(threadIdx.x == 0) {
-            block_max = 1e-10f;
+            block_max = 0.f;
         }
         __syncthreads();
     }
@@ -129,7 +129,7 @@ __global__ void swiglu_forward_quant_kernel(__nv_fp8_e4m3* out, float* scale_ptr
     using x128 = GenericVector<floatX, 16/sizeof(floatX)>;
     using f8v_t = GenericVector<__nv_fp8_e4m3, 16 / sizeof(floatX)>;
 
-    float scale = 448.f / *abs_max_ptr;
+    float scale = 448.f / fmaxf(*abs_max_ptr, 1e-10f);
     if(threadIdx.x == 0 && blockIdx.x == 0 && scale_ptr) {
         *scale_ptr = 1.f / scale;
     }
@@ -163,7 +163,7 @@ __global__ void swiglu_forward_quant_persistent_kernel(__nv_fp8_e4m3* out, float
     using x128 = GenericVector<floatX, 16/sizeof(floatX)>;
     using f8v_t = GenericVector<__nv_fp8_e4m3, 16 / sizeof(floatX)>;
 
-    float scale = 448.f / *abs_max_ptr;
+    float scale = 448.f / fmaxf(*abs_max_ptr, 1e-10f);
     if(threadIdx.x == 0 && blockIdx.x == 0 && scale_ptr) {
         *scale_ptr = 1.f / scale;
     }
@@ -249,7 +249,7 @@ __global__ void swiglu_backward_kernel1(floatX* dinp, const floatX* dout, const 
     // so they don't cost us in this memory-bound kernel.
     if (abs_max_ptr) {
         if(threadIdx.x == 0) {
-            block_max = 1e-10f;
+            block_max = 0.f;
         }
         __syncthreads();
     }
@@ -269,8 +269,8 @@ __global__ void swiglu_backward_kernel1(floatX* dinp, const floatX* dout, const 
         dinp2[k] = (floatX)dx2;
 
         if (abs_max_ptr) {
-            thread_max = std::max(thread_max, fabsf(dinp1[k]));
-            thread_max = std::max(thread_max, fabsf(dinp2[k]));
+            thread_max = fmaxf(thread_max, fabsf(dinp1[k]));
+            thread_max = fmaxf(thread_max, fabsf(dinp2[k]));
         }
     }
     dinp1.store(dinp1_ptr);
