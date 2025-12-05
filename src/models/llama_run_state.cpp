@@ -378,30 +378,30 @@ void LLamaRunState::init(LLamaConfig config, long B, long T, DeviceMemoryStack& 
     bool use_fp8 = Options.grad_dtype() == ETensorDType::FP8_E4M3 || Options.grad_dtype() == ETensorDType::FP8_E5M2;
     auto bw_qmm = [&](int B, int T, int C, int OC) {
         if(use_fp8) {
-            auto wgt_tp = stack.allocate(ETensorDType::FP8_E4M3, {C, OC});
+            auto wgt_tp = stack.allocate(ETensorDType::FP8_E4M3, {C, OC}, "wgt_tp");
             stack.free(wgt_tp.Data);
-            auto act_tp = stack.allocate(ETensorDType::FP8_E4M3, {C, B * T});
-            auto grd_tp = stack.allocate(Options.grad_dtype(), {OC, B * T});
+            auto act_tp = stack.allocate(ETensorDType::FP8_E4M3, {C, B * T}, "act_tp");
+            auto grd_tp = stack.allocate(Options.grad_dtype(), {OC, B * T}, "grd_tp");
             stack.free(grd_tp.Data);
             stack.free(act_tp.Data);
         }
     };
 
     // simulate to determine required stack size
-    auto ws = stack.allocate(CuDNNWorkspace.bytes());
-    stack.free(stack.allocate(DActs[0].DQKV.Value.bytes()));   // attention
+    auto ws = stack.allocate(CuDNNWorkspace.bytes(), "workspace");
+    stack.free(stack.allocate(DActs[0].DQKV.Value.bytes(), "dqkv"));   // attention
     stack.free(ws);   // attention
 
-    auto dswi = stack.allocate(DActs[0].DSwiGLU.bytes());
+    auto dswi = stack.allocate(DActs[0].DSwiGLU.bytes(), "dswiglu");
     bw_qmm(B, T, H, C);         // backward qmm swiglu
     stack.free(dswi);
 
     if(use_fp8) {
-        auto dupq = stack.allocate(DActs[0].DMlpUp.Quant->bytes());
+        auto dupq = stack.allocate(DActs[0].DMlpUp.Quant->bytes(), "dup.q");
         bw_qmm(B, T, C, 2 * H);     // backward qmm up
         stack.free(dupq);
     }
-    stack.free(stack.allocate(Output.bytes()));  // lm-head
+    stack.free(stack.allocate(Output.bytes(), "output"));  // lm-head
 
     MatmulScales = alloc->allocate(ETensorDType::FP32, "mm_scales", {2});
 

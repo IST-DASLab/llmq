@@ -15,6 +15,7 @@
 #include "utilities/gpu_info.h"
 #include "utilities/utils.h"
 #include "utilities/allocator.h"
+#include "utilities/stack.h"
 #include "utilities/sol.h"
 #include <iostream>
 
@@ -320,7 +321,7 @@ void TrainingRunLogger::log_line(std::string_view line) {
     mFirst = false;
 }
 
-void TrainingRunLogger::log_allocator(const std::vector<std::pair<std::string, sSegmentMemory>>& stats) {
+void TrainingRunLogger::log_allocator(const std::vector<std::pair<std::string, sSegmentMemory>>& stats, const DeviceMemoryStack& stack) {
     if (mRank != 0) return;
     std::string stat_str = "[";
     bool first = true;
@@ -340,6 +341,15 @@ void TrainingRunLogger::log_allocator(const std::vector<std::pair<std::string, s
         for (auto& [name, amount]: stats) {
             printf("  %16s: %6zu | %7zu | %6zu \n", name.c_str(), amount.OnDevice / 1024 / 1024, amount.Managed / 1024 / 1024, amount.PinnedHost / 1024 / 1024);
         }
+        printf("\n");
+        for (auto& [ptr, amount, name]: stack.get_high_mark()) {
+            std::string stack_name = fmt::format("stack.{}", name);
+            int mib = static_cast<int>(amount / 1024 / 1024);
+            if(mib > 0) {
+                printf("  %16s: %6d \n", stack_name.c_str(), mib);
+            }
+        }
+        printf("\n");
     }
 }
 

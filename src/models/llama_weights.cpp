@@ -43,33 +43,33 @@ void matrix_params_from_stack(sLLamaBlockWeights<TensorShard>& target, const LLa
     long C = config.HiddenSize;
     long H = config.IntermediateSize;
 
-    auto create_matrix_shard = [&](long rows, long cols) {
-        Tensor raw = memory.allocate(dtype, {div_exact(rows, (long)num_shards), cols});
+    auto create_matrix_shard = [&](long rows, long cols, const char* name) {
+        Tensor raw = memory.allocate(dtype, {div_exact(rows, (long)num_shards), cols}, name);
         return TensorShard{raw, shard_idx, num_shards, std::vector<long>{rows, cols}};
     };
 
     long head_size = C / config.NumQueryHeads;
     long attn_intermediate_size = (config.NumQueryHeads + 2 * config.NumKeyValHeads) * head_size;
-    target.Attn_QKV_w = create_matrix_shard(attn_intermediate_size, C);
-    target.Attn_Out_w = create_matrix_shard(C, C);
-    target.MLP_Up_w = create_matrix_shard(2 * H, C);
-    target.MLP_Down_w = create_matrix_shard(C, H);
+    target.Attn_QKV_w = create_matrix_shard(attn_intermediate_size, C, "Attn_QKV_w");
+    target.Attn_Out_w = create_matrix_shard(C, C, "Attn_Out_w");
+    target.MLP_Up_w = create_matrix_shard(2 * H, C, "MLP_Up_w");
+    target.MLP_Down_w = create_matrix_shard(C, H, "MLP_Down_w");
 }
 
 void non_matrix_params_from_stack(sLLamaBlockWeights<TensorShard>& target, const LLamaConfig& config, ETensorDType dtype, int shard_idx, int num_shards, DeviceMemoryStack& memory) {
     long C = config.HiddenSize;
     long HS = config.head_size();
 
-    auto create_vector_shard = [&](long elems) {
-        Tensor raw = memory.allocate(dtype, {div_exact(elems, (long)num_shards)});
+    auto create_vector_shard = [&](long elems, const char* name) {
+        Tensor raw = memory.allocate(dtype, {div_exact(elems, (long)num_shards)}, name);
         return TensorShard{raw, shard_idx, num_shards, std::vector<long>{elems}};
     };
 
-    target.LN1_w = create_vector_shard(C);
-    target.LN2_w = create_vector_shard(C);
+    target.LN1_w = create_vector_shard(C, "LN1_w");
+    target.LN2_w = create_vector_shard(C, "LN2_w");
     long attn_intermediate_size = (config.NumQueryHeads + 2 * config.NumKeyValHeads) * HS;
     if(config.UseQKVBias) {
-        target.Attn_QKV_b = create_vector_shard(attn_intermediate_size);
+        target.Attn_QKV_b = create_vector_shard(attn_intermediate_size, "Attn_QKV_b");
     } else {
         target.Attn_QKV_b = std::nullopt;
     }
