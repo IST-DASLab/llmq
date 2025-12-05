@@ -60,6 +60,7 @@ struct TrainingRunner {
     float Beta2 = 0.95f;
     float GradClip = 1.0f;
     float WeightDecay = 0.1f;
+    float Epsilon = 1e-8f;
     int GradAccSteps = 4;
 
     bool FromScratch = false;
@@ -136,6 +137,7 @@ void TrainingRunner::load_training_config(int argc, const char** argv) {
     app.add_option("--grad-accumulation", GradAccSteps, "number of micro-batches per optimizer step");
     app.add_option("--grad-clip", GradClip, "Gradient clipping");
     app.add_option("--weight-decay", WeightDecay, "Weight decay for matrix parameters");
+    app.add_option("--adam-epsilon", Epsilon, "Epsilon to use for AdamW");
 
     app.add_option("--steps", MaxSteps, "Number of training steps");
     app.add_option("--log-gpu-util", LogGPUEvery, "Log the gpu utilization every n steps. Set to 0 to disable.");
@@ -478,7 +480,7 @@ void TrainingRunner::run_training(int argc, const char** argv, NCCLCommunicator&
         }
 
         float lr = lr_schedule->eval(step);
-        model.update(comm, lr, Beta1, Beta2, step + 1, 1e-8f, WeightDecay, GradClip);
+        model.update(comm, lr, Beta1, Beta2, step + 1, Epsilon, WeightDecay, GradClip);
         CUDA_CHECK(cudaDeviceSynchronize());
         std::chrono::high_resolution_clock::time_point end = std::chrono::high_resolution_clock::now();
         long ms = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
