@@ -21,7 +21,7 @@ __global__ void swiglu_forward_kernel(floatX* out, const floatX* inp, float* abs
     using x128 = GenericVector<floatX, 16/sizeof(floatX)>;
 
     // thread coordinates
-    long idx = (blockIdx.x * blockDim.x + threadIdx.x) * x128::size;
+    int idx = (blockIdx.x * blockDim.x + threadIdx.x) * x128::size;
     floatX* out_ptr = out + idx;
     int bt = (idx / C);
     int c = idx % C;
@@ -67,7 +67,7 @@ __global__ void swiglu_forward_quant_kernel(__nv_fp8_e4m3* out, float* scale_ptr
     }
 
     // thread coordinates
-    long idx = (blockIdx.x * blockDim.x + threadIdx.x) * x128::size;
+    int idx = (blockIdx.x * blockDim.x + threadIdx.x) * x128::size;
     __nv_fp8_e4m3* out_ptr = out + idx;
     int bt = (idx / C);
     int c = idx % C;
@@ -97,8 +97,8 @@ template<typename floatX>
 __global__ __launch_bounds__(128) void swiglu_forward_persistent_kernel(floatX* out, const floatX* inp, float* abs_max_ptr, int BT, int C) {
     using x128 = GenericVector<floatX, 16/sizeof(floatX)>;
 
-    long start = (blockIdx.x * blockDim.x + threadIdx.x) * x128::size;
-    long stride = gridDim.x * blockDim.x * x128::size;
+    int start = (blockIdx.x * blockDim.x + threadIdx.x) * x128::size;
+    int stride = gridDim.x * blockDim.x * x128::size;
 
     __shared__ float block_max;
     __shared__ alignas(16) floatX up_buffer[2 * 128 * (16/sizeof(floatX))];
@@ -130,7 +130,7 @@ __global__ __launch_bounds__(128) void swiglu_forward_persistent_kernel(floatX* 
     __pipeline_commit();
 
     int phase = 0;
-    for(long idx = start; idx < BT*C; idx += stride) {
+    for(int idx = start; idx < BT*C; idx += stride) {
         // note: each thread reads only what it writes itself, so there is no need for further synchronization here
         __pipeline_wait_prior(1);
         x128 up_inp = x128::load(up_buffer + lane_base + 128 * x128::size * phase);
@@ -169,8 +169,8 @@ __global__ void swiglu_forward_quant_persistent_kernel(__nv_fp8_e4m3* out, float
         *scale_ptr = 1.f / scale;
     }
 
-    long start = (blockIdx.x * blockDim.x + threadIdx.x) * x128::size;
-    long stride = gridDim.x * blockDim.x * x128::size;
+    int start = (blockIdx.x * blockDim.x + threadIdx.x) * x128::size;
+    int stride = gridDim.x * blockDim.x * x128::size;
 
     __shared__ alignas(16) floatX up_buffer[2 * 128 * (16/sizeof(floatX))];
     __shared__ alignas(16) floatX gate_buffer[2 * 128 * (16/sizeof(floatX))];
@@ -193,7 +193,7 @@ __global__ void swiglu_forward_quant_persistent_kernel(__nv_fp8_e4m3* out, float
     __pipeline_commit();
 
     int phase = 0;
-    for(long idx = start; idx < BT*C; idx += stride) {
+    for(int idx = start; idx < BT*C; idx += stride) {
         // note: each thread reads only what it writes itself, so there is no need for further synchronization here
         __pipeline_wait_prior(1);
         x128 up_inp = x128::load(up_buffer + lane_base + 128 * x128::size * phase);
@@ -287,6 +287,11 @@ template<typename floatX>
 void swiglu_forward_impl(floatX* out, const floatX* inp, float* abs_max_ptr, int B, int T, int C, cudaStream_t stream) {
     // input is (B, T, 2C), output is (B, T, C)
     // we have that inp[b, t, :] = [fc1, fc2] (i.e. they are concatenated in each C-fiber)
+
+    if (2ll*B*T*C >= std::numeric_limits<int>::max()) {
+        throw std::runtime_error("swiglu_forward: input too large");
+    }
+
     using x128 = GenericVector<floatX, 16/sizeof(floatX)>;
     if (abs_max_ptr)
         CUDA_CHECK(cudaMemsetAsync(abs_max_ptr, 0, sizeof(float), stream));
@@ -318,6 +323,9 @@ void swiglu_forward(float* out, const float* inp, float* abs_max_ptr, int B, int
 }
 
 void swiglu_forward_quant(__nv_fp8_e4m3* out, float* scale_ptr, const nv_bfloat16* inp, const float* abs_max_ptr, int B, int T, int C, cudaStream_t stream) {
+    if (2ll*B*T*C >= std::numeric_limits<int>::max()) {
+        throw std::runtime_error("swiglu_forward_quant: input too large");
+    }
     using x128 = GenericVector<nv_bfloat16, 16/sizeof(nv_bfloat16)>;
     const int block_size = 128;
     assert(C % x128::size == 0);
@@ -339,6 +347,10 @@ void swiglu_forward_quant(__nv_fp8_e4m3* out, float* scale_ptr, const nv_bfloat1
 
 template<typename floatX>
 void swiglu_backward_impl(floatX* dinp, const floatX* dout, const floatX* inp, float* abs_max, int B, int T, int C, cudaStream_t stream) {
+    if (2ll*B*T*C >= std::numeric_limits<int>::max()) {
+        throw std::runtime_error("swiglu_backward: output too large");
+    }
+
     using x128 = GenericVector<floatX, 16/sizeof(floatX)>;
     // input is (B, T, 2C), output is (B, T, C)
     // we have that inp[b, t, :] = [fc1, fc2] (i.e. they are concatenated in each C-fiber)
