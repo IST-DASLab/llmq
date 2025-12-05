@@ -811,6 +811,8 @@ void LLamaModel::update(NCCLCommunicator& comm, float learning_rate, float beta_
 void LLamaModel::allocate_run_state(const LLamaOptions& options, NCCLCommunicator& comm, int B, int T) {
     NVTX_RANGE_FN();
 
+    std::vector<std::pair<const char*, std::size_t>> stack_watermark;
+
     // create a dummy stack and simulate the way we're going to use temporaries later, to determine how much we need to allocate
     int dev;
     CUDA_CHECK(cudaGetDevice(&dev));
@@ -833,6 +835,7 @@ void LLamaModel::allocate_run_state(const LLamaOptions& options, NCCLCommunicato
         auto ctx = Allocator->with_context("Stack");
         long required_size = stack.max_utilization();
         acts.Stack = DeviceMemoryStack{Allocator->allocate(ETensorDType::BYTE, "stack", {required_size}).Data, (std::size_t)required_size, dev};
+        acts.Stack.set_high_mark(stack.get_high_mark());
     }
 
     {

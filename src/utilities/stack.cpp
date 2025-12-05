@@ -10,7 +10,7 @@ DeviceMemoryStack::DeviceMemoryStack(std::byte* memory, std::size_t amount, int 
 
 }
 
-std::byte* DeviceMemoryStack::allocate(std::size_t amount) {
+std::byte* DeviceMemoryStack::allocate(std::size_t amount, const char* name) {
     constexpr size_t alignment = 4096;
     std::size_t aligned_amount = div_ceil(amount, alignment) * alignment;
     std::byte* new_top = mTop + aligned_amount;
@@ -18,26 +18,33 @@ std::byte* DeviceMemoryStack::allocate(std::size_t amount) {
         throw std::bad_alloc();
     }
 
-    mAlloc.emplace_back(mTop, aligned_amount);
+    mAlloc.emplace_back(mTop, aligned_amount, name);
     mTop = new_top;
-    mMaxUtilization = std::max(mMaxUtilization, bytes_used());
-    return mAlloc.back().first;
+    _track_max();
+    return mAlloc.back().Pointer;
 }
 
-Tensor DeviceMemoryStack::allocate(ETensorDType dtype, const std::vector<long>& shape) {
+Tensor DeviceMemoryStack::allocate(ETensorDType dtype, const std::vector<long>& shape, const char* name) {
     std::size_t total = std::accumulate(std::begin(shape), std::end(shape), (long)get_dtype_size(dtype), std::multiplies<>());
-    return Tensor::from_pointer(allocate(total), mDeviceID, dtype, shape);
+    return Tensor::from_pointer(allocate(total, name), mDeviceID, dtype, shape);
 }
 
 void DeviceMemoryStack::free(std::byte* ptr) {
     if(mAlloc.empty()) {
         throw std::logic_error("DeviceMemoryStack::free_left called with empty allocation list");
     }
-    if(mAlloc.back().first != ptr) {
+    if(mAlloc.back().Pointer != ptr) {
         throw std::logic_error("DeviceMemoryStack::free_left called with wrong pointer");
     }
-    mTop = mAlloc.back().first;
+    mTop = mAlloc.back().Pointer;
     mAlloc.pop_back();
+}
+
+void DeviceMemoryStack::_track_max() {
+    if(bytes_used() > mMaxUtilization) {
+        mMaxUtilization = bytes_used();
+        mHighMark = mAlloc;
+    }
 }
 
 std::size_t DeviceMemoryStack::unused_capacity() const {
