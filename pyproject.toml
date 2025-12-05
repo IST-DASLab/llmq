@@ -1,6 +1,6 @@
 [project]
 name = "pyllmq"
-version = "0.3.0"
+version = "0.3.2"
 description = "Python wrappers for LLMQ. LLM pretraining written in CUDA."
 readme = "README.md"
 requires-python = ">=3.12"
