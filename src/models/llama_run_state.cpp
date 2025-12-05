@@ -99,7 +99,9 @@ LLamaRunState::LayerActivations RunStateBuilder::allocate_basic_fwd_tensors(Tens
     Tensor atto = allocate_or_reuse(true, lnf, Config.DType, "att_o", B, T, C);
     bool reuse_swiglu = Options.RecomputeSwiGLu || quant || Options.RecomputeFFN;
     Tensor swiglu_v = allocate_or_reuse(reuse_swiglu, tSwiGluBuffer, Config.DType, "swiglu", B, T, H);
-    Tensor mlp_up = allocate_or_reuse(Options.RecomputeFFN, tMlpUpBuffer, Config.DType, "mlp_up", B, T, 2 * H);
+    Tensor mlp_up;
+    if(!Options.RecomputeFFN)
+        mlp_up = allocate_or_reuse(Options.RecomputeFFN, tMlpUpBuffer, Config.DType, "mlp_up", B, T, 2 * H);
 
     QuantizableTensor ln1 = {ln1_v, std::nullopt};
     QuantizableTensor ln2 = {ln2_v, std::nullopt};
@@ -388,6 +390,7 @@ void LLamaRunState::init(LLamaConfig config, long B, long T, DeviceMemoryStack& 
     };
 
     // simulate to determine required stack size
+    auto mlp_up = stack.allocate(Config.DType, {B, T, 2 * Config.IntermediateSize}, "mlp_up");
     auto ws = stack.allocate(CuDNNWorkspace.bytes(), "workspace");
     stack.free(stack.allocate(DActs[0].DQKV.Value.bytes(), "dqkv"));   // attention
     stack.free(ws);   // attention
@@ -401,6 +404,7 @@ void LLamaRunState::init(LLamaConfig config, long B, long T, DeviceMemoryStack& 
         bw_qmm(B, T, C, 2 * H);     // backward qmm up
         stack.free(dupq);
     }
+    stack.free(mlp_up);
     stack.free(stack.allocate(Output.bytes(), "output"));  // lm-head
 
     MatmulScales = alloc->allocate(ETensorDType::FP32, "mm_scales", {2});
@@ -413,7 +417,7 @@ void LLamaRunState::init(LLamaConfig config, long B, long T, DeviceMemoryStack& 
 }
 
 LLamaRunState allocate_run_state(LLamaConfig config, LLamaOptions options, long B, long T, DeviceMemoryStack& stack, std::shared_ptr<TensorAllocator> alloc) {
-    LLamaRunState state{options, std::move(alloc)};
+    LLamaRunState state{config, B, T, options, std::move(alloc)};
     state.init(config, B, T, stack);
     return state;
 }
@@ -442,6 +446,20 @@ void LLamaRunState::setup_timing_events(int micro_steps) {
         TimingHeadEnd.push_back(create_named_event(("timing_head_" + std::to_string(i) + "_end").c_str(), true));
         TimingBackwardStart.push_back(create_named_event(("timing_bwd_" + std::to_string(i) + "_start").c_str(), true));
         TimingBackwardEnd.push_back(create_named_event(("timing_bwd_" + std::to_string(i) + "_end").c_str(), true));
+    }
+}
+
+Tensor LLamaRunState::acquire_mlp_up(int layer) {
+    if(Options.RecomputeFFN) {
+        return Stack.allocate(Options.ModelType.value(), {B, T, 2 * Config.IntermediateSize});
+    } else {
+        return Acts[layer].MlpUp;
+    }
+}
+
+void LLamaRunState::release_mlp_up(Tensor& mlp_up) {
+    if(Options.RecomputeFFN) {
+        Stack.free(mlp_up);
     }
 }
 

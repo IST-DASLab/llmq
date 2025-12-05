@@ -146,9 +146,11 @@ void LLamaModel::forward(Tensor inputs, NCCLCommunicator& comm, int micro_step) 
             rs->mark_res_ffn_ready(l-1, main_stream);
         }
 
+        rs->Acts[l].MlpUp = rs->acquire_mlp_up(l);
         trace_or_execute_cuda_graph([&](){_forward_block(wgt, rs->Acts[l], residual);},
             main_stream, rs->ForwardBlockGraph, rs->Options.UseCudaGraphs);
         Parameters->release_block(l, main_stream);
+        rs->release_mlp_up(rs->Acts[l].MlpUp);
         if(l > 0) {
             rs->put_res_ffn(l-1, rs->SideStream);
         }
@@ -411,10 +413,13 @@ void LLamaModel::backward(Tensor inputs, Tensor targets, NCCLCommunicator& comm,
         auto& weights = Parameters->get_block(l, main_stream);
         auto& d_acts = rs->DActs.at(l);
         Tensor residual = l == 0 ? rs->Encoded : rs->get_res_ffn(l - 1, main_stream);
+        rs->Acts[l].MlpUp = rs->acquire_mlp_up(l);
+        rs->DActs[l].DMlpUp.Value = rs->Acts[l].MlpUp;
         trace_or_execute_cuda_graph([&]() {
             _recompute_block(weights, rs->Acts[l], residual);
             _backward_block(accumulate, weights, dw, rs->Acts[l], rs->DActs[l]);
             }, main_stream, rs->BackwardBlockGraph, rs->Options.UseCudaGraphs);
+        rs->release_mlp_up(rs->Acts[l].MlpUp);
 
         if(l > 0) {
             auto& prev_dacts = rs->DActs.at(l - 1);

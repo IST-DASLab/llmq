@@ -90,6 +90,7 @@ struct TrainingRunner {
     LLamaOptions Options;
 
     int LogAllocations = -1;
+    std::chrono::steady_clock::time_point BeginStartup;
 
     void load_training_config(int argc, const char** argv);
     void launch_training(int argc, const char** argv);
@@ -97,6 +98,7 @@ struct TrainingRunner {
 };
 
 void TrainingRunner::load_training_config(int argc, const char** argv) {
+    BeginStartup = std::chrono::steady_clock::now();
     CLI::App app;
 
     std::string matmul_dtype = "";
@@ -442,6 +444,10 @@ void TrainingRunner::run_training(int argc, const char** argv, NCCLCommunicator&
     } else {
         throw std::invalid_argument("Unknown learning rate schedule: " + LrScheduleType);
     }
+
+    fprintf(stdout, "Starting training for %d steps (%f epochs in total)\n", MaxSteps, float(MaxSteps) / steps_per_epoch);
+    fprintf(stdout, "Setup took %ld seconds\n", std::chrono::duration_cast<std::chrono::seconds>(std::chrono::steady_clock::now() - BeginStartup).count());
+
 
     for (int step = latest_step; step < MaxSteps; ++step) {
         bool run_eval = false;
