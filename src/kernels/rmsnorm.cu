@@ -44,7 +44,7 @@ __device__ void rmsnorm_forward_kernel(floatX* __restrict__ out, float* __restri
         s_weight[i/x128::size] = x128::load(weight + i);
     }
     if (abs_max_ptr && threadIdx.x == 0) {
-        block_abs_max = 1e-10f;
+        block_abs_max =0.f;
     }
     __syncthreads();
 
@@ -68,7 +68,7 @@ __device__ void rmsnorm_forward_kernel(floatX* __restrict__ out, float* __restri
 
     acc = warpReduceSum(acc) / C;
     float s = rsqrtf(acc + epsilon);
-    float thread_abs_max = -1.f;
+    float thread_abs_max = 0.f;
 
     for(int c = threadIdx.x * x128::size; c < C; c += WARP_SIZE * x128::size) {
         const x128 in_data = s_in[c / x128::size];
@@ -80,7 +80,7 @@ __device__ void rmsnorm_forward_kernel(floatX* __restrict__ out, float* __restri
             // so we try to match
             out_data[k] = (floatX)n * (floatX)w[k]; // scale
             if (abs_max_ptr) {
-                thread_abs_max = std::max(thread_abs_max, fabsf(out_data[k]));
+                thread_abs_max = fmaxf(thread_abs_max, fabsf(out_data[k]));
             }
         }
 
@@ -117,7 +117,7 @@ __device__ void fused_residual_rmsnorm_forward_kernel(floatX* residual, floatX* 
         s_weight[i/x128::size] = x128::load(weight + i);
     }
     if (abs_max_ptr && threadIdx.x == 0) {
-        block_abs_max = 1e-10f;
+        block_abs_max = 0.f;
     }
     __syncthreads();
 
@@ -146,7 +146,7 @@ __device__ void fused_residual_rmsnorm_forward_kernel(floatX* residual, floatX* 
 
     sum_squared = warpReduceSum(sum_squared) / C;
     float s = rsqrtf(sum_squared + epsilon);
-    float thread_abs_max = -1.f;
+    float thread_abs_max = 0.f;
 
     for(int c = threadIdx.x * x128::size; c < C; c += WARP_SIZE * x128::size) {
         const x128 res = s_res[c / x128::size];
@@ -156,7 +156,7 @@ __device__ void fused_residual_rmsnorm_forward_kernel(floatX* residual, floatX* 
             float n = s * (float)res[k]; // normalized output
             out[k] = (floatX)n * (floatX)w[k]; // scale
             if (abs_max_ptr) {
-                thread_abs_max = std::max(thread_abs_max, fabsf(out[k]));
+                thread_abs_max = fmaxf(thread_abs_max, fabsf(out[k]));
             }
         }
 
@@ -269,7 +269,7 @@ rmsnorm_backward_kernel10(floatX* dinp, floatX* dweight, std::byte* scratch,
         f128::zeros().store(dweight_shared + i);
     }
     if (abs_max_ptr && threadIdx.x == 0) {
-        block_abs_max = 1e-10f;
+        block_abs_max = 0.f;
     }
     __syncthreads();
 
@@ -361,7 +361,7 @@ rmsnorm_backward_kernel10(floatX* dinp, floatX* dweight, std::byte* scratch,
                 dinp128.store(dinp_bt + global_index);
 
                 for(int i = 0; i < x128::size; ++i) {
-                    thread_abs_max = std::max(thread_abs_max, fabsf(dinp128[i]));
+                    thread_abs_max = fmaxf(thread_abs_max, fabsf(dinp128[i]));
                 }
             }
         }

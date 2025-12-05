@@ -122,7 +122,7 @@ __global__ void adamw_kernel(floatX* params_memory, const floatX* grads_memory, 
     using vec_x_t = GenericVector<floatX, VecElems>;
     __shared__ float block_abs_max;
     if(threadIdx.x == 0) {
-        block_abs_max = 1e-10f;
+        block_abs_max = 0.f;
     }
 
     float thread_abs_max = 0.0f;

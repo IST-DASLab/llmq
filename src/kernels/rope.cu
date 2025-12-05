@@ -45,10 +45,10 @@ __global__ void rope_kernel(floatX *out, const floatX *inp, const floatX *freqs_
     __shared__ float block_abs_max;
     if (abs_max_ptr) {
         if(threadIdx.x == 0)
-            block_abs_max = 1e-10f;
+            block_abs_max = 0.f;
         __syncthreads();
     }
-    float thread_abs_max = 1e-10f;
+    float thread_abs_max = 0.f;
 
     int idx = (blockIdx.x * blockDim.x + threadIdx.x) * x64::size;
     int head_dim_half = head_dim / 2;
