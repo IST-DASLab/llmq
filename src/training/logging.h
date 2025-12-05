@@ -17,7 +17,6 @@ struct GPUUtilInfo;
 struct sSegmentMemory;
 class NCCLCommunicator;
 class DataLoader;
-class DeviceMemoryStack;
 enum class ETensorDType : int;
 
 class TrainingRunLogger

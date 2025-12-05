@@ -57,6 +57,9 @@ struct LLamaRunState {
     using LayerActivations = ::sLLamaLayerActivations;
     using LayerGradients = ::sLLamaLayerGradients;
 
+    LLamaConfig Config;
+    long B;
+    long T;
     LLamaOptions Options;
     std::shared_ptr<TensorAllocator> Allocator;
 
@@ -118,6 +121,9 @@ struct LLamaRunState {
     Tensor temp_alloc(ETensorDType dtype, const std::vector<long>& shape);
     void temp_acquire(Tensor& target);
     void temp_free(Tensor& tensor);
+
+    Tensor acquire_mlp_up(int layer);
+    void release_mlp_up(Tensor& mlp_up);
 
     DeviceMemoryStack Stack;
 
