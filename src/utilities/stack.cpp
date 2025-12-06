@@ -40,6 +40,14 @@ void DeviceMemoryStack::free(std::byte* ptr) {
     mAlloc.pop_back();
 }
 
+std::vector<std::pair<std::string, long>> DeviceMemoryStack::get_allocation_stats() const {
+    std::vector<std::pair<std::string, long>> result;
+    for (auto& [ptr, amount, name]: get_high_mark()) {
+        result.emplace_back(name, amount);
+    }
+    return result;
+}
+
 void DeviceMemoryStack::_track_max() {
     if(bytes_used() > mMaxUtilization) {
         mMaxUtilization = bytes_used();

@@ -429,7 +429,7 @@ void TrainingRunner::run_training(int argc, const char** argv, NCCLCommunicator&
 
     logger.log_dataset(train_loader, test_loader);
 
-    logger.log_allocator(model.get_allocator().get_allocation_segments(), model.run_state().Stack);
+    logger.log_allocator(model.get_allocator().get_allocation_segments(), model.run_state().Stack.get_allocation_stats());
 
     Tensor inputs = model.get_input_buffer();
     Tensor targets = model.get_target_buffer();
