@@ -7,6 +7,7 @@
 #include <algorithm>
 
 #include <cuda_runtime.h>
+#include <fmt/format.h>
 #include <nvtx3/nvToolsExt.h>
 #include <nvtx3/nvToolsExtCudaRt.h>
 
@@ -49,4 +50,8 @@ bool iequals(std::string_view lhs, std::string_view rhs) {
         lhs, rhs, [](unsigned char a, unsigned char b) {
             return std::tolower(a) == std::tolower(b);
     });
+}
+
+[[noreturn]] void throw_not_divisible(long long dividend, long long divisor) {
+    throw std::runtime_error(fmt::format("Cannot divide {} by {}", dividend, divisor));
 }
