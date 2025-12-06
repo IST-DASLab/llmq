@@ -3,7 +3,6 @@
 //
 // Based on llm.c https://github.com/karpathy/llm.c
 
-#include <cuda/atomic>
 #include <algorithm>
 
 #include "squirrel_noise.cuh"

@@ -339,7 +339,6 @@ std::unique_ptr<NCCLCommunicator> NCCLCommunicator::make_mpi_communicator() {
 
 #include <thread>
 #include <barrier>
-#include <nvtx3/nvToolsExt.h>
 
 class NCCLCommunicatorThreads : public NCCLCommunicator {
 public:
@@ -476,7 +475,6 @@ std::unique_ptr<CommunicatorThreadsPack> NCCLCommunicator::launch_threads_commun
                     fprintf(stderr, "WARNING: Failed to set CPU affinity for rank %d\n", i);
                 }
                 NCCLCommunicatorThreads comm(i, ngpus, memcpy_allgather, memcpy_send_recv, &nccl_id, bar);
-                nvtxNameOsThread(pthread_self(), "worker");
                 work(comm);
                 bar->Barrier->arrive_and_wait();
             } catch(...) {
@@ -594,7 +592,7 @@ void NCCLCommunicatorThreads::on_finish_transaction(cudaEvent_t signal) {
             barrier();      // assumes _all_ workers have the same number of receives!
             for (int j = 0; j < world_size(); ++j) {
                 if (j != rank()) {
-                    cudaStreamWaitEvent(stream(), sync_events[j], 0);
+                    CUDA_CHECK(cudaStreamWaitEvent(stream(), sync_events[j], 0));
                 }
             }
         }

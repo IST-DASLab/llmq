@@ -4,7 +4,6 @@
 // Based on llm.c https://github.com/karpathy/llm.c
 
 #include <cublasLt.h>
-#include <cublas_v2.h>
 #include <fmt/core.h>
 
 #include "kernels.h"
@@ -32,6 +31,10 @@ cublasLtHandle_t create_cublaslt_handle() {
     cublasLtHandle_t handle;
     CUBLAS_CHECK(cublasLtCreate(&handle));
     return handle;
+}
+
+void destroy_cublaslt_handle(cublasLtHandle_t handle) {
+    CUBLAS_CHECK(cublasLtDestroy(handle));
 }
 
 // ----------------------------------------------------------------------------
@@ -118,10 +121,6 @@ void matmul_cublaslt(FloatC* d, const FloatA* a, const FloatB* b, const FloatBia
         }
         CUBLAS_CHECK(cublasLtMatmulDescSetAttribute(operationDesc, CUBLASLT_MATMUL_DESC_B_SCALE_POINTER, &scale_b, sizeof(&scale_b)));
     }
-
-    // set scale type to FP32 (needs to be FP16 if and only if using CUBLAS_COMPUTE_16F, so it's FP32 even for FP8!)
-    cublasDataType_t scale_type = CUDA_R_32F;
-    CUBLAS_CHECK(cublasLtMatmulDescSetAttribute(operationDesc, CUBLASLT_MATMUL_DESC_SCALE_TYPE, &scale_type, sizeof(scale_type)));
 
     // find a suitable algorithm (cached internally so shouldn't take much CPU time in practice)
     cublasLtMatmulAlgoGetHeuristic(handle, operationDesc, ALayout, BLayout, CLayout, DLayout,
