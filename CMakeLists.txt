@@ -6,11 +6,19 @@ if(NOT DEFINED CMAKE_CUDA_ARCHITECTURES)
 endif()
 
 include(FetchContent)
-project(LLMQ CUDA CXX)
+option(USE_ROCM "Use ROCm/HIP instead of CUDA" OFF)
 
-set(CMAKE_CUDA_STANDARD 20)
+project(LLMQ CXX)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
+
+if(USE_ROCM)
+    enable_language(HIP)
+    set(CMAKE_HIP_STANDARD 20)
+else()
+    enable_language(CUDA)
+    set(CMAKE_CUDA_STANDARD 20)
+endif()
 
 # As cuFile might not be supported everywhere (WSL; AMD), make it an optional dependency
 # with a fallback implementation
@@ -61,13 +69,19 @@ FetchContent_Declare(
         GIT_TAG v3.6.0
 )
 
-find_package(CUDAToolkit COMPONENTS cuBLAS REQUIRED)
-
 FetchContent_MakeAvailable(json)
-FetchContent_MakeAvailable(cudnn-fe)
 FetchContent_MakeAvailable(cli11)
 FetchContent_MakeAvailable(fmt)
 FetchContent_MakeAvailable(catch2)
+
+if (USE_ROCM)
+    include(cmake/hip.cmake)
+    set(USE_CUFILE OFF)
+    set(USE_NVML OFF)
+    set(CMAKE_CXX_COMPILER hipcc)
+else ()
+    include(cmake/cuda.cmake)
+endif ()
 
 # optional cufile
 if(USE_CUFILE)
@@ -86,25 +100,6 @@ if(NOT USE_CUFILE)
     set(CUFILE_LIBS "")
 endif ()
 
-if(USE_NVML)
-    find_package(CUDAToolkit COMPONENTS nvml)
-    set(NVML_SOURCE src/utilities/gpu_info_nvml.cpp)
-    set(NVML_LIBS CUDA::nvml)
-else()
-    set(NVML_SOURCE src/utilities/gpu_info_fallback.cpp)
-    set(NVML_LIBS "")
-endif ()
-
-    # allow configuring search paths from env
-set(NCCL_INCLUDE_DIR $ENV{NCCL_INCLUDE_DIR} CACHE PATH "Folder containing NCCL headers")
-set(NCCL_LIB_DIR $ENV{NCCL_LIB_DIR} CACHE PATH "Folder containing NCCL library")
-find_path(NCCL_INCLUDE_DIRS NAMES nccl.h HINTS ${NCCL_INCLUDE_DIR} REQUIRED)
-find_library(NCCL_LIBRARIES NAMES nccl HINTS ${NCCL_LIB_DIR} REQUIRED)
-message(STATUS "Using nccl: ${NCCL_LIBRARIES}")
-add_library(nvidia::nccl SHARED IMPORTED)
-set_property(TARGET nvidia::nccl PROPERTY IMPORTED_LOCATION "${NCCL_LIBRARIES}")
-target_include_directories(nvidia::nccl INTERFACE "${NCCL_INCLUDE_DIRS}")
-
 set(MULTI_GPU_DEPS "")
 set(MULTI_GPU_DEFS "")
 if (USE_MPI)
@@ -121,17 +116,6 @@ else ()
     message(STATUS "Threads not found, disabling")
 endif ()
 
-find_path(CUDNN_INCLUDE_DIR cudnn.h
-        HINTS $ENV{CUDNN_INCLUDE_PATH} ${CUDA_TOOLKIT_ROOT_DIR}
-        PATH_SUFFIXES include)
-
-find_library(CUDNN_LIBRARY cudnn
-        HINTS $ENV{CUDNN_LIBRARY_PATH} ${CUDA_TOOLKIT_ROOT_DIR}
-        PATH_SUFFIXES lib64 lib)
-
-message(STATUS "CUDA Toolkit Version: ${CUDAToolkit_VERSION}")
-message(STATUS "cuBLAS Library: ${CUDA_cublas_LIBRARY}")
-message(STATUS "cuBLASLt Library: ${CUDA_cublasLt_LIBRARY}")
 
 add_library(llmq-common SHARED
         src/utilities/safetensors.cpp
@@ -162,7 +146,7 @@ add_library(llmq-common SHARED
         src/kernels/swiglu.cu
         src/kernels/rope.cu
         src/kernels/rmsnorm.cu
-        src/kernels/cudnn_att.cpp
+        $<$<NOT:$<BOOL:${USE_ROCM}>>:src/kernels/cudnn_att.cpp>
         src/kernels/quant.cu
         src/kernels/global_norm.cu
         src/kernels/bias.cu
@@ -176,13 +160,15 @@ add_library(llmq-common SHARED
         src/kernels/convert.cu
 )
 
-target_link_libraries(llmq-common PRIVATE ${CUFILE_LIBS} cudnn_frontend ${CUDNN_LIBRARY} nvidia::nccl fmt::fmt-header-only)
-target_link_libraries(llmq-common PUBLIC CUDA::cudart CUDA::cublasLt ${NVML_LIBS} nlohmann_json::nlohmann_json)
-target_link_libraries(llmq-common PUBLIC ${MULTI_GPU_DEPS})
+target_link_libraries(llmq-common PRIVATE ${PRIVATE_GPU_LIBS} fmt::fmt-header-only)
+target_link_libraries(llmq-common PUBLIC ${PUBLIC_GPU_LIBS} nlohmann_json::nlohmann_json ${MULTI_GPU_DEPS})
 target_compile_definitions(llmq-common PUBLIC ${MULTI_GPU_DEFS})
-target_include_directories(llmq-common PRIVATE ${CUDNN_INCLUDE_DIR})
 target_include_directories(llmq-common PUBLIC src)
 target_compile_options(llmq-common PUBLIC $<$<COMPILE_LANGUAGE:CUDA>:--expt-relaxed-constexpr> $<$<COMPILE_LANGUAGE:CUDA>:-lineinfo>)
+
+if(USE_ROCM)
+    hipify_target(llmq-common ${CMAKE_CURRENT_BINARY_DIR}/hipify)
+endif ()
 
 add_executable(train train.cpp)
 target_link_libraries(train PRIVATE llmq-common CLI11::CLI11 fmt::fmt-header-only)
