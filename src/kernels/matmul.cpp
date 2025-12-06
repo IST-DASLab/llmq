@@ -3,7 +3,15 @@
 //
 // Based on llm.c https://github.com/karpathy/llm.c
 
+#include <cstdio>
+#include <optional>
+
+#ifdef __HIP__
+#include <hipblaslt/hipblaslt.h>
+#else
 #include <cublasLt.h>
+#endif
+
 #include <fmt/core.h>
 
 #include "kernels.h"

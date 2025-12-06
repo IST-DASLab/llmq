@@ -8,8 +8,15 @@
 
 #include <cuda_runtime.h>
 #include <fmt/format.h>
+#ifdef __HIP__
+#define nvtxNameCudaEventA(a, b)
+#define nvtxNameCudaStreamA(a,b)
+#define nvtxRangePush(x)
+#define nvtxRangePop(x)
+#else
 #include <nvtx3/nvToolsExt.h>
 #include <nvtx3/nvToolsExtCudaRt.h>
+#endif
 
 void cuda_throw_on_error(cudaError_t status, const char* statement, const char* file, int line) {
     if (status != cudaSuccess) {
