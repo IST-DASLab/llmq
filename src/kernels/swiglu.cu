@@ -6,7 +6,9 @@
 #include <cassert>
 
 #include <cuda_bf16.h>
+#ifndef __HIP__
 #include <cuda_pipeline_primitives.h>
+#endif
 
 #include "kernels.h"
 #include "utilities/utils.h"
@@ -221,6 +223,7 @@ __global__ void swiglu_forward_quant_persistent_kernel(__nv_fp8_e4m3* out, float
         phase = (phase + 1) % 2;
     }
 }
+#endif
 
 template<typename floatX>
 __global__ void swiglu_backward_kernel1(floatX* dinp, const floatX* dout, const floatX* inp, float* abs_max_ptr, int B, int T, int C) {
@@ -299,6 +302,7 @@ void swiglu_forward_impl(floatX* out, const floatX* inp, float* abs_max_ptr, int
     const int block_size = 128;
     assert(C % x128::size == 0);
     assert((B*T*C) % (block_size * x128::size) == 0);
+#ifndef __HIP__
     int bpsm;
     CUDA_CHECK(cudaOccupancyMaxActiveBlocksPerMultiprocessor(&bpsm, swiglu_forward_persistent_kernel<floatX>, block_size, 0));
     int sms;
@@ -311,6 +315,11 @@ void swiglu_forward_impl(floatX* out, const floatX* inp, float* abs_max_ptr, int
     } else {
         swiglu_forward_persistent_kernel<<<bpsm * sms, block_size, 0, stream>>>(out, inp, abs_max_ptr, B * T, C);
     }
+#else
+    const int num_blocks = div_ceil(B*T*C, (int)(block_size * x128::size));
+    swiglu_forward_kernel<<<num_blocks, block_size, 0, stream>>>(out, inp, abs_max_ptr, C);
+#endif
+
     CUDA_CHECK(cudaGetLastError());
 }
 
@@ -330,6 +339,7 @@ void swiglu_forward_quant(__nv_fp8_e4m3* out, float* scale_ptr, const nv_bfloat1
     const int block_size = 128;
     assert(C % x128::size == 0);
     assert((B*T*C) % (block_size * x128::size) == 0);
+#ifndef __HIP__
     int bpsm;
     CUDA_CHECK(cudaOccupancyMaxActiveBlocksPerMultiprocessor(&bpsm, swiglu_forward_persistent_kernel<nv_bfloat16>, block_size, 0));
     int sms;
@@ -342,6 +352,10 @@ void swiglu_forward_quant(__nv_fp8_e4m3* out, float* scale_ptr, const nv_bfloat1
     } else {
         swiglu_forward_quant_persistent_kernel<<<bpsm * sms, block_size, 0, stream>>>(out, scale_ptr, inp, abs_max_ptr, B * T, C);
     }
+#else
+    const int num_blocks = div_ceil(B*T*C, (int)(block_size * x128::size));
+    swiglu_forward_quant_kernel<<<num_blocks, block_size, 0, stream>>>(out, scale_ptr, inp, abs_max_ptr, C);
+#endif
     CUDA_CHECK(cudaGetLastError());
 }
 
