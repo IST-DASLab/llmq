@@ -17,10 +17,22 @@ static __forceinline__ __device__ void handle_absmax_reduction(float* __restrict
         // this code is only guaranteed to be correct if it is warp convergent
         // (in theory, ensuring thread 0 hasn't exited would be enough...)
         assert(__activemask() == 0xffffffff);
+#ifndef __HIP__
         auto warp_max = __reduce_max_sync(0xffffffff, __float_as_uint(thread_max));
         if(threadIdx.x % 32 == 0) {
             atomicMax_block(reinterpret_cast<unsigned*>(block_max), warp_max);
         }
+
+#else
+        unsigned warp_max = __float_as_uint(thread_max);
+        std::uint64_t mask = warpSize == 64 ? 0xffffffffffffffffull : 0xffffffffull;
+        for(int i = 1; i < warpSize; i *= 2) {
+            warp_max = std::max(warp_max, __shfl_xor_sync(mask, warp_max, i));
+        }
+        if(threadIdx.x % warpSize == 0) {
+            atomicMax_block(reinterpret_cast<unsigned*>(block_max), warp_max);
+        }
+#endif
 
         __syncthreads();
         if(threadIdx.x == 0) {
@@ -31,7 +43,14 @@ static __forceinline__ __device__ void handle_absmax_reduction(float* __restrict
 
 template<typename Group, typename Element>
 static __forceinline__ __device__ Element reduce_group_add(Group& group, Element value) {
+#ifndef __HIP__
     return cooperative_groups::reduce(group, value, cooperative_groups::plus<Element>());
+#else
+    for(int i = 1; i < group.size(); i *= 2) {
+        value += group.shfl_xor(value, i);
+    }
+    return value;
+#endif
 }
 
 template<typename Group, typename Element>
