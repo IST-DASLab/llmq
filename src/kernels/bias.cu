@@ -40,8 +40,13 @@ void add_bias(nv_bfloat16* out, const nv_bfloat16* bias, int B, int T, int OC, c
 template<typename floatX, typename OutFloat, bool UseAuxBuffer>
 __global__ void matmul_backward_bias_kernel(OutFloat* dbias, const floatX* dout, const float* scale_a, const float* scale_b, int B, int T, int OC,
                                             std::bool_constant<UseAuxBuffer>) {
+#ifdef __HIP__
+    unsigned long MASK = warpSize == 64 ? 0xffffffffffffffffull : 0xffffffffull;
+#else
+    constexpr unsigned int MASK = 0xffffffffu;
+#endif
+
     using x128 = GenericVector<floatX, 16/sizeof(floatX)>;
-    using f128 = GenericVector<float, 16/sizeof(float)>;
     constexpr const int bdx = 4;
     constexpr const int bdy = 32 / bdx;
     assert(blockDim.x == bdx);
@@ -84,8 +89,8 @@ __global__ void matmul_backward_bias_kernel(OutFloat* dbias, const floatX* dout,
     // reduce within-warp results
     for (int k = 0; k < x128::size; k++) {
         float v = accumulators[k];
-        v += __shfl_down_sync(0xffffffff, v, 1, 4);
-        v += __shfl_down_sync(0xffffffff, v, 2, 4);
+        v += __shfl_down_sync(MASK, v, 1, 4);
+        v += __shfl_down_sync(MASK, v, 2, 4);
         if(warp_d == 0) {
             sub_results[k][block_d][warp_c] = v;
         }
@@ -97,8 +102,8 @@ __global__ void matmul_backward_bias_kernel(OutFloat* dbias, const floatX* dout,
         float a = 0.f;
         for (int r = warp_d; r < blockDim.z; r += bdx) {
             float v = sub_results[k][r][warp_c];
-            v += __shfl_down_sync(0xffffffff, v, 1, 4);
-            v += __shfl_down_sync(0xffffffff, v, 2, 4);
+            v += __shfl_down_sync(MASK, v, 1, 4);
+            v += __shfl_down_sync(MASK, v, 2, 4);
             a += v;
         }
         if(warp_d == 0 && global_oc < OC) {
