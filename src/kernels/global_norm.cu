@@ -7,11 +7,11 @@
 #include <cstddef>
 
 #include <cooperative_groups.h>
-#include <cooperative_groups/reduce.h>
 #include <cuda_runtime_api.h>
 
 
 #include "utilities/utils.h"
+#include "kernel_utils.cuh"
 
 // ----------------------------------------------------------------------------
 // CUDA kernels
@@ -27,7 +27,7 @@ __device__ float global_norm_squared_for_range(const T* data, size_t count) {
 
     cooperative_groups::thread_block block = cooperative_groups::this_thread_block();
     auto warp = cooperative_groups::tiled_partition<32>(block);
-    accumulator = cooperative_groups::reduce(warp, accumulator, cooperative_groups::plus<float>());
+    accumulator = reduce_group_add(warp, accumulator);
     __shared__ float shared_accumulator[32];
     if(warp.thread_rank() == 0) {
         shared_accumulator[warp.meta_group_rank()] = accumulator;
@@ -35,7 +35,7 @@ __device__ float global_norm_squared_for_range(const T* data, size_t count) {
     __syncthreads();
     // block-level reduce
     float total = warp.thread_rank() < warp.meta_group_size() ? shared_accumulator[warp.thread_rank()] : 0.f;
-    total = cooperative_groups::reduce(warp, total, cooperative_groups::plus<float>());
+    total = reduce_group_add(warp, total);
     return total;
 }
 
@@ -60,7 +60,7 @@ __global__ void deterministic_sum_kernel(float* out, const floatX* data, std::si
 
     cooperative_groups::thread_block block = cooperative_groups::this_thread_block();
     auto warp = cooperative_groups::tiled_partition<32>(block);
-    float warp_sum = cooperative_groups::reduce(warp, thread_sum, cooperative_groups::plus<float>());
+    float warp_sum = reduce_group_add(warp, thread_sum);
     __shared__ float shared_accumulator[32];
     if(warp.thread_rank() == 0) {
         shared_accumulator[warp.meta_group_rank()] = warp_sum;
@@ -69,7 +69,7 @@ __global__ void deterministic_sum_kernel(float* out, const floatX* data, std::si
     // block-level reduce
     if(warp.meta_group_rank() == 0) {
         float total = warp.thread_rank() < warp.meta_group_size() ? shared_accumulator[warp.thread_rank()] : 0.f;
-        total = cooperative_groups::reduce(warp, total, cooperative_groups::plus<float>());
+        total = reduce_group_add(warp, total);
         if (threadIdx.x == 0) {
             *out = total;
         }

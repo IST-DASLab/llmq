@@ -56,6 +56,41 @@ __global__ void swiglu_forward_kernel(floatX* out, const floatX* inp, float* abs
     handle_absmax_reduction(abs_max_ptr, &block_max, thread_max);
 }
 
+template<typename floatX>
+__global__ void swiglu_forward_quant_kernel(__nv_fp8_e4m3* out, float* scale_ptr, const floatX* inp, const float* abs_max_ptr, int C) {
+    using x128 = GenericVector<floatX, 16/sizeof(floatX)>;
+    using f8v_t = GenericVector<__nv_fp8_e4m3, 16 / sizeof(floatX)>;
+
+    float scale = 448.f / fmaxf(*abs_max_ptr, 1e-10f);
+    if(threadIdx.x == 0 && blockIdx.x == 0 && scale_ptr) {
+        *scale_ptr = 1.f / scale;
+    }
+
+    // thread coordinates
+    long idx = (blockIdx.x * blockDim.x + threadIdx.x) * x128::size;
+    __nv_fp8_e4m3* out_ptr = out + idx;
+    int bt = (idx / C);
+    int c = idx % C;
+
+    const floatX* up_ptr = inp + (bt * C * 2 + c);
+    const floatX* gate_ptr = up_ptr + C;
+
+    f8v_t packed_out;
+    x128 up_inp = x128::load_cs(up_ptr);
+    x128 gate_inp = x128::load_cs(gate_ptr);
+    for(int k = 0; k < up_inp.size; ++k) {
+        float x1 = (float)up_inp[k];
+        float x2 = (float)gate_inp[k];
+        float result = (x1 * x2) / (1.0f + expf(-x2));
+        floatX qr = (floatX)result;
+        __nv_fp8_e4m3 quant;
+        quant.__x = __nv_cvt_float_to_fp8(scale * (float)qr, __nv_saturation_t::__NV_SATFINITE, __nv_fp8_interpretation_t::__NV_E4M3);
+        packed_out[k] = quant;
+    }
+    packed_out.store(out_ptr);
+}
+
+
 //! persistent kernel for swiglu. If the input tensor is large enough, the persistent kernel gives maybe 5-10% speed-up
 //! over the simple baseline.
 template<typename floatX>
@@ -122,40 +157,6 @@ __global__ __launch_bounds__(128) void swiglu_forward_persistent_kernel(floatX* 
     }
 
     handle_absmax_reduction(abs_max_ptr, &block_max, thread_max);
-}
-
-template<typename floatX>
-__global__ void swiglu_forward_quant_kernel(__nv_fp8_e4m3* out, float* scale_ptr, const floatX* inp, const float* abs_max_ptr, int C) {
-    using x128 = GenericVector<floatX, 16/sizeof(floatX)>;
-    using f8v_t = GenericVector<__nv_fp8_e4m3, 16 / sizeof(floatX)>;
-
-    float scale = 448.f / fmaxf(*abs_max_ptr, 1e-10f);
-    if(threadIdx.x == 0 && blockIdx.x == 0 && scale_ptr) {
-        *scale_ptr = 1.f / scale;
-    }
-
-    // thread coordinates
-    long idx = (blockIdx.x * blockDim.x + threadIdx.x) * x128::size;
-    __nv_fp8_e4m3* out_ptr = out + idx;
-    int bt = (idx / C);
-    int c = idx % C;
-
-    const floatX* up_ptr = inp + (bt * C * 2 + c);
-    const floatX* gate_ptr = up_ptr + C;
-
-    f8v_t packed_out;
-    x128 up_inp = x128::load_cs(up_ptr);
-    x128 gate_inp = x128::load_cs(gate_ptr);
-    for(int k = 0; k < up_inp.size; ++k) {
-        float x1 = (float)up_inp[k];
-        float x2 = (float)gate_inp[k];
-        float result = (x1 * x2) / (1.0f + expf(-x2));
-        floatX qr = (floatX)result;
-        __nv_fp8_e4m3 quant;
-        quant.__x = __nv_cvt_float_to_fp8(scale * (float)qr, __nv_saturation_t::__NV_SATFINITE, __nv_fp8_interpretation_t::__NV_E4M3);
-        packed_out[k] = quant;
-    }
-    packed_out.store(out_ptr);
 }
 
 template<typename floatX>
