@@ -36,7 +36,7 @@ __device__ GenericVector<float, VecElems> load_vector(const FloatIn* memory, con
 }
 
 template <typename FloatOut, std::size_t VecElems>
-__device__ void store_vector(FloatOut* memory, const GenericVector<float, VecElems>& in, float* scales, long idx) {
+__device__ void store_vector(FloatOut* memory, const GenericVector<float, VecElems>& in, float* scales, long idx, unsigned active_mask) {
     float factor = 1.f;
     unsigned int rng = get_noise_2d(idx, blockIdx.y, 51245);
     if(scales != nullptr) {
@@ -46,9 +46,8 @@ __device__ void store_vector(FloatOut* memory, const GenericVector<float, VecEle
         }
         constexpr int Threads = 128 / VecElems;
         static_assert(Threads <= 32, "#threads > warp size");
-        unsigned mask = __activemask();
-        for(int i = 1; i <= Threads; i *= 2) {
-            abs_max = std::max(abs_max, __shfl_xor_sync(mask, abs_max, i, Threads));
+        for(int i = 1; i < Threads; i *= 2) {
+            abs_max = std::max(abs_max, __shfl_xor_sync(active_mask, abs_max, i, Threads));
         }
         if(abs_max > 1e-10f) {
             factor = 448.f / abs_max;
@@ -76,6 +75,7 @@ __device__ auto adamw_update(floatX* params_memory, const floatX* grads_memory, 
     using vec_m_t = GenericVector<floatM, VecElems>;
     using vec_v_t = GenericVector<floatV, VecElems>;
 
+    const unsigned active_mask = __ballot_sync(0xffffffff, idx < num_parameters);
     if (idx >= num_parameters) { return vec_x_t::zeros(); }  // guard
 
     vec_f_t m = load_vector<VecElems>(m_memory, m_scales, idx);
@@ -107,7 +107,7 @@ __device__ auto adamw_update(floatX* params_memory, const floatX* grads_memory, 
     }
 
     p_new.store(params_memory + idx);
-    store_vector(m_memory, m, m_scales, idx);
+    store_vector(m_memory, m, m_scales, idx, active_mask);
     v_new.store(v_memory + idx);
 
     return p_new;
