@@ -9,7 +9,11 @@
 #include <variant>
 #include <future>
 
+#ifdef __HIP__
+#include <rccl/rccl.h>
+#else
 #include <nccl.h>
+#endif
 #include <fmt/core.h>
 
 #include "gpu_info.h"

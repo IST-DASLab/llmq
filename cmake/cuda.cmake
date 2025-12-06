@@ -35,7 +35,7 @@ target_link_libraries(nvidia_cudnn INTERFACE ${CUDNN_LIBRARY})
 target_include_directories(nvidia_cudnn INTERFACE ${CUDNN_INCLUDE_DIR})
 add_library(nvidia::cudnn ALIAS nvidia_cudnn)
 
-set(PRIVATE_GPU_LIBS CUDA::cuFile cudnn_frontend nvidia::cudnn nvidia::nccl)
+set(PRIVATE_GPU_LIBS CUDA::cuFile cudnn_frontend nvidia::cudnn)
 set(PUBLIC_GPU_LIBS CUDA::cudart CUDA::cublasLt CUDA::nvml CUDA::cuFile cudnn_frontend nvidia::nccl ${NVML_LIBS})
 
 message(STATUS "CUDA Toolkit Version: ${CUDAToolkit_VERSION}")

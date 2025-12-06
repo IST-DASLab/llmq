@@ -12,6 +12,7 @@ find_package(hip REQUIRED CONFIG PATHS ${ROCM_PATH})
 find_package(rocblas REQUIRED CONFIG PATHS ${ROCM_PATH})
 find_package(hipblas REQUIRED CONFIG PATHS ${ROCM_PATH})
 find_package(MIOpen REQUIRED CONFIG PATHS ${ROCM_PATH})
+find_package(RCCL CONFIG REQUIRED HINTS "${CMAKE_PREFIX_PATH}" PATHS "${ROCM_PATH}")
 
 set(PRIVATE_GPU_LIBS hip::host roc::hipblas MIOpen)
 
@@ -84,3 +85,6 @@ function(hipify_target TARGET_NAME HIPIFY_OUTPUT_DIR)
     target_compile_options(${TARGET_NAME} PRIVATE -include "${CMAKE_SOURCE_DIR}/src/utilities/amd.h")
     message(STATUS INC_DIR: ${HIPIFIED_INCLUDE_DIRS})
 endfunction()
+
+set(PRIVATE_GPU_LIBS hip::device roc::hipblas rccl)
+set(PUBLIC_GPU_LIBS hip::host rccl)
