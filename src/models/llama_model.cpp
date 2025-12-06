@@ -432,7 +432,7 @@ void LLamaModel::backward(Tensor inputs, Tensor targets, NCCLCommunicator& comm,
 
     auto& d_emb = Grads->get_embeddings_full(main_stream, comm, accumulate);
     encoder_backward(d_emb, rs->EncoderBwdScratch, rs->EncoderBwdIndices, rs->EncoderBwdInfo,
-                     rs->DEmb, rs->Inputs, inputs, B, T, C, OptimizerRNG(), main_stream);
+                     rs->DEmb, rs->Inputs, inputs, B, T, C, OptimizerRNG(), main_stream, rs->SideStreamEvent, rs->SideStream);
     Grads->notify_embeddings(main_stream, comm);
 
     // make sure all gradients are communicated before we go to the update step.
