@@ -22,10 +22,11 @@ __global__ void __launch_bounds__(512) attention_forward_gpu_kernel(
     scalar_t* out, float* stats, float scale,
     const scalar_t* qkv,
     int B, int T, int Hq, int Hkv) {
+    constexpr const int SubWarpSize = 16;
 
     auto block = cg::this_thread_block();
     auto warp = cg::tiled_partition<32>(block);
-    auto sub_warp = cg::tiled_partition<16>(block);
+    auto sub_warp = cg::tiled_partition<SubWarpSize>(block);
 
     extern __shared__ float scratch[];
 
@@ -43,19 +44,19 @@ __global__ void __launch_bounds__(512) attention_forward_gpu_kernel(
 
     using vec_t = GenericVector<scalar_t, 4>;
     using fvec_t = GenericVector<float, 4>;
-    using q_cache_t = GenericVector<float, E / sub_warp.size()>;
+    using q_cache_t = GenericVector<float, E / SubWarpSize>;
     q_cache_t q_cache;
 
     // combine values
-    using v_cache_t = GenericVector<float, E / sub_warp.size()>;
+    using v_cache_t = GenericVector<float, E / SubWarpSize>;
     v_cache_t v_cache = v_cache_t::zeros();
 
     // determine maximum and online logsumexp
     float maximum = std::numeric_limits<float>::lowest();
     float lse = 0;
 
-    for (int ee = 0; ee < E / (sub_warp.size() * vec_t::size); ++ee) {
-        int e = (ee * sub_warp.size() + sub_warp.thread_rank()) * vec_t::size;
+    for (int ee = 0; ee < E / (SubWarpSize * vec_t::size); ++ee) {
+        int e = (ee * SubWarpSize + sub_warp.thread_rank()) * vec_t::size;
         vec_t qv = vec_t::load(query + e);
         for (int j = 0; j < vec_t::size; ++j) {
             q_cache[ee * vec_t::size + j] = (float)qv[j];
@@ -65,8 +66,8 @@ __global__ void __launch_bounds__(512) attention_forward_gpu_kernel(
     for (int l = sub_warp.meta_group_rank(); l <= t; l += sub_warp.meta_group_size()) {
         ptrdiff_t kv_offset = l * TH * E;
         float qk = 0;
-        for (int ee = 0; ee < E / (sub_warp.size() * vec_t::size); ++ee) {
-            int e = (ee * sub_warp.size() + sub_warp.thread_rank()) * vec_t::size;
+        for (int ee = 0; ee < E / (SubWarpSize * vec_t::size); ++ee) {
+            int e = (ee * SubWarpSize + sub_warp.thread_rank()) * vec_t::size;
             vec_t kv = vec_t::load(keys + kv_offset + e);
             for (int j = 0; j < vec_t::size; ++j) {
                 qk += q_cache[ee * vec_t::size + j] * (float)kv[j];
@@ -84,8 +85,8 @@ __global__ void __launch_bounds__(512) attention_forward_gpu_kernel(
         float att = std::exp(scale * (qk - maximum));
         lse += std::exp(scale * (qk - maximum));
 
-        for (int ee = 0; ee < E / (sub_warp.size() * vec_t::size); ++ee) {
-            int e = (ee * sub_warp.size() + sub_warp.thread_rank()) * vec_t::size;
+        for (int ee = 0; ee < E / (SubWarpSize * vec_t::size); ++ee) {
+            int e = (ee * SubWarpSize + sub_warp.thread_rank()) * vec_t::size;
             vec_t vv = vec_t::load(values + kv_offset + e);
             for (int j = 0; j < vec_t::size; ++j) {
                 v_cache[ee * vec_t::size + j] += att * (float)vv[j];
@@ -120,8 +121,8 @@ __global__ void __launch_bounds__(512) attention_forward_gpu_kernel(
     }
     __syncthreads();
 
-    for (int ee = 0; ee < E / (sub_warp.size() * vec_t::size); ++ee) {
-        int e = (ee * sub_warp.size() + sub_warp.thread_rank()) * vec_t::size;
+    for (int ee = 0; ee < E / (SubWarpSize * vec_t::size); ++ee) {
+        int e = (ee * SubWarpSize + sub_warp.thread_rank()) * vec_t::size;
         fvec_t store;
         for (int j = 0; j < vec_t::size; ++j) {
             store[j] = v_cache[ee * vec_t::size + j];

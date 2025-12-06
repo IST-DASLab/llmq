@@ -9,7 +9,7 @@
 
 #include <cuda_fp8.h>
 
-Tensor HOST_DEVICE slice(const Tensor& src, int dim, long start, long end) {
+Tensor slice(const Tensor& src, int dim, long start, long end) {
     if (dim != 0)
         throw std::logic_error("Slices must be contiguous, so only the first dimension can be sliced.");
 

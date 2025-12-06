@@ -7,7 +7,6 @@
 #include <cstdint>
 #include <string_view>
 #include <unordered_map>
-#include <cublasLt.h>
 #include <chrono>
 
 #include "utilities/dtype.h"
@@ -319,6 +318,7 @@ std::vector<std::pair<ETensorDType, long>> get_transformer_ops(long non_embeddin
 }
 
 cublasLtHandle_t create_cublaslt_handle();
+void destroy_cublaslt_handle(cublasLtHandle_t handle);
 
 double measure_real_peak() {
     nv_bfloat16* a;
@@ -369,7 +369,7 @@ double measure_real_peak() {
     CUDA_CHECK(cudaFree(b));
     CUDA_CHECK(cudaFree(c));
     CUDA_CHECK(cudaFree(workspace));
-    cublasLtDestroy(handle);
+    destroy_cublaslt_handle(handle);
 
     double ops_per_sec = ops_total / ms_total * 1000;
     return ops_per_sec;

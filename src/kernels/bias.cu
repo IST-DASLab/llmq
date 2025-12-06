@@ -139,7 +139,7 @@ int get_bias_backward_scratch_size(ETensorDType dtype, int OC, const cudaDeviceP
     const int block_size = dp.maxThreadsPerMultiProcessor == 1536 ? 768 : 1024;
     const int OC_per_warp = 8 * ( 16 / get_dtype_size(dtype) ); // 64 at BF16
     const int grid_size_x = div_ceil(OC, OC_per_warp); // e.g. 12 horizontal blocks for 768 OCs at BF16
-    const int grid_size_y = max(1, block_size * dp.multiProcessorCount / (block_size * grid_size_x)); // full GPU!
+    const int grid_size_y = std::max(1, block_size * dp.multiProcessorCount / (block_size * grid_size_x)); // full GPU!
     return grid_size_y * OC * sizeof(float);
 }
 
@@ -155,7 +155,7 @@ void backward_bias_imp(floatX* dbias, const FloatY* dout, const float* scale_a, 
     dim3 block_dim = {4, 8, (unsigned)block_size/32};
     const int OC_per_warp = block_dim.y * x128::size; // 64 at BF16
     const int grid_size_x = div_ceil(OC, OC_per_warp); // e.g. 12 horizontal blocks for 768 OCs at BF16
-    const int grid_size_y = max(1, block_size * dp.multiProcessorCount / (block_size * grid_size_x)); // full GPU!
+    const int grid_size_y = std::max(1, block_size * dp.multiProcessorCount / (block_size * grid_size_x)); // full GPU!
 
     if( (scale_a == nullptr) != (scale_b == nullptr) ) {
         throw std::logic_error("backward_bias: scale_a and scale_b must be both nullptr or both non-nullptr");
