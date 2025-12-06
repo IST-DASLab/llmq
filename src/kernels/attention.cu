@@ -9,11 +9,10 @@
 #include <cmath>
 
 #include <cooperative_groups.h>
-#include <cooperative_groups/reduce.h>
-
 #include "kernels/kernels.h"
 #include "utilities/tensor.h"
 #include "utilities/vec.cuh"
+#include "kernel_utils.cuh"
 
 namespace cg = cooperative_groups;
 
@@ -73,7 +72,7 @@ __global__ void __launch_bounds__(512) attention_forward_gpu_kernel(
                 qk += q_cache[ee * vec_t::size + j] * (float)kv[j];
             }
         }
-        qk = cg::reduce(sub_warp, qk, cg::plus<float>{});
+        qk = reduce_group_add(sub_warp, qk);
         if (qk > maximum) {
             float rescale = std::exp(scale * (maximum - qk));
             for (int j = 0; j < v_cache_t::size; ++j) {
@@ -109,9 +108,9 @@ __global__ void __launch_bounds__(512) attention_forward_gpu_kernel(
         r_lse = scratch[warp.thread_rank() + sub_warp.meta_group_size()];
     }
 
-    maximum = cg::reduce(warp, r_max, cg::greater<float>{});
+    maximum = reduce_group_max(warp, r_max);
     r_lse *= std::exp(scale * (r_max - maximum));
-    lse = cg::reduce(warp, r_lse, cg::plus<float>{});
+    lse = reduce_group_add(warp, r_lse);
     float rescale = std::exp(scale * (l_max - maximum)) / lse;
     for (int j = 0; j < v_cache_t::size; ++j) {
         v_cache[j] *= rescale;

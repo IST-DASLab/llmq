@@ -5,27 +5,12 @@
 
 #include <cassert>
 
+#include "kernel_utils.cuh"
 #include "utilities/utils.h"
 #include "utilities/vec.cuh"
 
 // ----------------------------------------------------------------------------
 // CUDA kernels
-
-// warp-level reduction for finding the maximum value
-__device__ inline float warpReduceMax(float val) {
-    for (int offset = 16; offset > 0; offset /= 2) {
-        val = fmaxf(val, __shfl_xor_sync(0xFFFFFFFF, val, offset));
-    }
-    return val;
-}
-
-__device__ inline float warpReduceSum(float val) {
-    for (int offset = 16; offset > 0; offset /= 2) {
-        val += __shfl_xor_sync(0xFFFFFFFF, val, offset);
-    }
-    return val;
-}
-
 
 // requires all 32 threads in the warp to be active, but should work for any block size
 // uses non-dynamic shared memory so every call increases shared memory requirements by 128 bytes

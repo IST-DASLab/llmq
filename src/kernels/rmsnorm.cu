@@ -14,13 +14,6 @@
 
 constexpr const int WARP_SIZE = 32;
 
-__device__ inline float warpReduceSum(float val) {
-    for (int offset = 16; offset > 0; offset /= 2) {
-        val += __shfl_xor_sync(0xFFFFFFFF, val, offset);
-    }
-    return val;
-}
-
 template<class floatX>
 __device__ void rmsnorm_forward_kernel(floatX* __restrict__ out, float* __restrict__ rms,
                                        const floatX*  __restrict__ inp, const floatX*  __restrict__ weight,
