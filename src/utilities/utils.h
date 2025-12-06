@@ -40,10 +40,13 @@ template<std::integral T>
 constexpr T HOST_DEVICE div_ceil(T dividend, T divisor) {
     return (dividend + divisor - 1) / divisor;
 }
+
+[[noreturn]] void throw_not_divisible(long long dividend, long long divisor);
+
 template<std::integral T>
 constexpr T div_exact(T dividend, T divisor) {
     if(dividend % divisor != 0) {
-        throw std::runtime_error("Not divisible");
+        throw_not_divisible(dividend, divisor);
     }
     return dividend / divisor;
 }
