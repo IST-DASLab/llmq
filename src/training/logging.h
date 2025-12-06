@@ -43,7 +43,10 @@ public:
     void log_step(int step, float epoch, int step_tokens, int duration_ms, float norm, float loss, float lr);
     void log_eval(int step, float epoch, int eval_tokens, int duration_ms, float loss);
     void log_gpu_state(int step, int gpu_id, const GPUUtilInfo& gpu_util);
-    void log_allocator(const std::vector<std::pair<std::string, sSegmentMemory>>& stats, const DeviceMemoryStack& stack);
+    void log_allocator(
+        const std::vector<std::pair<std::string, sSegmentMemory>>& stats,
+        const std::vector<std::pair<std::string, long>>& stack_info
+        );
 
     // call at the beginning and end of a section of processing.
     // will record the time between the two calls

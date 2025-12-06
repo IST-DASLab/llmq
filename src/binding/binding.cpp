@@ -338,6 +338,13 @@ NB_MODULE(_pyllmq, m) {
                 res["pageable"] = size.PageableHost;
                 ret[nb::cast(name)] = res;
             }
+
+            auto stack = trainer->get_stack_info(gpu_id);
+            for (const auto& [name, size] : stack) {
+                nb::dict res;
+                res["stack"] = size;
+                ret[nb::cast(name)] = res;
+            }
             return ret;
             }, nb::arg("gpu_id") = 0, "Get the current memory allocations for the given GPU")
         ;
@@ -441,17 +448,22 @@ NB_MODULE(_pyllmq, m) {
              "Log GPU utilization state")
         .def("log_allocator", [](TrainingRunLogger* logger, const nb::dict& stats) {
             std::vector<std::pair<std::string, sSegmentMemory>> cpp_stats;
+            std::vector<std::pair<std::string, long>> cpp_stack;
             cpp_stats.reserve(stats.size());
             for (auto item : stats) {
                 std::string key = nb::cast<std::string>(item.first);
                 nb::dict value = nb::cast<nb::dict>(item.second);
-                long device = nb::cast<long>(value["device"]);
-                long managed = nb::cast<long>(value["managed"]);
-                long pinned = nb::cast<long>(value["pinned"]);
-                long pageable = nb::cast<long>(value["pageable"]);
-                cpp_stats.emplace_back(key, sSegmentMemory{device, managed, pinned, pageable});
+                if (value.contains("stack")) {
+                    cpp_stack.emplace_back(key, nb::cast<long>(value["stack"]));
+                } else {
+                    long device = nb::cast<long>(value["device"]);
+                    long managed = nb::cast<long>(value["managed"]);
+                    long pinned = nb::cast<long>(value["pinned"]);
+                    long pageable = nb::cast<long>(value["pageable"]);
+                    cpp_stats.emplace_back(key, sSegmentMemory{device, managed, pinned, pageable});
+                }
             }
-            logger->log_allocator(cpp_stats);
+            logger->log_allocator(cpp_stats, cpp_stack);
         }, nb::arg("stats"), "Log memory allocator statistics")
          .def("set_expected_time_per_token", [](TrainingRunLogger* logger, const MultiGPUPyTrainer* trainer){
              auto& config = trainer->config();

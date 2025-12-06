@@ -35,6 +35,8 @@ public:
     const AllocationList& get_high_mark() const { return mHighMark; }
     void set_high_mark(const AllocationList& list) { mHighMark = list; }
 
+    std::vector<std::pair<std::string, long>> get_allocation_stats() const;
+
 private:
     int mDeviceID;
     std::byte* mBackingMemory;

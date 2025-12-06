@@ -14,6 +14,7 @@
 #include "utilities/comm.h"
 #include "kernels/kernels.h"
 #include "models/llama_gradients.h"
+#include "models/llama_run_state.h"
 
 MultiGPUPyTrainer::MultiGPUPyTrainer(int ngpus, LLamaConfig config, LLamaOptions options, int batch_size, int seq_len, int grad_accum, bool memcpy_all_gather, bool memcpy_send_recv) :
     mConfig(config), mOptions(options), B(batch_size), T(seq_len), mGradAccumulation(grad_accum)
@@ -245,6 +246,14 @@ std::vector<std::pair<std::string, sSegmentMemory>> MultiGPUPyTrainer::get_alloc
     std::vector<std::pair<std::string, sSegmentMemory>> result;
     run_work([&result](sThreadContext& ctx) {
         result = ctx.Model->get_allocator().get_allocation_segments();
+    }, gpu_id);
+    return result;
+}
+
+std::vector<std::pair<std::string, long>> MultiGPUPyTrainer::get_stack_info(int gpu_id) {
+    std::vector<std::pair<std::string, long>> result;
+    run_work([&result](sThreadContext& ctx) {
+        result = ctx.Model->run_state().Stack.get_allocation_stats();
     }, gpu_id);
     return result;
 }
