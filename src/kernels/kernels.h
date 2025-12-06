@@ -14,7 +14,11 @@
 
 struct cudaDeviceProp;
 typedef struct cudnnContext* cudnnHandle_t;
+#ifndef __HIP__
 typedef struct cublasLtContext* cublasLtHandle_t;
+#else
+typedef void* hipblasLtHandle_t;
+#endif
 
 struct Tensor;
 enum class ETensorDType: int;

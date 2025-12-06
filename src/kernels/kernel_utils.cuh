@@ -55,21 +55,44 @@ static __forceinline__ __device__ Element reduce_group_add(Group& group, Element
 
 template<typename Group, typename Element>
 static __forceinline__ __device__ Element reduce_group_max(Group& group, Element value) {
+#ifndef __HIP__
     return cooperative_groups::reduce(group, value, cooperative_groups::greater<Element>());
+#else
+    for(int i = 1; i < group.size(); i *= 2) {
+        value += group.shfl_xor(value, i);
+    }
+    return value;
+#endif
 }
 
 static __forceinline__ __device__ float warpReduceSum(float val) {
+#ifndef __HIP__
     for (int offset = 16; offset > 0; offset /= 2) {
         val += __shfl_xor_sync(0xFFFFFFFFu, val, offset);
     }
     return val;
+#else
+    for (int offset = 16; offset > 0; offset /= 2) {
+        val += __shfl_xor_sync(0xFFFFFFFFull, val, offset, 32);
+    }
+    return val;
+#endif
 }
 
 __device__ inline float warpReduceMax(float val) {
+#ifndef __HIP__
     for (int offset = 16; offset > 0; offset /= 2) {
         val = fmaxf(val, __shfl_xor_sync(0xFFFFFFFFu, val, offset));
     }
+#else
+    for (int offset = 16; offset > 0; offset /= 2) {
+        val = fmaxf(val, __shfl_xor_sync(0xFFFFFFFFull, val, offset, 32));
+    }
+    return val;
+#endif
     return val;
 }
+
+
 
 #endif //LLMQ_SRC_KERNELS_KERNEL_UTILS_CUH
