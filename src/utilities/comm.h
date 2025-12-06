@@ -11,7 +11,9 @@
 #include <optional>
 #include <vector>
 
+#ifndef __HIP__
 #include <cuda_bf16.h>
+#endif
 
 namespace std
 {

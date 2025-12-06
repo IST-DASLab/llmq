@@ -1,5 +1,5 @@
 // AMD compatibility header. When compiling for rocm, this header will get included into every translation unit
-// Based on anthonyx work for llm.c: https://github.com/anthonix/llm.c/blob/master/llmc/amd_common.cuh
+// Based on Anthonix's work for llm.c: https://github.com/anthonix/llm.c/blob/master/llmc/amd_common.cuh
 
 #include <hip/hip_bf16.h>
 #include <hip/hip_bfloat16.h>

@@ -54,12 +54,22 @@ void trace_or_execute_cuda_graph(Function&& function, cudaStream_t stream, cudaG
         if (instance == nullptr) {
             CUDA_CHECK(cudaGraphInstantiate(&instance, graph, nullptr, nullptr, 0));
         }
+#ifndef __HIP__
         cudaGraphExecUpdateResultInfo result;
         if(auto status = cudaGraphExecUpdate(instance, graph, &result); status != cudaSuccess)
         {
             fprintf(stderr, "Graph update failed: %d\n", result.result);
             CUDA_CHECK(status);
         }
+#else
+        hipGraphNode_t errorNode;
+        hipGraphExecUpdateResult result;
+        if(auto status = hipGraphExecUpdate(instance, graph, &errorNode, &result); status != hipSuccess)
+        {
+            fprintf(stderr, "Graph update failed: %d\n", result);
+            CUDA_CHECK(status);
+        }
+#endif
         CUDA_CHECK(cudaGraphDestroy(graph));
         CUDA_CHECK(cudaGraphLaunch(instance, stream));
     } else {

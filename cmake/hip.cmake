@@ -12,9 +12,7 @@ find_package(hip REQUIRED CONFIG PATHS ${ROCM_PATH})
 find_package(rocblas REQUIRED CONFIG PATHS ${ROCM_PATH})
 find_package(hipblas REQUIRED CONFIG PATHS ${ROCM_PATH})
 find_package(MIOpen REQUIRED CONFIG PATHS ${ROCM_PATH})
-find_package(RCCL CONFIG REQUIRED HINTS "${CMAKE_PREFIX_PATH}" PATHS "${ROCM_PATH}")
-
-set(PRIVATE_GPU_LIBS hip::host roc::hipblas MIOpen)
+find_package(RCCL REQUIRED CONFIG PATHS "${ROCM_PATH}")
 
 find_program(HIPIFY_PERL hipify-perl PATHS ${ROCM_PATH}/bin REQUIRED)
 
@@ -71,7 +69,6 @@ function(hipify_target TARGET_NAME HIPIFY_OUTPUT_DIR)
         file(RELATIVE_PATH REL_INC ${TARGET_SOURCE_DIR} ${ABS_INC_DIR})
         # Check if relative path doesn't start with ../ (inside source tree)
         if(NOT REL_INC MATCHES "^\\.\\.")
-            message(STATUS INC_DIR: ${INC_DIR})
             file(GLOB_RECURSE INC_FILES "${INC_DIR}/*.h" "${INC_DIR}/*.hpp" "${INC_DIR}/*.cuh")
             hipify_files(HIPIFIED_HEADERS ${HIPIFY_OUTPUT_DIR} ${TARGET_SOURCE_DIR} ${INC_FILES})
             target_sources(${TARGET_NAME} PRIVATE ${HIPIFIED_HEADERS})
@@ -80,11 +77,16 @@ function(hipify_target TARGET_NAME HIPIFY_OUTPUT_DIR)
             list(APPEND HIPIFIED_INCLUDE_DIRS ${INC_DIR})
         endif()
     endforeach()
+
     set_target_properties(${TARGET_NAME} PROPERTIES INCLUDE_DIRECTORIES "${HIPIFIED_INCLUDE_DIRS}")
+    # not really correct... but let's set up the hipified includes also for interface
+    set_target_properties(${TARGET_NAME} PROPERTIES INTERFACE_INCLUDE_DIRECTORIES "${HIPIFIED_INCLUDE_DIRS}")
+
     # enforce presence of compatibility header
-    target_compile_options(${TARGET_NAME} PRIVATE -include "${CMAKE_SOURCE_DIR}/src/utilities/amd.h")
-    message(STATUS INC_DIR: ${HIPIFIED_INCLUDE_DIRS})
+    target_compile_options(${TARGET_NAME} PUBLIC -include "${CMAKE_SOURCE_DIR}/src/utilities/amd.h")
+    message(STATUS "DIRS FOR ${TARGET_NAME}")
+    message(STATUS "INC_DIR: ${HIPIFIED_INCLUDE_DIRS}")
 endfunction()
 
-set(PRIVATE_GPU_LIBS hip::device roc::hipblas rccl)
+set(PRIVATE_GPU_LIBS hip::host hip::device MIOpen roc::hipblas rccl)
 set(PUBLIC_GPU_LIBS hip::host rccl)

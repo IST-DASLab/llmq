@@ -168,9 +168,11 @@ target_compile_options(llmq-common PUBLIC $<$<COMPILE_LANGUAGE:CUDA>:--expt-rela
 
 if(USE_ROCM)
     hipify_target(llmq-common ${CMAKE_CURRENT_BINARY_DIR}/hipify)
+    hipify_files(HIP_TRAIN ${CMAKE_CURRENT_BINARY_DIR}/hipify ${CMAKE_CURRENT_SOURCE_DIR} train.cpp)
+    add_executable(train ${HIP_TRAIN})
+else()
+    add_executable(train train.cpp)
 endif ()
-
-add_executable(train train.cpp)
 target_link_libraries(train PRIVATE llmq-common CLI11::CLI11 fmt::fmt-header-only)
 
 add_executable(export-checkpoint export-checkpoint.cpp)
