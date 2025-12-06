@@ -16,6 +16,9 @@ find_package(RCCL REQUIRED CONFIG PATHS "${ROCM_PATH}")
 
 find_program(HIPIFY_PERL hipify-perl PATHS ${ROCM_PATH}/bin REQUIRED)
 
+set(NVML_SOURCE src/utilities/gpu_info_fallback.cpp)
+set(NVML_LIBS "")
+
 # Hipifies a list of files, returns hipified file list
 function(hipify_files OUT_VAR HIPIFY_OUTPUT_DIR SOURCE_DIR)
     set(HIPIFIED_FILES "")
