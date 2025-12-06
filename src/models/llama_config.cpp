@@ -180,7 +180,7 @@ static LLamaConfig create_llama3_config(int hidden_size, int intermediate_size, 
 
 LLamaConfig create_config_from_name(std::string_view name, ETensorDType dtype) {
     if(iequals(name, "Qwen2.5-0.5B")) {
-        return create_qwen25_config(896, 4861, 14, 2, 24, 1e-06f, true, dtype);
+        return create_qwen25_config(896, 4864, 14, 2, 24, 1e-06f, true, dtype);
     } else if(iequals(name, "Qwen2.5-1.5B")) {
         return create_qwen25_config(1536, 8960, 12, 2, 28, 1e-06f, true, dtype);
     } else if(iequals(name, "Qwen2.5-3B")) {
