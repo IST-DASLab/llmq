@@ -178,7 +178,7 @@ template<class floatX>
 void encoder_backward_imp(floatX* dwte, int* scratch, // gpu outputs & scratch
                       int* workload_indices, int4* bucket_info,    // cpu scratch buffers
                       const floatX* dout, const int* inp, const int* inputs_cpu, // cpu/gpu inputs
-                      int B, int T, int C, unsigned int seed, cudaStream_t stream) {
+                      int B, int T, int C, unsigned int seed, cudaStream_t stream, cudaEvent_t sync_event, cudaStream_t copy_stream) {
     using x128 = GenericVector<floatX, 16/sizeof(floatX)>;
 
     int num_c_groups = div_ceil((size_t)C, x128::size * 32);
@@ -220,12 +220,13 @@ void encoder_backward_imp(floatX* dwte, int* scratch, // gpu outputs & scratch
         bucket_index++;
     }
 
-    // Step 3: Copy data from host to device (async until the last one to avoid synchronising CPU/GPU twice)
-    // todo - could use CUDA events (even without streams) to avoid CPU/GPU synchronisation completely
+    // Step 3: Copy data from host to device (async on a different stream)
     int4* d_bucket_info = (int4*)scratch;
     int*  d_workload_indices = (int*)(scratch + B*T*num_c_groups * 4);
-    CUDA_CHECK(cudaMemcpyAsync(d_bucket_info, bucket_info, num_buckets * sizeof(int4), cudaMemcpyHostToDevice, stream));
-    CUDA_CHECK(cudaMemcpyAsync(d_workload_indices, workload_indices, total_items * sizeof(int), cudaMemcpyHostToDevice, stream));
+    CUDA_CHECK(cudaMemcpyAsync(d_bucket_info, bucket_info, num_buckets * sizeof(int4), cudaMemcpyHostToDevice, copy_stream));
+    CUDA_CHECK(cudaMemcpyAsync(d_workload_indices, workload_indices, total_items * sizeof(int), cudaMemcpyHostToDevice, copy_stream));
+    CUDA_CHECK(cudaEventRecord(sync_event, copy_stream));
+    CUDA_CHECK(cudaStreamWaitEvent(stream, sync_event, 0));
 
     // Launch wte kernel
     // todo - profile block sizes on more content (depends on number of buckets and on GPU?)
@@ -236,13 +237,13 @@ void encoder_backward_imp(floatX* dwte, int* scratch, // gpu outputs & scratch
 void encoder_backward(float* dwte, int* scratch, // gpu outputs & scratch
                       int* workload_indices, int4* bucket_info,    // cpu scratch buffers
                       const float* dout, const int* inp, const int* inputs_cpu, // cpu/gpu inputs
-                      int B, int T, int C, unsigned int seed, cudaStream_t stream) {
-    encoder_backward_imp(dwte, scratch, workload_indices, bucket_info, dout, inp, inputs_cpu, B, T, C, seed, stream);
+                      int B, int T, int C, unsigned int seed, cudaStream_t stream, cudaEvent_t sync_event, cudaStream_t copy_stream) {
+    encoder_backward_imp(dwte, scratch, workload_indices, bucket_info, dout, inp, inputs_cpu, B, T, C, seed, stream, sync_event, copy_stream);
 }
 
 void encoder_backward(nv_bfloat16* dwte, int* scratch, // gpu outputs & scratch
                       int* workload_indices, int4* bucket_info,    // cpu scratch buffers
                       const nv_bfloat16* dout, const int* inp, const int* inputs_cpu, // cpu/gpu inputs
-                      int B, int T, int C, unsigned int seed, cudaStream_t stream) {
-    encoder_backward_imp(dwte, scratch, workload_indices, bucket_info, dout, inp, inputs_cpu, B, T, C, seed, stream);
+                      int B, int T, int C, unsigned int seed, cudaStream_t stream, cudaEvent_t sync_event, cudaStream_t copy_stream) {
+    encoder_backward_imp(dwte, scratch, workload_indices, bucket_info, dout, inp, inputs_cpu, B, T, C, seed, stream, sync_event, copy_stream);
 }

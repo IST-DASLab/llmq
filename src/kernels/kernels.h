@@ -28,15 +28,18 @@ void encoder_forward(Tensor& out, const Tensor& inp, const Tensor& wte, std::opt
 void encoder_backward(float* dwte, int* scratch,
                       int* workload_indices, int4* bucket_info,
                       const float* dout, const int* inp, const int* inputs_cpu,
-                      int B, int T, int C, unsigned int seed, cudaStream_t stream);
+                      int B, int T, int C, unsigned int seed, cudaStream_t stream, cudaEvent_t sync_event, cudaStream_t copy_stream);
 void encoder_backward(nv_bfloat16* dwte, int* scratch,
                       int* workload_indices, int4* bucket_info,
                       const nv_bfloat16* dout, const int* inp, const int* inputs_cpu,
-                      int B, int T, int C, unsigned int seed, cudaStream_t stream);
+                      int B, int T, int C, unsigned int seed, cudaStream_t stream, cudaEvent_t sync_event, cudaStream_t copy_stream);
+
+// The kernel runs on `stream`, but the bucket info that gets generated on CPU to enable efficient determinism
+// can be copied using `copy_stream`, so the kernel launch does not have to wait.
 void encoder_backward(Tensor& dwte, Tensor& scratch,
                       Tensor& workload_indices, Tensor& bucket_info,
                       const Tensor& dout, const Tensor& inp, const Tensor& inputs_cpu,
-                      int B, int T, int C, unsigned int seed, cudaStream_t stream);
+                      int B, int T, int C, unsigned int seed, cudaStream_t stream, cudaEvent_t sync_event, cudaStream_t copy_stream);
 
 void rmsnorm_forward(float* out, float* rms, const float* inp, const float* weight, float* abs_max_ptr, float epsilon, int B, int T, int C, cudaStream_t stream);
 void rmsnorm_forward(nv_bfloat16* out, float* rms, const nv_bfloat16* inp, const nv_bfloat16* weight, float* abs_max_ptr, float epsilon, int B, int T, int C, cudaStream_t stream);
