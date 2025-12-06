@@ -94,12 +94,13 @@ void LLamaModel::forward(Tensor inputs, NCCLCommunicator& comm, int micro_step) 
         Parameters->invalidate();
     }
 
-
     assert(rs->Inputs.Sizes[0] >= B);
     assert(rs->Inputs.Sizes[1] >= T);
     assert(inputs.Device == -1);
     {
         NvtxRange r{"copy-input"};
+        // no point running this copy on side stream: input is needed by embedding gradients, which is
+        // the last op in backward.
         CUDA_CHECK(cudaMemcpyAsync(rs->Inputs.Data, inputs.Data, inputs.bytes(), cudaMemcpyHostToDevice, main_stream));
         CUDA_CHECK(cudaEventRecord(rs->TransferDone, main_stream));
     }
@@ -346,9 +347,14 @@ void LLamaModel::backward(Tensor inputs, Tensor targets, NCCLCommunicator& comm,
     long T = inputs.Sizes[1];
     const size_t C = Config.HiddenSize;
     const size_t L = Config.NumLayers;
-
-    CUDA_CHECK(cudaMemcpyAsync(rs->Targets.Data, targets.Data, targets.bytes(), cudaMemcpyHostToDevice, main_stream));
-    CUDA_CHECK(cudaEventRecord(rs->TransferDone, main_stream));
+    {
+        NvtxRange r{"copy-targets"};
+        // make sure rs->Targets is no longer needed by the previous step.
+        CUDA_CHECK(cudaStreamWaitEvent(rs->SideStream, rs->BackwardDone, 0));
+        CUDA_CHECK(cudaMemcpyAsync(rs->Targets.Data, targets.Data, targets.bytes(), cudaMemcpyHostToDevice, rs->SideStream));
+        CUDA_CHECK(cudaEventRecord(rs->TransferDone, rs->SideStream));
+        CUDA_CHECK(cudaStreamWaitEvent(main_stream, rs->TransferDone, 0));
+    }
 
     bool last_step = micro_step == grad_accum_steps - 1;
     // on the first micro-step zero the gradients, as we're about to += accumulate into them
@@ -481,11 +487,6 @@ void LLamaModel::_backward_lmhead(long B, long T, int micro_step, int grad_accum
         // if we reset model grads to zero, now is the time we need to wait
         if (micro_step == 0 && nano_step == 0) {
             CUDA_CHECK(cudaStreamWaitEvent(main_stream, rs->SideStreamEvent, 0));
-        }
-
-        if (nano_step == 0) {
-            // BackwardDone ensures that zero-2 gradient accumulation of the previous step has finished, so we can safely write to d_lmhead again.
-            CUDA_CHECK(cudaEventSynchronize(rs->BackwardDone));
         }
 
         // handle the LM-head. We run the d_lmhead matmul first, so that the gradient reduction can overlap with the DLNF matmul.
