@@ -448,26 +448,22 @@ void LLamaGradientsBlockSharded_AllToAll::sr_accumulate_layer(int layer_idx,
 
     int rank = comm.rank();
     int world = comm.world_size();
+    float scale = 1.f;
+    if (mIsLastMicroStep) {
+        scale = 1.f / world;
+    }
 
-    for (int k = 0; k < world - 1; ++k) {
-        int other = (rank + k) % world;
-        float scale = 1.f;
-        if (k == world - 2 && mIsLastMicroStep) {
-            scale = 1.f / world;
-        }
+    auto rng_1 = mRng.generate(2*mStepCounter + 0, layer_idx);
+    auto rng_2 = mRng.generate(2*mStepCounter + 1, layer_idx + 12345);
 
-        auto rng_1 = mRng.generate(2*mStepCounter + 0, layer_idx + 12345*k);
-        auto rng_2 = mRng.generate(2*mStepCounter + 1, layer_idx + 12345+k + 1);
-
-        sr_accumulate_tensor(sw.LN1_w, dw.LN1_w, stream, false, scale, other, rng_1[0]);
-        sr_accumulate_tensor(sw.LN2_w, dw.LN2_w, stream, false, scale, other, rng_1[1]);
-        sr_accumulate_tensor(sw.MLP_Up_w, dw.MLP_Up_w, stream, false, scale, other, rng_1[2]);
-        sr_accumulate_tensor(sw.MLP_Down_w, dw.MLP_Down_w, stream, false, scale, other, rng_1[3]);
-        sr_accumulate_tensor(sw.Attn_QKV_w, dw.Attn_QKV_w, stream, false, scale, other, rng_2[0]);
-        sr_accumulate_tensor(sw.Attn_Out_w, dw.Attn_Out_w, stream, false, scale, other, rng_2[1]);
-        if(sw.Attn_QKV_b.has_value()) {
-            sr_accumulate_tensor(sw.Attn_QKV_b.value(), dw.Attn_QKV_b.value(), stream, false, scale, other, rng_2[2]);
-        }
+    vector_reduce_sr(sw.LN1_w, dw.LN1_w, scale, world, (rank + world - 1) % world, sw.LN1_w.nelem(), true, rng_1[0], stream);
+    vector_reduce_sr(sw.LN2_w, dw.LN2_w, scale, world, (rank + world - 1) % world, sw.LN2_w.nelem(), true, rng_1[1], stream);
+    vector_reduce_sr(sw.MLP_Up_w, dw.MLP_Up_w, scale, world, (rank + world - 1) % world, sw.MLP_Up_w.nelem(), true, rng_1[2], stream);
+    vector_reduce_sr(sw.MLP_Down_w, dw.MLP_Down_w, scale, world, (rank + world - 1) % world, sw.MLP_Down_w.nelem(), true, rng_1[3], stream);
+    vector_reduce_sr(sw.Attn_QKV_w, dw.Attn_QKV_w, scale, world, (rank + world - 1) % world, sw.Attn_QKV_w.nelem(), true, rng_2[0], stream);
+    vector_reduce_sr(sw.Attn_Out_w, dw.Attn_Out_w, scale, world, (rank + world - 1) % world, sw.Attn_Out_w.nelem(), true, rng_2[1], stream);
+    if(sw.Attn_QKV_b.has_value()) {
+        vector_reduce_sr(sw.Attn_QKV_b.value(), dw.Attn_QKV_b.value(), scale, world, (rank + world - 1) % world, sw.Attn_QKV_b->nelem(), true, rng_2[2], stream);
     }
 }
 
