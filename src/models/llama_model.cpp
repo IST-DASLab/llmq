@@ -355,7 +355,7 @@ void LLamaModel::backward(Tensor inputs, Tensor targets, NCCLCommunicator& comm,
         CUDA_CHECK(cudaStreamWaitEvent(rs->SideStream, rs->BackwardDone, 0));
         CUDA_CHECK(cudaMemcpyAsync(rs->Targets.Data, targets.Data, targets.bytes(), cudaMemcpyHostToDevice, rs->SideStream));
         CUDA_CHECK(cudaEventRecord(rs->TransferDone, rs->SideStream));
-        CUDA_CHECK(cudaStreamWaitEvent(main_stream, rs->TransferDone, 0));
+        // we will wait in _backward_lmhead for this transfer to be done.
     }
 
     bool last_step = micro_step == grad_accum_steps - 1;
@@ -485,6 +485,11 @@ void LLamaModel::_backward_lmhead(long B, long T, int micro_step, int grad_accum
         matmul(rs->Output, Parameters->get_head(main_stream), lnf_slice, std::nullopt,
                nullptr, nullptr, rs->CublasLtHandle, rs->CuBlasWorkspace, V, nano_batch_size, C, EMMTranspose::TN,
                false, main_stream);
+
+        if(nano_step == 0) {
+            // make sure Targets have been copied
+            CUDA_CHECK(cudaStreamWaitEvent(main_stream, rs->TransferDone, 0));
+        }
 
         // accumulate the losses inside rs->losses, and kick off the backward pass inside the fused classifier
         fused_classifier(rs->Output, losses, d_loss, tgt, nano_batch_size, V, Vp, true, main_stream);
