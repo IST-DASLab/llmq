@@ -188,6 +188,14 @@ void vector_add_sr(Tensor& dest, const Tensor& left, const Tensor& right, float 
     }
 }
 
+void vector_reduce_sr(Tensor& dest, const Tensor& src, float scale, int n_shards, int skip, long nelem, bool accumulate, unsigned seed, cudaStream_t stream) {
+    if(dest.DType == ETensorDType::FP32) {
+        vector_reduce_sr(dest.get<float>(), src.get<float>(), scale, n_shards, skip, nelem, accumulate, seed, stream);
+    } else if(dest.DType == ETensorDType::BF16) {
+        vector_reduce_sr(dest.get<nv_bfloat16>(), src.get<nv_bfloat16>(), scale, n_shards, skip, nelem, accumulate, seed, stream);
+    }
+}
+
 void abs_max(float* scale, const Tensor& in, long N, const cudaDeviceProp& dp, cudaStream_t stream) {
     if (in.DType == ETensorDType::FP32) {
         abs_max(scale, in.get<float>(), N, dp, stream);
