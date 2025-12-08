@@ -53,7 +53,8 @@ struct TrainingRunner {
     int NumEpochs = 1;
 
     float LearningRate = 1e-5f;
-    int WarmupSteps = -1;
+    int WarmupSteps = 0;
+    int CoolDownSteps = 0;
     float FinalLrFraction = 1.f;
     std::string LrScheduleType = "cosine";
 
@@ -133,6 +134,7 @@ void TrainingRunner::load_training_config(int argc, const char** argv) {
     // optimizer
     app.add_option("--lr,--learning-rate", LearningRate, "Base learning rate")->check(CLI::NonNegativeNumber);
     app.add_option("--warmup", WarmupSteps, "Number of warmup steps.")->check(CLI::NonNegativeNumber);;
+    app.add_option("--cooldown", CoolDownSteps, "Number of cool-down steps, using 1-sqrt() to anneal learning rate to zero");
     app.add_option("--final-lr-fraction", FinalLrFraction, "Fraction of base lr to use for the final steps.")->check(CLI::NonNegativeNumber);
     app.add_option("--lr-schedule", LrScheduleType, "Learning rate schedule function: Cosine or Linear");
     app.add_option("--beta-1", Beta1, "Beta 1 for Adam")->check(CLI::NonNegativeNumber);
@@ -339,6 +341,7 @@ void TrainingRunner::run_training(int argc, const char** argv, NCCLCommunicator&
 
         {"learning-rate",      LearningRate},
         {"warmup",             WarmupSteps},
+        {"cooldown",           CoolDownSteps},
         {"final-lr",           FinalLrFraction},
         {"lr-schedule",        LrScheduleType},
         {"beta-1",             Beta1},
@@ -449,10 +452,13 @@ void TrainingRunner::run_training(int argc, const char** argv, NCCLCommunicator&
     Tensor targets = model.get_target_buffer();
 
     std::unique_ptr<ISchedule> lr_schedule;
+    int end_steps = MaxSteps - CoolDownSteps;
     if (iequals(LrScheduleType, "cosine")) {
-        lr_schedule = std::make_unique<CosineSchedule>(LearningRate, MaxSteps, WarmupSteps, LearningRate * FinalLrFraction);
+        lr_schedule = std::make_unique<CosineSchedule>(LearningRate, end_steps, WarmupSteps, LearningRate * FinalLrFraction);
     } else if (iequals(LrScheduleType, "linear")) {
-        lr_schedule = std::make_unique<LinearSchedule>(LearningRate, LearningRate * FinalLrFraction, MaxSteps, WarmupSteps);
+        lr_schedule = std::make_unique<LinearSchedule>(LearningRate, LearningRate * FinalLrFraction, end_steps, WarmupSteps);
+    } else if (iequals(LrScheduleType, "wsd")) {
+        lr_schedule = std::make_unique<LinearSchedule>(LearningRate, LearningRate, end_steps, WarmupSteps);
     } else {
         throw std::invalid_argument("Unknown learning rate schedule: " + LrScheduleType);
     }
@@ -500,6 +506,13 @@ void TrainingRunner::run_training(int argc, const char** argv, NCCLCommunicator&
         }
 
         float lr = lr_schedule->eval(step);
+        // learning-rate cooldown
+        if (step > end_steps) {
+            int cds = step - end_steps;
+            float f = static_cast<float>(cds) / static_cast<float>(CoolDownSteps);
+            // 1 - sqrt recommended by https://arxiv.org/pdf/2405.18392
+            lr = lr_schedule->eval(end_steps) * (1.f - sqrtf(f));
+        }
         model.update(comm, lr, Beta1, Beta2, step + 1, Epsilon, WeightDecay, GradClip);
         CUDA_CHECK(cudaDeviceSynchronize());
         std::chrono::high_resolution_clock::time_point end = std::chrono::high_resolution_clock::now();
