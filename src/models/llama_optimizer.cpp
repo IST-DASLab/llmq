@@ -22,35 +22,23 @@ void LLamaOptimizerStateManager::fetch_block(int layer_idx, cudaStream_t fetch_s
 
     CUDA_CHECK(cudaStreamWaitEvent(fetch_stream, stat.DoneEvent, 0));
 
-    auto fetch = [fetch_stream, &stat](TensorShard& dst, TensorShard& src) {
+    auto fetch = [fetch_stream, &stat](Tensor& dst, Tensor& src) {
         CUDA_CHECK(cudaMemcpyAsync(dst.Data, src.Data, dst.bytes(), cudaMemcpyHostToDevice, fetch_stream));
         dst.Stats = src.Stats;
     };
 
-    auto fetch_all = [&](sLLamaBlockWeights<TensorShard>& buf, sLLamaBlockWeights<TensorShard>& ref){
-        fetch(buf.LN1_w, ref.LN1_w);
-        fetch(buf.LN2_w, ref.LN2_w);
-        fetch(buf.Attn_QKV_w, ref.Attn_QKV_w);
-        fetch(buf.Attn_Out_w, ref.Attn_Out_w);
-        fetch(buf.MLP_Up_w, ref.MLP_Up_w);
-        fetch(buf.MLP_Down_w, ref.MLP_Down_w);
-        if (ref.Attn_QKV_b.has_value()) {
-            fetch(buf.Attn_QKV_b.value(), ref.Attn_QKV_b.value());
-        }
-    };
-
     if(mOffloadM) {
-        auto& buf = mOptMBuffer.at(buffer);
-        auto& ref = mOptM.Blocks[layer_idx];
+        auto& buf = mOptMBufferStorage.at(buffer);
+        auto& ref = mOptMBlockStorage.at(layer_idx);
 
-        fetch_all(buf, ref);
+        fetch(buf, ref);
     }
 
     if(mOffloadV) {
-        auto& buf = mOptVBuffer.at(buffer);
-        auto& ref = mOptV.Blocks[layer_idx];
+        auto& buf = mOptVBufferStorage.at(buffer);
+        auto& ref = mOptVBlockStorage.at(layer_idx);
 
-        fetch_all(buf, ref);
+        fetch(buf, ref);
     }
 
     CUDA_CHECK(cudaEventRecord(stat.DoneEvent, fetch_stream));
@@ -130,45 +118,26 @@ void LLamaOptimizerStateManager::store_block(int layer_idx, cudaStream_t stream,
 
     NvtxRange range("store_opt_block", layer_idx);
     int buffer = layer_idx % 2;
+    auto& stat = mStatus.at(layer_idx % 2);
+    if(mOffloadM || mOffloadV) {
+        CUDA_CHECK(cudaEventRecord(stat.DoneEvent, stream));
+        CUDA_CHECK(cudaStreamWaitEvent(put_stream, stat.DoneEvent, 0));
+    }
+
     if(mOffloadM) {
-        store_one_block(layer_idx, stream, put_stream, mOptMBuffer[buffer], mOptM.Blocks[layer_idx]);
+        CUDA_CHECK(cudaMemcpyAsync(mOptMBlockStorage.at(layer_idx).Data, mOptMBufferStorage.at(buffer).Data, mOptMBlockStorage.at(layer_idx).bytes(), cudaMemcpyDeviceToHost, put_stream));
     }
 
     if(mOffloadV) {
-        store_one_block(layer_idx, stream, put_stream, mOptVBuffer[buffer], mOptV.Blocks[layer_idx]);
+        CUDA_CHECK(cudaMemcpyAsync(mOptVBlockStorage.at(layer_idx).Data, mOptVBufferStorage.at(buffer).Data, mOptVBlockStorage.at(layer_idx).bytes(), cudaMemcpyDeviceToHost, put_stream));
     }
 
     if(mOffloadM || mOffloadV) {
-        auto& stat = mStatus.at(layer_idx % 2);
         if(stat.LayerIdx != layer_idx) {
             throw std::logic_error("layer index mismatch in store_block");
         }
         CUDA_CHECK(cudaEventRecord(stat.DoneEvent, put_stream));
         stat.Done = true;
-    }
-}
-
-void LLamaOptimizerStateManager::store_one_block(int layer_idx, cudaStream_t stream, cudaStream_t put_stream, sLLamaBlockWeights<TensorShard>& buf, sLLamaBlockWeights<TensorShard>& dst) {
-    auto& stat = mStatus.at(layer_idx % 2);
-
-    auto send = [put_stream](TensorShard& dst, TensorShard& src) {
-        CUDA_CHECK(cudaMemcpyAsync(dst.Data, src.Data, dst.bytes(), cudaMemcpyDeviceToHost, put_stream));
-    };
-
-    // put stream can start as soon as the new master weights are ready
-    CUDA_CHECK(cudaEventRecord(stat.DoneEvent, stream));
-    CUDA_CHECK(cudaStreamWaitEvent(put_stream, stat.DoneEvent, 0));
-
-    CUDA_CHECK(cudaEventRecord(stat.DoneEvent, stream));
-
-    send(dst.LN1_w, buf.LN1_w);
-    send(dst.LN2_w, buf.LN2_w);
-    send(dst.Attn_QKV_w, buf.Attn_QKV_w);
-    send(dst.Attn_Out_w, buf.Attn_Out_w);
-    send(dst.MLP_Up_w, buf.MLP_Up_w);
-    send(dst.MLP_Down_w, buf.MLP_Down_w);
-    if (dst.Attn_QKV_b.has_value()) {
-        send(dst.Attn_QKV_b.value(), buf.Attn_QKV_b.value());
     }
 }
 

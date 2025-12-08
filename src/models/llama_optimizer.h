@@ -61,7 +61,6 @@ private:
     int mWorld;
 
     sLLamaBlockWeights<TensorShard>& get_block_from(int layer_idx, cudaStream_t stream, sLLamaBlockWeights<TensorShard>& buf);
-    void store_one_block(int layer_idx, cudaStream_t stream, cudaStream_t put_stream, sLLamaBlockWeights<TensorShard>& buf, sLLamaBlockWeights<TensorShard>& dst);
 };
 
 #endif //LLMQ_SRC_MODELS_LLAMA_OPTIMIZER_H
