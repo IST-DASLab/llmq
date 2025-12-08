@@ -31,6 +31,8 @@ Tensor LazyAllocator::commit(TensorAllocator& storage, EAllocationType type, con
         ptr += div_ceil(target->bytes(), page_size) * page_size;
     }
 
+    mTargets.clear();
+
     return backing;
 }
 
@@ -49,6 +51,8 @@ Tensor LazyAllocator::commit(DeviceMemoryStack& storage, const char* name) {
         target->Device = backing.Device;
         ptr += div_ceil(target->bytes(), page_size) * page_size;
     }
+
+    mTargets.clear();
 
     return backing;
 }

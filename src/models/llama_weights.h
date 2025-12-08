@@ -17,6 +17,7 @@ struct LLamaRunState;
 class TensorAllocator;
 class NCCLCommunicator;
 class DeviceMemoryStack;
+class LazyAllocator;
 enum class EAllocationType : int;
 typedef struct CUevent_st* cudaEvent_t;
 
@@ -154,6 +155,7 @@ protected:
     Tensor mAbsMaxes;
 
     std::array<sLLamaBlockWeights<TensorShard>, 2> mMasterDeviceDoubleBuffer;
+    std::array<Tensor, 4> mMasterDeviceDoubleBufferStorage;
     std::array<sGatherData, 2> mMasterDeviceBufferStatus;
 
     bool is_in_cache(sGatherData& data, int expected) const;
@@ -190,8 +192,8 @@ sLLamaWeights allocate_weights(const LLamaConfig& config, EAllocationType kind, 
 sLLamaBlockWeights<TensorShard> shard_block(const sLLamaBlockWeights<Tensor>& block, int shard_idx, int num_shards);
 sLLamaNonBlockWeights<TensorShard> shard_non_block(const sLLamaNonBlockWeights<Tensor>& block, int shard_idx, int num_shards);
 
-void matrix_params_from_stack(sLLamaBlockWeights<TensorShard>& target, const LLamaConfig& config, ETensorDType dtype, int shard_idx, int num_shards, DeviceMemoryStack& memory);
-void non_matrix_params_from_stack(sLLamaBlockWeights<TensorShard>& target, const LLamaConfig& config, ETensorDType dtype, int shard_idx, int num_shards, DeviceMemoryStack& memory);
+void matrix_params_lazy(sLLamaBlockWeights<TensorShard>& target, const LLamaConfig& config, ETensorDType dtype, int shard_idx, int num_shards, LazyAllocator& alloc);
+void non_matrix_params_lazy(sLLamaBlockWeights<TensorShard>& target, const LLamaConfig& config, ETensorDType dtype, int shard_idx, int num_shards, LazyAllocator& alloc);
 
 std::size_t bytes_for_block(const LLamaConfig& config, ETensorDType matrix_dtype, ETensorDType other_dtype, int num_shards);
 std::size_t bytes_for_block_matrices(const LLamaConfig& config, ETensorDType dtype, int num_shards);

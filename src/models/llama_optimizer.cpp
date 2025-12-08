@@ -9,6 +9,7 @@
 #include "utilities/comm.h"
 #include "kernels/kernels.h"
 #include "utilities/stack.h"
+#include "utilities/lazy_allocator.h"
 
 void LLamaOptimizerStateManager::fetch_block(int layer_idx, cudaStream_t fetch_stream) {
     if((!mOffloadM && !mOffloadV) || mUseZeroCopy) return;
@@ -64,50 +65,37 @@ void LLamaOptimizerStateManager::fetch_block(int layer_idx, cudaStream_t fetch_s
 }
 
 void LLamaOptimizerStateManager::begin_optimizer(DeviceMemoryStack& memory) {
+    LazyAllocator alloc;
     if(mOffloadM &&! mUseZeroCopy) {
         ETensorDType m_type = mOptM.Blocks[0].LN1_w.DType;
-        matrix_params_from_stack(mOptMBuffer[0], mConfig, m_type, mRank, mWorld, memory);
-        non_matrix_params_from_stack(mOptMBuffer[0], mConfig, m_type, mRank, mWorld, memory);
-        matrix_params_from_stack(mOptMBuffer[1], mConfig, m_type, mRank, mWorld, memory);
-        non_matrix_params_from_stack(mOptMBuffer[1], mConfig, m_type, mRank, mWorld, memory);
+        matrix_params_lazy(mOptMBuffer[0], mConfig, m_type, mRank, mWorld, alloc);
+        non_matrix_params_lazy(mOptMBuffer[0], mConfig, m_type, mRank, mWorld, alloc);
+        mOptMBufferStorage[0] = alloc.commit(memory, "opt_m_a");
+        matrix_params_lazy(mOptMBuffer[1], mConfig, m_type, mRank, mWorld, alloc);
+        non_matrix_params_lazy(mOptMBuffer[1], mConfig, m_type, mRank, mWorld, alloc);
+        mOptMBufferStorage[1] = alloc.commit(memory, "opt_m_b");
     }
 
     if(mOffloadV &&! mUseZeroCopy) {
         ETensorDType v_type = mOptV.Blocks[0].LN1_w.DType;
-        matrix_params_from_stack(mOptVBuffer[0], mConfig, v_type, mRank, mWorld, memory);
-        non_matrix_params_from_stack(mOptVBuffer[0], mConfig, v_type, mRank, mWorld, memory);
-        matrix_params_from_stack(mOptVBuffer[1], mConfig, v_type, mRank, mWorld, memory);
-        non_matrix_params_from_stack(mOptVBuffer[1], mConfig, v_type, mRank, mWorld, memory);
+        matrix_params_lazy(mOptVBuffer[0], mConfig, v_type, mRank, mWorld, alloc);
+        non_matrix_params_lazy(mOptVBuffer[0], mConfig, v_type, mRank, mWorld, alloc);
+        mOptVBufferStorage[0] = alloc.commit(memory, "opt_v_a");
+        matrix_params_lazy(mOptVBuffer[1], mConfig, v_type, mRank, mWorld, alloc);
+        non_matrix_params_lazy(mOptVBuffer[1], mConfig, v_type, mRank, mWorld, alloc);
+        mOptVBufferStorage[1] = alloc.commit(memory, "opt_v_b");
+
     }
 }
 void LLamaOptimizerStateManager::end_optimizer(DeviceMemoryStack& memory) {
-    auto free_non_matrix = [&](sLLamaBlockWeights<TensorShard>& buf) {
-        if(buf.Attn_QKV_b.has_value()) {
-            memory.free(buf.Attn_QKV_b.value());
-        }
-        memory.free(buf.LN2_w);
-        memory.free(buf.LN1_w);
-    };
-
-     auto free_matrix = [&](sLLamaBlockWeights<TensorShard>& buf) {
-         memory.free(buf.MLP_Down_w);
-         memory.free(buf.MLP_Up_w);
-         memory.free(buf.Attn_Out_w);
-         memory.free(buf.Attn_QKV_w);
-    };
-
     if(mOffloadV &&! mUseZeroCopy) {
-        free_non_matrix(mOptVBuffer[1]);
-        free_matrix(mOptVBuffer[1]);
-        free_non_matrix(mOptVBuffer[0]);
-        free_matrix(mOptVBuffer[0]);
+        memory.free(mOptVBufferStorage[1]);
+        memory.free(mOptVBufferStorage[0]);
     }
 
     if(mOffloadM &&! mUseZeroCopy) {
-        free_non_matrix(mOptMBuffer[1]);
-        free_matrix(mOptMBuffer[1]);
-        free_non_matrix(mOptMBuffer[0]);
-        free_matrix(mOptMBuffer[0]);
+        memory.free(mOptMBufferStorage[1]);
+        memory.free(mOptMBufferStorage[0]);
     }
 }
 
@@ -193,23 +181,12 @@ sLLamaNonBlockWeights<TensorShard>& LLamaOptimizerStateManager::non_block_v() {
     return mOptV.NonBlocks;
 }
 
-void zero_opt_state(sLLamaWeights& weights, cudaStream_t stream) {
+void zero_opt_non_block(sLLamaWeights& weights, cudaStream_t stream) {
     // here's the first disadvantage of having individual buffers: We need to make a ton of memset calls
     fill_zero(weights.NonBlocks.Embeddings, stream);
     fill_zero(weights.NonBlocks.LNF_w, stream);
     if(weights.NonBlocks.LMHead.Data != weights.NonBlocks.Embeddings.Data) {
         fill_zero(weights.NonBlocks.LMHead, stream);
-    }
-    for(auto& layer: weights.Blocks) {
-        fill_zero(layer.LN1_w, stream);
-        fill_zero(layer.LN2_w, stream);
-        fill_zero(layer.Attn_QKV_w, stream);
-        if(auto& qkv_b = layer.Attn_QKV_b; qkv_b.has_value()) {
-            fill_zero(qkv_b.value(), stream);
-        }
-        fill_zero(layer.Attn_Out_w, stream);
-        fill_zero(layer.MLP_Up_w, stream);
-        fill_zero(layer.MLP_Down_w, stream);
     }
 }
 
@@ -257,31 +234,47 @@ sLLamaWeights allocate_scales(LLamaConfig config, int shard_idx, int num_shards,
     return result;
 }
 
+std::vector<Tensor> allocate_weights_opt(sLLamaWeights& weights, const LLamaConfig& config, ETensorDType dtype, EAllocationType kind, int shard_idx, int num_shards, TensorAllocator& alloc) {
+    std::vector<Tensor> result;
+    weights.Blocks.resize(config.NumLayers);
+    LazyAllocator alloc_lazy;
+    for(auto& block : weights.Blocks) {
+        matrix_params_lazy(block, config, dtype, shard_idx, num_shards, alloc_lazy);
+        non_matrix_params_lazy(block, config, dtype, shard_idx, num_shards, alloc_lazy);
+        result.push_back(alloc_lazy.commit(alloc, kind, "block_shard"));
+    }
+    weights.NonBlocks = allocate_non_block_shard(config, dtype, kind, shard_idx, num_shards, alloc);
+    return result;
+}
+
+
 LLamaOptimizerStateManager::LLamaOptimizerStateManager(LLamaConfig cfg, LLamaOptions options, cudaStream_t stream, NCCLCommunicator& comm, TensorAllocator& alloc):
     mOffloadM(options.OffloadOptM), mOffloadV(options.OffloadOptV), mUseZeroCopy(options.UseZeroCopy), mConfig(cfg), mRank(comm.rank()), mWorld(comm.world_size())
 {
     {
         auto ctx = alloc.with_context("Adam M");
         EAllocationType alloc_type = options.OffloadOptM ? options.offload_alloc() : EAllocationType::ON_DEVICE;
-        LLamaConfig c = cfg;
-        c.DType = options.OptMomentumType;
-        mOptM = allocate_weights(c, alloc_type, comm.rank(), comm.world_size(), alloc);
-        zero_opt_state(mOptM, stream);
+        mOptMBlockStorage = allocate_weights_opt(mOptM, cfg, options.OptMomentumType, alloc_type, comm.rank(), comm.world_size(), alloc);
+        for(auto& block : mOptMBlockStorage) {
+            fill_zero(block, stream);
+        }
+        zero_opt_non_block(mOptM, stream);
 
         if(options.OptMomentumType == ETensorDType::FP8_E4M3) {
-            mOptMScales = allocate_scales(c, comm.rank(), comm.world_size(), alloc);
+            mOptMScales = allocate_scales(cfg, comm.rank(), comm.world_size(), alloc);
         } else {
-            mOptMScales.Blocks.resize(c.NumLayers);
+            mOptMScales.Blocks.resize(cfg.NumLayers);
         }
     }
 
     {
         auto ctx = alloc.with_context("Adam V");
         EAllocationType alloc_type = options.OffloadOptV ? options.offload_alloc() : EAllocationType::ON_DEVICE;
-        LLamaConfig c = cfg;
-        c.DType = options.OptVarianceType;
-        mOptV = allocate_weights(c, alloc_type, comm.rank(), comm.world_size(), alloc);
-        zero_opt_state(mOptV, stream);
+        mOptVBlockStorage = allocate_weights_opt(mOptV, cfg, options.OptVarianceType, alloc_type, comm.rank(), comm.world_size(), alloc);
+        for(auto& block : mOptVBlockStorage) {
+            fill_zero(block, stream);
+        }
+        zero_opt_non_block(mOptV, stream);
     }
 
     if((options.OffloadOptM || options.OffloadOptV) && !mUseZeroCopy) {

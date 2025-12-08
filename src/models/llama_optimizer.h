@@ -28,10 +28,19 @@ public:
     void store_block(int layer_idx, cudaStream_t stream, cudaStream_t put_stream);
 private:
     LLamaConfig mConfig;
+
+    // mOptM.Blocks[i] and mOptMBlockStorage[i] alias the same memory.
+    // mOptM provides convenient access to the individual tensors of a block, whereas
+    // mOptMBlockStorage has just one large, byte-typed buffer for bulk transfers.
     sLLamaWeights mOptM;
+    std::vector<Tensor> mOptMBlockStorage;
     sLLamaWeights mOptV;
+    std::vector<Tensor> mOptVBlockStorage;
+
     std::array<sLLamaBlockWeights<TensorShard>, 2> mOptMBuffer;
+    std::array<Tensor, 2> mOptMBufferStorage;
     std::array<sLLamaBlockWeights<TensorShard>, 2> mOptVBuffer;
+    std::array<Tensor, 2> mOptVBufferStorage;
 
     sLLamaWeights mOptMScales;
 

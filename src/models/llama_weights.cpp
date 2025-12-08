@@ -8,6 +8,7 @@
 #include "llama_model.h"
 #include "llama_run_state.h"
 #include "utilities/comm.h"
+#include "utilities/lazy_allocator.h"
 #include "utilities/philox.h"
 #include "utilities/safetensors.h"
 
@@ -39,37 +40,45 @@ void allocate_matrix_params(sLLamaBlockWeights<T>& target, const LLamaConfig& co
     target.MLP_Down_w = alloc.allocate_shard(dtype, shard_idx, num_shards, "mlp_down_w", {C, H}, kind);
 }
 
-void matrix_params_from_stack(sLLamaBlockWeights<TensorShard>& target, const LLamaConfig& config, ETensorDType dtype, int shard_idx, int num_shards, DeviceMemoryStack& memory) {
+void matrix_params_lazy(sLLamaBlockWeights<TensorShard>& target, const LLamaConfig& config, ETensorDType dtype, int shard_idx, int num_shards, LazyAllocator& alloc) {
     long C = config.HiddenSize;
     long H = config.IntermediateSize;
 
-    auto create_matrix_shard = [&](long rows, long cols, const char* name) {
-        Tensor raw = memory.allocate(dtype, {div_exact(rows, (long)num_shards), cols}, name);
-        return TensorShard{raw, shard_idx, num_shards, std::vector<long>{rows, cols}};
+    auto create_matrix_shard = [&](TensorShard& tgt, long rows, long cols, const char* name) {
+        // TODO name is currently ignored
+        alloc.allocate(&tgt, dtype, {div_exact(rows, (long)num_shards), cols});
+        tgt.ShardIndex = shard_idx;
+        tgt.NumShards = num_shards;
+        tgt.GlobalShape[0] = rows;
+        tgt.GlobalShape[1] = cols;
     };
 
     long head_size = C / config.NumQueryHeads;
     long attn_intermediate_size = (config.NumQueryHeads + 2 * config.NumKeyValHeads) * head_size;
-    target.Attn_QKV_w = create_matrix_shard(attn_intermediate_size, C, "Attn_QKV_w");
-    target.Attn_Out_w = create_matrix_shard(C, C, "Attn_Out_w");
-    target.MLP_Up_w = create_matrix_shard(2 * H, C, "MLP_Up_w");
-    target.MLP_Down_w = create_matrix_shard(C, H, "MLP_Down_w");
+    create_matrix_shard(target.Attn_QKV_w, attn_intermediate_size, C, "Attn_QKV_w");
+    create_matrix_shard(target.Attn_Out_w, C, C, "Attn_Out_w");
+    create_matrix_shard(target.MLP_Up_w, 2 * H, C, "MLP_Up_w");
+    create_matrix_shard(target.MLP_Down_w, C, H, "MLP_Down_w");
 }
 
-void non_matrix_params_from_stack(sLLamaBlockWeights<TensorShard>& target, const LLamaConfig& config, ETensorDType dtype, int shard_idx, int num_shards, DeviceMemoryStack& memory) {
+void non_matrix_params_lazy(sLLamaBlockWeights<TensorShard>& target, const LLamaConfig& config, ETensorDType dtype, int shard_idx, int num_shards, LazyAllocator& alloc) {
     long C = config.HiddenSize;
     long HS = config.head_size();
 
-    auto create_vector_shard = [&](long elems, const char* name) {
-        Tensor raw = memory.allocate(dtype, {div_exact(elems, (long)num_shards)}, name);
-        return TensorShard{raw, shard_idx, num_shards, std::vector<long>{elems}};
+    auto create_vector_shard = [&](TensorShard& tgt, long elems, const char* name) {
+        // TODO name is currently ignored
+        alloc.allocate(&tgt, dtype, {div_exact(elems, (long)num_shards)});
+        tgt.ShardIndex = shard_idx;
+        tgt.NumShards = num_shards;
+        tgt.GlobalShape[0] = elems;
     };
 
-    target.LN1_w = create_vector_shard(C, "LN1_w");
-    target.LN2_w = create_vector_shard(C, "LN2_w");
+    create_vector_shard(target.LN1_w, C, "LN1_w");
+    create_vector_shard(target.LN2_w, C, "LN2_w");
     long attn_intermediate_size = (config.NumQueryHeads + 2 * config.NumKeyValHeads) * HS;
     if(config.UseQKVBias) {
-        target.Attn_QKV_b = create_vector_shard(attn_intermediate_size, "Attn_QKV_b");
+        target.Attn_QKV_b = std::make_optional<TensorShard>();
+        create_vector_shard(target.Attn_QKV_b.value(), attn_intermediate_size, "Attn_QKV_b");
     } else {
         target.Attn_QKV_b = std::nullopt;
     }
@@ -288,10 +297,11 @@ void LLamaWeightsManager::begin_optimizer(DeviceMemoryStack& memory, cudaStream_
         CUDA_CHECK(cudaEventRecord(mMasterDeviceBufferStatus.at(0).DoneEvent, stream));
         CUDA_CHECK(cudaEventRecord(mMasterDeviceBufferStatus.at(1).DoneEvent, stream));
 
+        LazyAllocator alloc;
         for (int i = 0; i < 2; ++i) {
             auto& buf = mMasterDeviceDoubleBuffer.at(i);
             if (mMaster.Blocks[0].Attn_QKV_w.Device == -1) {
-                matrix_params_from_stack(buf, mConfig, mMasterDType, mShardIdx, mNumShards, memory);
+                matrix_params_lazy(buf, mConfig, mMasterDType, mShardIdx, mNumShards, alloc);
             } else {
                 // note: the actual data pointers will be overwritten before use, so this is safe
                 buf.Attn_QKV_w = mMaster.Blocks[0].Attn_QKV_w;
@@ -301,12 +311,14 @@ void LLamaWeightsManager::begin_optimizer(DeviceMemoryStack& memory, cudaStream_
             }
 
             if (mMaster.Blocks[0].LN1_w.Device == -1) {
-                non_matrix_params_from_stack(buf, mConfig, mMasterDType, mShardIdx, mNumShards, memory);
+                non_matrix_params_lazy(buf, mConfig, mMasterDType, mShardIdx, mNumShards, alloc);
             } else {
                 buf.LN1_w = mMaster.Blocks[0].LN1_w;
                 buf.LN2_w = mMaster.Blocks[0].LN2_w;
                 buf.Attn_QKV_b = mMaster.Blocks[0].Attn_QKV_b;
             }
+
+            mMasterDeviceDoubleBufferStorage[i] = alloc.commit(memory, "master");
         }
     }
 }
@@ -314,23 +326,8 @@ void LLamaWeightsManager::begin_optimizer(DeviceMemoryStack& memory, cudaStream_
 void LLamaWeightsManager::end_optimizer(DeviceMemoryStack& memory) {
     if (mOffloadMaster && !mUseZeroCopy) {
         // it's a stack, so we need to free in reverse order
-        for (int i = 1; i >= 0; --i) {
-            auto& buf = mMasterDeviceDoubleBuffer.at(i);
-            if (mMaster.Blocks[0].LN1_w.Device == -1) {
-                if(buf.Attn_QKV_b.has_value()) {
-                    memory.free(buf.Attn_QKV_b.value());
-                }
-                memory.free(buf.LN2_w);
-                memory.free(buf.LN1_w);
-            }
-
-            if (mMaster.Blocks[0].Attn_QKV_w.Device == -1) {
-                memory.free(buf.MLP_Down_w);
-                memory.free(buf.MLP_Up_w);
-                memory.free(buf.Attn_Out_w);
-                memory.free(buf.Attn_QKV_w);
-            }
-        }
+        memory.free(mMasterDeviceDoubleBufferStorage[1]);
+        memory.free(mMasterDeviceDoubleBufferStorage[0]);
     }
 }
 
