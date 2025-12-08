@@ -138,6 +138,7 @@ add_library(llmq-common SHARED
         ${CUFILE_SOURCE}
         ${NVML_SOURCE}
         src/utilities/allocator.cpp
+        src/utilities/lazy_allocator.cpp
         src/utilities/utils.cpp
         src/utilities/comm.cpp
         src/utilities/tensor.cpp
