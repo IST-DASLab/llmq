@@ -406,14 +406,14 @@ void LLamaWeightsManager::release_master_block(int layer_idx, cudaStream_t strea
     bool convert_any = false;
     if (qnt.LayerIdx == layer_idx) {
         NvtxRange q_rng("quantize");
-        convert_dtype_for_gather(src.LN1_w, qnt.Block.LN1_w, convert_any, run_state);
-        convert_dtype_for_gather(src.LN2_w, qnt.Block.LN2_w, convert_any, run_state);
-        convert_dtype_for_gather(src.Attn_QKV_w, qnt.Block.Attn_QKV_w, convert_any, run_state);
-        convert_dtype_for_gather(src.Attn_Out_w, qnt.Block.Attn_Out_w, convert_any, run_state);
-        convert_dtype_for_gather(src.MLP_Up_w, qnt.Block.MLP_Up_w, convert_any, run_state);
-        convert_dtype_for_gather(src.MLP_Down_w, qnt.Block.MLP_Down_w, convert_any, run_state);
+        convert_dtype_for_gather(src.LN1_w, qnt.Block.LN1_w, convert_any, !mOffloadMaster, run_state);
+        convert_dtype_for_gather(src.LN2_w, qnt.Block.LN2_w, convert_any, !mOffloadMaster, run_state);
+        convert_dtype_for_gather(src.Attn_QKV_w, qnt.Block.Attn_QKV_w, convert_any, !mOffloadMaster, run_state);
+        convert_dtype_for_gather(src.Attn_Out_w, qnt.Block.Attn_Out_w, convert_any, !mOffloadMaster, run_state);
+        convert_dtype_for_gather(src.MLP_Up_w, qnt.Block.MLP_Up_w, convert_any, !mOffloadMaster, run_state);
+        convert_dtype_for_gather(src.MLP_Down_w, qnt.Block.MLP_Down_w, convert_any, !mOffloadMaster, run_state);
         if (src.Attn_QKV_b.has_value()) {
-            convert_dtype_for_gather(src.Attn_QKV_b.value(), qnt.Block.Attn_QKV_b.value(), convert_any, run_state);
+            convert_dtype_for_gather(src.Attn_QKV_b.value(), qnt.Block.Attn_QKV_b.value(), convert_any, !mOffloadMaster, run_state);
         }
         // indicate that this is already the version for the next step
         qnt.Version = mVersion + 1;
@@ -471,10 +471,10 @@ void LLamaWeightsManager::release_status(sGatherData& data, int expected, cudaSt
     data.Done = true;
 }
 
-void LLamaWeightsManager::convert_dtype_for_gather(TensorShard& src, TensorShard& qnt, bool& convert, LLamaRunState& run_state) {
+void LLamaWeightsManager::convert_dtype_for_gather(TensorShard& src, TensorShard& qnt, bool& convert, bool src_is_persistent, LLamaRunState& run_state) {
     if (qnt.DType == src.DType) {
-        // Identical tensors (TODO really verify9
-        if(qnt.Device == src.Device) {
+        // Identical tensors
+        if(qnt.Device == src.Device && src_is_persistent) {
             qnt.Data = src.Data;
             return;
         } else {    // transfer to other device? (should just be GPU -> CPU)
@@ -505,14 +505,14 @@ void LLamaWeightsManager::gather_block(int layer_idx, NCCLCommunicator& comm, LL
     bool convert_any = false;
     if (qnt.Version != mVersion || qnt.LayerIdx != layer_idx) {
         NvtxRange q_rng("quantize");
-        convert_dtype_for_gather(src.LN1_w, qnt.Block.LN1_w, convert_any, run_state);
-        convert_dtype_for_gather(src.LN2_w, qnt.Block.LN2_w, convert_any, run_state);
-        convert_dtype_for_gather(src.Attn_QKV_w, qnt.Block.Attn_QKV_w, convert_any, run_state);
-        convert_dtype_for_gather(src.Attn_Out_w, qnt.Block.Attn_Out_w, convert_any, run_state);
-        convert_dtype_for_gather(src.MLP_Up_w, qnt.Block.MLP_Up_w, convert_any, run_state);
-        convert_dtype_for_gather(src.MLP_Down_w, qnt.Block.MLP_Down_w, convert_any, run_state);
+        convert_dtype_for_gather(src.LN1_w, qnt.Block.LN1_w, convert_any, true, run_state);
+        convert_dtype_for_gather(src.LN2_w, qnt.Block.LN2_w, convert_any, true, run_state);
+        convert_dtype_for_gather(src.Attn_QKV_w, qnt.Block.Attn_QKV_w, convert_any, true, run_state);
+        convert_dtype_for_gather(src.Attn_Out_w, qnt.Block.Attn_Out_w, convert_any, true, run_state);
+        convert_dtype_for_gather(src.MLP_Up_w, qnt.Block.MLP_Up_w, convert_any, true, run_state);
+        convert_dtype_for_gather(src.MLP_Down_w, qnt.Block.MLP_Down_w, convert_any, true, run_state);
         if (src.Attn_QKV_b.has_value()) {
-            convert_dtype_for_gather(src.Attn_QKV_b.value(), qnt.Block.Attn_QKV_b.value(), convert_any, run_state);
+            convert_dtype_for_gather(src.Attn_QKV_b.value(), qnt.Block.Attn_QKV_b.value(), convert_any, true, run_state);
         }
 
         qnt.Version = mVersion;
