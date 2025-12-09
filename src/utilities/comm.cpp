@@ -557,7 +557,11 @@ void NCCLCommunicatorThreads::on_execute_transaction(const NCCLCommunicator::Com
     assert(mUseNCCL || mUseMemcpy);
 
     if(mUseMemcpy) {
+        // ensure every worker has set-up commands.Ready to the most recent version
+        barrier();
+        // get the ready event from all workers
         auto event_list = host_all_gather(commands.Ready);
+        // make sure to block the comms thread until the data is ready on every worker
         for (auto event: event_list) {
             CUDA_CHECK(cudaStreamWaitEvent(stream(), event, 0));
         }
