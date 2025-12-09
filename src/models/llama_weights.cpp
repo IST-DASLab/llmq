@@ -337,6 +337,7 @@ void LLamaWeightsManager::end_optimizer(DeviceMemoryStack& memory) {
 void LLamaWeightsManager::fetch_master_block(int layer_idx, cudaStream_t fetch_stream) {
     if(!mOffloadMaster || mUseZeroCopy) return;
 
+    NvtxRange range("fetch_master_block", layer_idx);
     int buffer = layer_idx % 2;
     auto& buf = mMasterDeviceDoubleBuffer.at(buffer);
     auto& stat = mMasterDeviceBufferStatus.at(buffer);
@@ -384,6 +385,7 @@ sLLamaBlockWeights<TensorShard>& LLamaWeightsManager::get_master_block(int layer
 void LLamaWeightsManager::release_master_block(int layer_idx, cudaStream_t stream, cudaStream_t put_stream, LLamaRunState& run_state) {
     if(!mOffloadMaster || mUseZeroCopy) return;
 
+    NvtxRange range("release_master_block", layer_idx);
     int buffer = layer_idx % 2;
     auto& buf = mMasterDeviceDoubleBuffer.at(buffer);
     auto& stat = mMasterDeviceBufferStatus.at(buffer);
@@ -430,6 +432,9 @@ void LLamaWeightsManager::release_master_block(int layer_idx, cudaStream_t strea
         send(ref.Attn_QKV_b.value(), buf.Attn_QKV_b.value());
     }
 
+    // put is only considered complete once *both* master weights *and* quants
+    // are finished.
+    CUDA_CHECK(cudaStreamWaitEvent(put_stream, stat.DoneEvent, 0));
     release_status(stat, layer_idx, put_stream);
 }
 
