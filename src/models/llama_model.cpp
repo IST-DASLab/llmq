@@ -679,37 +679,36 @@ void LLamaModel::calculate_gradient_norm(NCCLCommunicator& comm, float grad_clip
         if(!rs->GlobalNormGraph) {
             cudaGraph_t graph;
             CUDA_CHECK(cudaStreamBeginCapture(main_stream, cudaStreamCaptureModeThreadLocal));
-            _calculate_gradient_norm(comm, grad_clip);
+            _calculate_gradient_norm(comm, grad_clip, rs->MainStream);
             CUDA_CHECK(cudaStreamEndCapture(main_stream, &graph));
             CUDA_CHECK(cudaGraphInstantiate(&rs->GlobalNormGraph, graph, nullptr, nullptr, 0));
             CUDA_CHECK(cudaGraphDestroy(graph));
         }
         CUDA_CHECK(cudaGraphLaunch(rs->GlobalNormGraph, main_stream));
     } else {
-        _calculate_gradient_norm(comm, grad_clip);
+        _calculate_gradient_norm(comm, grad_clip, rs->MainStream);
     }
 
     CUDA_CHECK(cudaEventRecord(rs->NormDone, main_stream));
 }
 
-void LLamaModel::_calculate_gradient_norm(NCCLCommunicator& comm, float grad_clip) {
+void LLamaModel::_calculate_gradient_norm(NCCLCommunicator& comm, float grad_clip, cudaStream_t stream) {
     auto& rs = RunState;
-    cudaStream_t main_stream = rs->MainStream;
 
-    fill_zero(rs->NormBuffer, main_stream);
+    fill_zero(rs->NormBuffer, stream);
     auto norm_squared = [&](const TensorShard& grad){
-        global_norm_squared(rs->NormBuffer, grad, grad.nelem(), rs->DeviceProp, main_stream);
+        global_norm_squared(rs->NormBuffer, grad, grad.nelem(), rs->DeviceProp, stream);
     };
 
-    norm_squared(Grads->get_embeddings_shard(main_stream));
+    norm_squared(Grads->get_embeddings_shard(stream));
 
     if(!Config.TiedWordEmbeddings) {
-        norm_squared(Grads->get_lmhead_shard(main_stream));
+        norm_squared(Grads->get_lmhead_shard(stream));
     }
-    norm_squared(Grads->get_lnf_w_shard(main_stream));
+    norm_squared(Grads->get_lnf_w_shard(stream));
 
     for(int i = 0; i < Config.NumLayers; i++) {
-        auto& block = Grads->get_block_shard(i, main_stream);
+        auto& block = Grads->get_block_shard(i, stream);
         norm_squared(block.LN1_w);
         norm_squared(block.LN2_w);
         norm_squared(block.Attn_QKV_w);
@@ -722,13 +721,13 @@ void LLamaModel::_calculate_gradient_norm(NCCLCommunicator& comm, float grad_cli
     }
 
     // final reduction to a single norm-squared element
-    deterministic_sum(rs->NormBuffer.get<float>(), rs->NormBuffer.get<float>(), rs->NormBuffer.nelem(), main_stream);
+    deterministic_sum(rs->NormBuffer.get<float>(), rs->NormBuffer.get<float>(), rs->NormBuffer.nelem(), stream);
 
     // potential cross-gpu reduction
-    comm.reduce_norm(rs->NormBuffer.get<float>(), main_stream);
+    comm.reduce_norm(rs->NormBuffer.get<float>(), stream);
 
     // tiny kernel (1 thread) that calculates norm, scale factor, and puts the result on the host for later display
-    global_norm_sqrt(rs->NormBuffer.get<float>(), rs->NormHost, grad_clip, rs->DeviceProp, main_stream);
+    global_norm_sqrt(rs->NormBuffer.get<float>(), rs->NormHost, grad_clip, rs->DeviceProp, stream);
 }
 
 void LLamaModel::update(NCCLCommunicator& comm, float learning_rate, float beta_1, float beta_2, int t, float epsilon, float weight_decay, float grad_clip) {

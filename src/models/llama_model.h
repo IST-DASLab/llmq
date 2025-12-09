@@ -123,7 +123,7 @@ public:
     LLamaRunState& run_state() { return *RunState; }
 
 protected:
-    void _calculate_gradient_norm(NCCLCommunicator& comm, float grad_clip);
+    void _calculate_gradient_norm(NCCLCommunicator& comm, float grad_clip, cudaStream_t stream);
     void _reduce_loss(LLamaRunState& acts, NCCLCommunicator& comm, int B, int T);
 
     void _forward_block(sLLamaBlockWeights<Tensor>& weights, sLLamaLayerActivations& activations, Tensor& residual);
