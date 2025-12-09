@@ -472,6 +472,7 @@ void LLamaWeightsManager::release_status(sGatherData& data, int expected, cudaSt
 }
 
 void LLamaWeightsManager::convert_dtype_for_gather(TensorShard& src, TensorShard& qnt, bool& convert, bool src_is_persistent, LLamaRunState& run_state) {
+    qnt.Stats = src.Stats;
     if (qnt.DType == src.DType) {
         // Identical tensors
         if(qnt.Device == src.Device && src_is_persistent) {
@@ -485,7 +486,6 @@ void LLamaWeightsManager::convert_dtype_for_gather(TensorShard& src, TensorShard
     }
 
     quantize_with_abs_max(qnt, src.scale(), src, src.abs_max(), qnt.nelem(), run_state.DeviceProp, run_state.MainStream);
-    qnt.Stats = src.Stats;
     convert = true;
 }
 
