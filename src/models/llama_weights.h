@@ -160,7 +160,7 @@ protected:
     void update_get_status(sGatherData& data, int expected, cudaStream_t stream) const;
     void release_status(sGatherData& data, int expected, cudaStream_t stream);
 
-    void convert_dtype_for_gather(TensorShard& src, TensorShard& qnt, bool& convert, LLamaRunState& run_state);
+    void convert_dtype_for_gather(TensorShard& src, TensorShard& qnt, bool& convert, bool src_is_persistent, LLamaRunState& run_state);
 
     LLamaConfig mConfig;
     long HQ;    // number of query heads
