@@ -14,6 +14,7 @@
 void LLamaOptimizerStateManager::fetch_block(int layer_idx, cudaStream_t fetch_stream) {
     if((!mOffloadM && !mOffloadV) || mUseZeroCopy) return;
 
+    NvtxRange range("fetch_opt_block", layer_idx);
     int buffer = layer_idx % 2;
     auto& stat = mStatus.at(buffer);
     stat.LayerIdx = layer_idx;
@@ -121,6 +122,7 @@ sLLamaBlockWeights<TensorShard>& LLamaOptimizerStateManager::get_block_from(int 
 void LLamaOptimizerStateManager::store_block(int layer_idx, cudaStream_t stream, cudaStream_t put_stream)  {
     if (mUseZeroCopy) return;
 
+    NvtxRange range("store_opt_block", layer_idx);
     int buffer = layer_idx % 2;
     if(mOffloadM) {
         store_one_block(layer_idx, stream, put_stream, mOptMBuffer[buffer], mOptM.Blocks[layer_idx]);
