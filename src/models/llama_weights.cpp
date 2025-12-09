@@ -282,6 +282,12 @@ TensorShard& LLamaWeightsManager::get_master_lnf_w() {
 void LLamaWeightsManager::begin_optimizer(DeviceMemoryStack& memory, cudaStream_t stream) {
     reset_scales(stream);
     if (mOffloadMaster && !mUseZeroCopy) {
+        // wait for all work on main stream to finished before the buffers can be used.
+        // otherwise, we might start H2D copies while the stack memory is still in use
+        // for activations.
+        CUDA_CHECK(cudaEventRecord(mMasterDeviceBufferStatus.at(0).DoneEvent, stream));
+        CUDA_CHECK(cudaEventRecord(mMasterDeviceBufferStatus.at(1).DoneEvent, stream));
+
         for (int i = 0; i < 2; ++i) {
             auto& buf = mMasterDeviceDoubleBuffer.at(i);
             if (mMaster.Blocks[0].Attn_QKV_w.Device == -1) {
