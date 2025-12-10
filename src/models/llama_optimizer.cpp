@@ -17,20 +17,13 @@ void LLamaOptimizerStateManager::fetch_block(int layer_idx, cudaStream_t fetch_s
     int buffer = layer_idx % 2;
     auto& stat = mStatus.at(buffer);
     stat.LayerIdx = layer_idx;
-    stat.Fetch = false;
+    stat.Fetch = true;
 
     CUDA_CHECK(cudaStreamWaitEvent(fetch_stream, stat.DoneEvent, 0));
 
     auto fetch = [fetch_stream, &stat](TensorShard& dst, TensorShard& src) {
-        // tensors on the same device are handled by pointer assignment
-        if(dst.Device == src.Device) {
-            dst.Data = src.Data;
-            dst.Stats = src.Stats;
-        } else {
-            CUDA_CHECK(cudaMemcpyAsync(dst.Data, src.Data, dst.bytes(), cudaMemcpyHostToDevice, fetch_stream));
-            dst.Stats = src.Stats;
-            stat.Fetch = true;
-        }
+        CUDA_CHECK(cudaMemcpyAsync(dst.Data, src.Data, dst.bytes(), cudaMemcpyHostToDevice, fetch_stream));
+        dst.Stats = src.Stats;
     };
 
     auto fetch_all = [&](sLLamaBlockWeights<TensorShard>& buf, sLLamaBlockWeights<TensorShard>& ref){
@@ -59,9 +52,7 @@ void LLamaOptimizerStateManager::fetch_block(int layer_idx, cudaStream_t fetch_s
         fetch_all(buf, ref);
     }
 
-    if(stat.Fetch) {
-        CUDA_CHECK(cudaEventRecord(stat.DoneEvent, fetch_stream));
-    }
+    CUDA_CHECK(cudaEventRecord(stat.DoneEvent, fetch_stream));
 }
 
 void LLamaOptimizerStateManager::begin_optimizer(DeviceMemoryStack& memory) {
