@@ -56,8 +56,14 @@ void LLamaOptimizerStateManager::fetch_block(int layer_idx, cudaStream_t fetch_s
     CUDA_CHECK(cudaEventRecord(stat.DoneEvent, fetch_stream));
 }
 
-void LLamaOptimizerStateManager::begin_optimizer(DeviceMemoryStack& memory) {
+void LLamaOptimizerStateManager::begin_optimizer(DeviceMemoryStack& memory, cudaStream_t main_stream) {
     LazyAllocator alloc;
+    if (!mUseZeroCopy && (mOffloadM || mOffloadV)) {
+        // double buffering needs to block on main_stream, so we can be sure that the stack memory can be reused safely
+        CUDA_CHECK(cudaEventRecord(mStatus.at(0).DoneEvent, main_stream));
+        CUDA_CHECK(cudaEventRecord(mStatus.at(1).DoneEvent, main_stream));
+    }
+
     if(mOffloadM &&! mUseZeroCopy) {
         ETensorDType m_type = mOptM.Blocks[0].LN1_w.DType;
         matrix_params_lazy(mOptMBuffer[0], mConfig, m_type, mRank, mWorld, alloc);

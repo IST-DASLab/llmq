@@ -15,7 +15,7 @@ public:
     sLLamaNonBlockWeights<TensorShard>& non_block_m();
     sLLamaNonBlockWeights<TensorShard>& non_block_v();
 
-    void begin_optimizer(DeviceMemoryStack& memory);
+    void begin_optimizer(DeviceMemoryStack& memory, cudaStream_t main_stream);
     void end_optimizer(DeviceMemoryStack& memory);
 
     sLLamaWeights& full_m() { return mOptM; }
