@@ -259,7 +259,7 @@ std::pair<float*, float*> LLamaWeightsManager::get_scales_for_block(int layer_id
 }
 
 
-void LLamaWeightsManager::setup_master_buffers(const LLamaConfig& config, TensorAllocator& alloc) {
+void LLamaWeightsManager::setup_device_buffers() {
     if (mOffloadMaster && !mUseZeroCopy) {
         for(int i = 0; i < 2; ++i) {
             mMasterDeviceBufferStatus.at(i) = sGatherData{i, create_named_event(("master_event_" + std::to_string(i)).c_str())};
@@ -402,22 +402,10 @@ void LLamaWeightsManager::release_master_block(int layer_idx, cudaStream_t strea
     CUDA_CHECK(cudaEventRecord(stat.DoneEvent, stream));
     CUDA_CHECK(cudaStreamWaitEvent(put_stream, stat.DoneEvent, 0));
 
-    bool convert_any = false;
-    if (qnt.LayerIdx == layer_idx) {
-        NvtxRange q_rng("quantize");
-        convert_dtype_for_gather(src.LN1_w, qnt.Block.LN1_w, convert_any, !mOffloadMaster, run_state);
-        convert_dtype_for_gather(src.LN2_w, qnt.Block.LN2_w, convert_any, !mOffloadMaster, run_state);
-        convert_dtype_for_gather(src.Attn_QKV_w, qnt.Block.Attn_QKV_w, convert_any, !mOffloadMaster, run_state);
-        convert_dtype_for_gather(src.Attn_Out_w, qnt.Block.Attn_Out_w, convert_any, !mOffloadMaster, run_state);
-        convert_dtype_for_gather(src.MLP_Up_w, qnt.Block.MLP_Up_w, convert_any, !mOffloadMaster, run_state);
-        convert_dtype_for_gather(src.MLP_Down_w, qnt.Block.MLP_Down_w, convert_any, !mOffloadMaster, run_state);
-        if (src.Attn_QKV_b.has_value()) {
-            convert_dtype_for_gather(src.Attn_QKV_b.value(), qnt.Block.Attn_QKV_b.value(), convert_any, !mOffloadMaster, run_state);
-        }
-        // indicate that this is already the version for the next step
-        qnt.Version = mVersion + 1;
+    bool convert_any = requantized_after_optimizer(layer_idx, qnt, src, run_state);
+    if (convert_any) {
+        CUDA_CHECK(cudaEventRecord(stat.DoneEvent, stream));
     }
-    CUDA_CHECK(cudaEventRecord(stat.DoneEvent, stream));
 
     send(ref.LN1_w, buf.LN1_w);
     send(ref.LN2_w, buf.LN2_w);
@@ -429,10 +417,31 @@ void LLamaWeightsManager::release_master_block(int layer_idx, cudaStream_t strea
         send(ref.Attn_QKV_b.value(), buf.Attn_QKV_b.value());
     }
 
-    // put is only considered complete once *both* master weights *and* quants
-    // are finished.
-    CUDA_CHECK(cudaStreamWaitEvent(put_stream, stat.DoneEvent, 0));
+    if (convert_any) {
+        // put is only considered complete once *both* master weights *and* quants
+        // are finished.
+        CUDA_CHECK(cudaStreamWaitEvent(put_stream, stat.DoneEvent, 0));
+    }
     release_status(stat, layer_idx, put_stream);
+}
+
+bool LLamaWeightsManager::requantized_after_optimizer(int layer_idx, sQuantBlock& tgt, sLLamaBlockWeights<TensorShard>& src, LLamaRunState& run_state) {
+    bool convert_any = false;
+    if (tgt.LayerIdx == layer_idx) {
+        NvtxRange q_rng("quantize");
+        convert_dtype_for_gather(src.LN1_w, tgt.Block.LN1_w, convert_any, !mOffloadMaster, run_state);
+        convert_dtype_for_gather(src.LN2_w, tgt.Block.LN2_w, convert_any, !mOffloadMaster, run_state);
+        convert_dtype_for_gather(src.Attn_QKV_w, tgt.Block.Attn_QKV_w, convert_any, !mOffloadMaster, run_state);
+        convert_dtype_for_gather(src.Attn_Out_w, tgt.Block.Attn_Out_w, convert_any, !mOffloadMaster, run_state);
+        convert_dtype_for_gather(src.MLP_Up_w, tgt.Block.MLP_Up_w, convert_any, !mOffloadMaster, run_state);
+        convert_dtype_for_gather(src.MLP_Down_w, tgt.Block.MLP_Down_w, convert_any, !mOffloadMaster, run_state);
+        if (src.Attn_QKV_b.has_value()) {
+            convert_dtype_for_gather(src.Attn_QKV_b.value(), tgt.Block.Attn_QKV_b.value(), convert_any, !mOffloadMaster, run_state);
+        }
+        // indicate that this is already the version for the next step
+        tgt.Version = mVersion + 1;
+    }
+    return convert_any;
 }
 
 bool LLamaWeightsManager::is_in_cache(sGatherData& data, int expected) const {
@@ -702,7 +711,7 @@ WeightsMgrUnsharded::WeightsMgrUnsharded(const LLamaConfig& config, const LLamaO
     }
 
     setup_scales(alloc);
-    setup_master_buffers(config, alloc);
+    setup_device_buffers();
 }
 
 sLLamaBlockWeights<Tensor>& WeightsMgrUnsharded::lookup_block_weights(int layer_idx) {
@@ -790,7 +799,7 @@ WeightsMgrSharded::WeightsMgrSharded(const LLamaConfig& config, const LLamaOptio
     }
 
     setup_scales(alloc);
-    setup_master_buffers(config, alloc);
+    setup_device_buffers();
 }
 
 sLLamaBlockWeights<Tensor>& WeightsMgrSharded::lookup_block_weights(int layer_idx) {

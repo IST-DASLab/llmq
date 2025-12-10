@@ -126,7 +126,7 @@ public:
 protected:
     LLamaWeightsManager(const LLamaConfig& config, const LLamaOptions& options, int rank, int world);
     void setup_scales(TensorAllocator& alloc);
-    void setup_master_buffers(const LLamaConfig& config, TensorAllocator& alloc);
+    void setup_device_buffers();
 
     struct sGatherData {
         int LayerIdx = -1;                  // which layer currently stored in this buffer
@@ -155,13 +155,14 @@ protected:
     Tensor mAbsMaxes;
 
     std::array<sLLamaBlockWeights<TensorShard>, 2> mMasterDeviceDoubleBuffer;
-    std::array<Tensor, 4> mMasterDeviceDoubleBufferStorage;
+    std::array<Tensor, 2> mMasterDeviceDoubleBufferStorage;
     std::array<sGatherData, 2> mMasterDeviceBufferStatus;
 
     bool is_in_cache(sGatherData& data, int expected) const;
     void update_get_status(sGatherData& data, int expected, cudaStream_t stream) const;
     void release_status(sGatherData& data, int expected, cudaStream_t stream);
 
+    bool requantized_after_optimizer(int layer_idx, sQuantBlock& tgt, sLLamaBlockWeights<TensorShard>& src, LLamaRunState& run_state);
     void convert_dtype_for_gather(TensorShard& src, TensorShard& qnt, bool& convert, bool src_is_persistent, LLamaRunState& run_state);
 
     LLamaConfig mConfig;
