@@ -178,6 +178,7 @@ protected:
 
     bool mOffloadMaster;
     bool mUseZeroCopy;
+    bool mPersistentQuants;     // whether to keep a quantized copy of the master shards
 };
 
 sLLamaNonBlockWeights<Tensor> allocate_non_block_full(LLamaConfig config, ETensorDType dtype, EAllocationType kind, TensorAllocator& alloc);

@@ -672,6 +672,7 @@ private:
 WeightsMgrUnsharded::WeightsMgrUnsharded(const LLamaConfig& config, const LLamaOptions& options, int rank, int world, TensorAllocator& alloc) : LLamaWeightsManager(config, options, rank, world) {
     auto ctx = alloc.with_context("Weights");
     mOffloadMaster = options.OffloadMaster;
+    mPersistentQuants = true;
     EAllocationType master_alloc = mOffloadMaster ? options.offload_alloc() : EAllocationType::ON_DEVICE;
     mWork.Blocks.reserve(config.NumLayers);
     mBlockStatus.reserve(config.NumLayers);
@@ -734,7 +735,6 @@ private:
     sGatherData& lookup_block_status(int layer_idx) override;
 
     std::vector<sQuantBlock> mQuants;
-    bool mPersistentQuants = false;     // whether to keep a quantized copy of the master shards
     bool mOffloadQuants = false;
 };
 
