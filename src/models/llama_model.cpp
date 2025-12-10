@@ -746,7 +746,7 @@ void LLamaModel::update(NCCLCommunicator& comm, float learning_rate, float beta_
     }
 
     Parameters->begin_optimizer(rs->Stack, rs->MainStream);
-    OptimizerState->begin_optimizer(rs->Stack);
+    OptimizerState->begin_optimizer(rs->Stack, rs->MainStream);
 
     // grad_scale gets deposited into NormBuffer[1] and can be used on main_stream after this.
     calculate_gradient_norm(comm, grad_clip);
@@ -837,7 +837,7 @@ void LLamaModel::allocate_run_state(const LLamaOptions& options, NCCLCommunicato
     OptimizerState = std::make_unique<LLamaOptimizerStateManager>(Config, options, acts.MainStream, comm, *Allocator);
 
     Parameters->begin_optimizer(stack, comm.stream());
-    OptimizerState->begin_optimizer(stack);
+    OptimizerState->begin_optimizer(stack, comm.stream());
     OptimizerState->end_optimizer(stack);
     Parameters->end_optimizer(stack);
 
