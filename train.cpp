@@ -49,7 +49,8 @@ struct TrainingRunner {
     int B = 4;
     int T = 1024;
 
-    int MaxSteps = 1000;
+    int MaxSteps = -1;
+    int NumEpochs = 1;
 
     float LearningRate = 1e-5f;
     int WarmupSteps = -1;
@@ -141,7 +142,8 @@ void TrainingRunner::load_training_config(int argc, const char** argv) {
     app.add_option("--weight-decay", WeightDecay, "Weight decay for matrix parameters")->check(CLI::NonNegativeNumber);
     app.add_option("--adam-epsilon", Epsilon, "Epsilon to use for AdamW")->check(CLI::NonNegativeNumber);
 
-    app.add_option("--steps", MaxSteps, "Number of training steps");
+    auto steps_opt = app.add_option("--steps", MaxSteps, "Number of training steps");
+    app.add_option("--epochs", NumEpochs, "Number of training steps")->excludes(steps_opt)->check(CLI::PositiveNumber);
     app.add_option("--log-gpu-util", LogGPUEvery, "Log the gpu utilization every n steps. Set to 0 to disable.");
     app.add_option("--eval-every-n-steps", EvalEvery, "How many optimizer steps between evaluations");
     app.add_option("--eval-num-steps", EvalNumSteps, "How many batches of eval data to use");
@@ -298,6 +300,9 @@ void TrainingRunner::run_training(int argc, const char** argv, NCCLCommunicator&
     DataLoader test_loader({EvalFile}, T, comm.rank(), comm.world_size(), 0x83b45442ull);
 
     int steps_per_epoch = train_loader.num_tokens() / total_batch_size;
+    if (MaxSteps == -1) {
+        MaxSteps = steps_per_epoch * NumEpochs;
+    }
 
     logger.log_options({
         {"name",               RunName},
