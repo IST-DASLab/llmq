@@ -120,8 +120,8 @@ def main():
         train_files = list(map(str, Path.glob(Path(), config.train_file)))
         eval_files = list(map(str, Path.glob(Path(), config.eval_file)))
 
-        train_loader = pyllmq.DataLoader(train_files, config.batch_size * config.seq_len * config.gpus, seed=0x83b45442)
-        eval_loader = pyllmq.DataLoader(eval_files, config.batch_size * config.seq_len * config.gpus, seed=0x83b45442)
+        train_loader = pyllmq.DataLoader(train_files, config.batch_size * config.seq_len * config.gpus, seed=config.train_seed)
+        eval_loader = pyllmq.DataLoader(eval_files, config.batch_size * config.seq_len * config.gpus, seed=config.eval_seed)
 
         # Log dataset information
         logger.log_dataset(train_loader, eval_loader)

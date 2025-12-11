@@ -36,7 +36,7 @@ public:
     void set_callback(std::function<void(std::string_view)> cb);
 
     void log_cmd(int argc, const char** argv);
-    void log_options(const std::vector<std::pair<std::string_view, std::variant<bool, int, float, std::string>>>& options);
+    void log_options(const std::vector<std::pair<std::string_view, std::variant<bool, std::int64_t, float, std::string>>>& options);
     void log_gpu_model(NCCLCommunicator& comm);
     void log_dataset(const DataLoader& train_loader, const DataLoader& eval_loader);
     void log_step(int step, float epoch, int step_tokens, int duration_ms, float norm, float loss, float lr);

@@ -71,7 +71,9 @@ struct TrainingRunner {
     std::string RunName = "llmq";
 
     std::string TrainFile = "tiny-shakespeare-train.bin";
+    std::uint64_t TrainLoaderSeed = 0x83b45442ull;
     std::string EvalFile = "tiny-shakespeare-test.bin";
+    std::uint64_t EvalLoaderSeed = 0x384b4524ull;
     std::string OutDir = "output/%n";
     std::string CkptDir = "ckpt/%n";
     std::string LogFile = fmt::format("logs/%n-{:%FT%H_%M}.json", std::chrono::system_clock::now());
@@ -149,7 +151,9 @@ void TrainingRunner::load_training_config(int argc, const char** argv) {
     app.add_option("--eval-num-steps", EvalNumSteps, "How many batches of eval data to use");
 
     app.add_option("--train-file", TrainFile, "Tokens for training");
+    app.add_option("--train-seed", TrainLoaderSeed, "Seed for the training dataloader");
     app.add_option("--eval-file", EvalFile, "Tokens for validation");
+    app.add_option("--eval-seed", EvalLoaderSeed, "Seed for the eval loader");
     app.add_option("--out-dir", OutDir, "Where to save the trained model");
     app.add_option("--checkpoint-dir", CkptDir, "Directory in which to save checkpoints.");
     app.add_option("--ckpt-interval", CkptEvery, "How many optimizer steps between checkpoints");
@@ -296,8 +300,8 @@ void TrainingRunner::run_training(int argc, const char** argv, NCCLCommunicator&
     TrainingRunLogger logger(LogFile, comm.rank(), TrainingRunLogger::DEFAULT);
     logger.log_cmd(argc, argv);
 
-    DataLoader train_loader({TrainFile}, T, comm.rank(), comm.world_size(), 0x83b45442ull);
-    DataLoader test_loader({EvalFile}, T, comm.rank(), comm.world_size(), 0x83b45442ull);
+    DataLoader train_loader({TrainFile}, T, comm.rank(), comm.world_size(), TrainLoaderSeed);
+    DataLoader test_loader({EvalFile}, T, comm.rank(), comm.world_size(), EvalLoaderSeed);
 
     int steps_per_epoch = train_loader.num_tokens() / total_batch_size;
     if (MaxSteps == -1) {
@@ -353,6 +357,9 @@ void TrainingRunner::run_training(int argc, const char** argv, NCCLCommunicator&
         {"ckpt-every-n-steps", CkptEvery},
         {"ckpt-keep",          CkptToKeep},
         {"ckpt-major",         MajorCkptEvery},
+
+        {"train-loader-seed",  (std::int64_t)TrainLoaderSeed},
+        {"eval-loader-seed",   (std::int64_t)EvalLoaderSeed},
 
         {"arch",               std::string{config.model_name()}},
         {"vocab-size",         config.VocabSize},

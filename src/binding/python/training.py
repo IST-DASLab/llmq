@@ -49,6 +49,8 @@ class TrainingConfig:
     # Data files
     train_file: str = "data/tiny-stories-qwen/train*.bin"
     eval_file: str = "data/tiny-stories-qwen/eval.bin"
+    train_seed: int = 0x83b45442
+    eval_seed: int = 0x83b45442
 
     # Output and checkpointing
     out_dir: str = "output"
@@ -144,6 +146,8 @@ def add_training_args(parser: argparse.ArgumentParser, default: Optional[Trainin
     # Data
     parser.add_argument("--train-file", default=default.train_file, help="Training data file")
     parser.add_argument("--eval-file", default=default.eval_file, help="Evaluation data file")
+    parser.add_argument("--train-seed", default=default.train_seed, help="Training loader random seed")
+    parser.add_argument("--eval-seed", default=default.eval_seed, help="Evaluation loader random seed")
 
     # Output
     parser.add_argument("--out-dir", default=default.out_dir, help="Output directory")
