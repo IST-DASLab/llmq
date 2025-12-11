@@ -412,7 +412,7 @@ NB_MODULE(_pyllmq, m) {
         }, nb::arg("args"), "Log command line arguments")
 
         .def("log_options", [](TrainingRunLogger* logger, const nb::dict& options) {
-            std::vector<std::pair<std::string_view, std::variant<bool, int, float, std::string>>> cpp_options;
+            std::vector<std::pair<std::string_view, std::variant<bool, long, float, std::string>>> cpp_options;
             std::vector<std::string> keys;
             keys.reserve(options.size());
             cpp_options.reserve(options.size());

@@ -85,7 +85,7 @@ void TrainingRunLogger::log_dataset(const DataLoader& train_loader, const DataLo
     }
 }
 
-void TrainingRunLogger::log_options(const std::vector<std::pair<std::string_view, std::variant<bool, int, float, std::string>>>& options) {
+void TrainingRunLogger::log_options(const std::vector<std::pair<std::string_view, std::variant<bool, std::int64_t, float, std::string>>>& options) {
     if(mRank != 0) return;
 
     int option_length = 0;
