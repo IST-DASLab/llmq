@@ -91,6 +91,7 @@ class TokenizedDataFileWriter:
         assert tokens.ndim == 1
 
         if mask is not None:
+            assert len(mask) == len(tokens)
             self._record_mask(mask)
 
         self.file_handle.write(tokens.tobytes())
@@ -148,8 +149,17 @@ def tokenize_example_worker(args: tuple) -> dict:
         assert len(example) == 2
         prompt = worker_tokenizer(example[0], return_tensors='np', split_special_tokens=True).input_ids[0, ...]
         response = worker_tokenizer(example[1], return_tensors='np', split_special_tokens=True).input_ids[0, ...]
+
+        # fix up BOS/EOS tokens
+        if response[0] == worker_tokenizer.bos_token_id:
+            response = response[1:]
+        if prompt[-1] == worker_tokenizer.eos_token_id:
+            prompt = prompt[:-1]
+        if prompt[0] != worker_tokenizer.bos_token_id and worker_tokenizer.bos_token_id is not None:
+            prompt = np.concatenate([[worker_tokenizer.bos_token_id], prompt])
+
         tokens = np.concatenate([prompt, response, [worker_tokenizer.eos_token_id]])
-        mask = np.concatenate([np.zeros_like(prompt), np.ones_like(response)])
+        mask = np.concatenate([np.zeros_like(prompt), np.ones_like(response), [1]])
         if seq_len is not None:
             if len(tokens) > seq_len:
                 # truncate, but ensure last token remains EOS
@@ -236,11 +246,11 @@ def _extract_limo_example(example):
     return example["question"], example["solution"]
 
 
-def generate_tokenized_dataset(dataset: str, model: str, out_dir: str = "data"):
+def generate_tokenized_dataset(dataset: str, model: str, out_dir: str = "data", seq_len: int = None):
     subsample = None
     is_tiny = False
     masking = False
-    seq_len = None
+    default_seq_len = None
 
     if dataset == "tiny-shakespeare":
         dst = "tiny-shakespeare"
@@ -257,7 +267,7 @@ def generate_tokenized_dataset(dataset: str, model: str, out_dir: str = "data"):
         test_split = "test"
         is_tiny = True
         masking = True
-        seq_len = 512
+        default_seq_len = 512
     elif dataset == "fineweb-1b":
         dst = "fineweb-1b"
         key = "text"
@@ -288,7 +298,7 @@ def generate_tokenized_dataset(dataset: str, model: str, out_dir: str = "data"):
         test_split = "test"
         is_tiny = True
         masking = True
-        seq_len = 8192
+        default_seq_len = 16383
     else:
         assert False, f"unknown dataset {dataset}"
 
@@ -305,6 +315,11 @@ def generate_tokenized_dataset(dataset: str, model: str, out_dir: str = "data"):
     tokenizer = AutoTokenizer.from_pretrained(model_name)
     dst = out_dir + "/" + dst
 
+    if seq_len is None and default_seq_len is not None:
+        seq_len = default_seq_len
+    elif seq_len is not None and seq_len <= 0:
+        seq_len = None
+
     if isinstance(test_split, int):
         process_dataset(dst, d["train"], tokenizer, key, "train", subsample, is_tiny=is_tiny, first_is_eval=test_split, model_name=model_name, masking=masking, seq_len=seq_len)
     else:
@@ -317,9 +332,12 @@ def main():
     parser.add_argument("--dataset", required=True)
     parser.add_argument("--model", required=True)
     parser.add_argument("--out-dir", default="data")
+    parser.add_argument("--seq-len", default=None, type=int,
+                        help="Sequence length to be used for padding in fine-tuning datasets. Set to -1 to disable padding."
+                        "If no value is given, a dataset-specific default value will be used.")
 
     args = parser.parse_args()
-    generate_tokenized_dataset(dataset=args.dataset, model=args.model, out_dir=args.out_dir)
+    generate_tokenized_dataset(dataset=args.dataset, model=args.model, out_dir=args.out_dir, seq_len=args.seq_len)
 
 if __name__ == "__main__":
     main()
