@@ -117,10 +117,10 @@ void TrainingRunner::load_training_config(int argc, const char** argv) {
     app.add_option("--matmul-dtype", matmul_dtype, "Which dtype to use for matmuls. Defaults to model-dtype.");
     app.add_option("--gradient-dtype", gradient_dtype, "Which dtype to use for (activation) gradients. Defaults to matmul-dtype.");
     app.add_option("--model-dtype", ModelDType, "Which dtype to use for model");
-    app.add_option("--batch,--batch-size", B, "micro-batch size");
-    app.add_option("--seq-len,--seq-length", T, "sequence length");
-    app.add_option("--lmhead-chunks", Options.LMHeadChunks, "Run the LM-Head in chunks to avoid materializing the large logit tensor.");
-    app.add_option("--attn-bwd-chunks", Options.AttBwdChunks, "Run the attention backward pass in chunks, to avoid having to materialize a large workspace tensor.");
+    app.add_option("--batch,--batch-size", B, "micro-batch size")->check(CLI::PositiveNumber);
+    app.add_option("--seq-len,--seq-length", T, "sequence length")->check(CLI::PositiveNumber);
+    app.add_option("--lmhead-chunks", Options.LMHeadChunks, "Run the LM-Head in chunks to avoid materializing the large logit tensor.")->check(CLI::PositiveNumber);
+    app.add_option("--attn-bwd-chunks", Options.AttBwdChunks, "Run the attention backward pass in chunks, to avoid having to materialize a large workspace tensor.")->check(CLI::PositiveNumber);
 
     // debug
     app.add_option("--name", RunName, "Associate a name with this run. This will not influence any computations. You can use %n as part of specifying log, output, and checkpoint file names.");
@@ -128,18 +128,18 @@ void TrainingRunner::load_training_config(int argc, const char** argv) {
     app.add_flag("--debug-time-breakdown", Options.TriggerTimingEvents, "Log additional timing information");
 
     // optimizer
-    app.add_option("--lr,--learning-rate", LearningRate, "Base learning rate");
-    app.add_option("--warmup", WarmupSteps, "Number of warmup steps.");
-    app.add_option("--final-lr-fraction", FinalLrFraction, "Fraction of base lr to use for the final steps.");
+    app.add_option("--lr,--learning-rate", LearningRate, "Base learning rate")->check(CLI::NonNegativeNumber);
+    app.add_option("--warmup", WarmupSteps, "Number of warmup steps.")->check(CLI::NonNegativeNumber);;
+    app.add_option("--final-lr-fraction", FinalLrFraction, "Fraction of base lr to use for the final steps.")->check(CLI::NonNegativeNumber);
     app.add_option("--lr-schedule", LrScheduleType, "Learning rate schedule function: Cosine or Linear");
-    app.add_option("--beta-1", Beta1, "Beta 1 for Adam");
-    app.add_option("--beta-2", Beta2, "Beta 2 for Adam");
+    app.add_option("--beta-1", Beta1, "Beta 1 for Adam")->check(CLI::NonNegativeNumber);
+    app.add_option("--beta-2", Beta2, "Beta 2 for Adam")->check(CLI::NonNegativeNumber);
     app.add_option("--opt-m-dtype", Options.OptMomentumType, "DType for first-order momentum. FP32 or BF16");
     app.add_option("--opt-v-dtype", Options.OptVarianceType, "DType for second-order momentum. FP32 or BF16");
-    app.add_option("--grad-accumulation", GradAccSteps, "number of micro-batches per optimizer step");
+    app.add_option("--grad-accumulation", GradAccSteps, "number of micro-batches per optimizer step")->check(CLI::PositiveNumber);
     app.add_option("--grad-clip", GradClip, "Gradient clipping");
-    app.add_option("--weight-decay", WeightDecay, "Weight decay for matrix parameters");
-    app.add_option("--adam-epsilon", Epsilon, "Epsilon to use for AdamW");
+    app.add_option("--weight-decay", WeightDecay, "Weight decay for matrix parameters")->check(CLI::NonNegativeNumber);
+    app.add_option("--adam-epsilon", Epsilon, "Epsilon to use for AdamW")->check(CLI::NonNegativeNumber);
 
     app.add_option("--steps", MaxSteps, "Number of training steps");
     app.add_option("--log-gpu-util", LogGPUEvery, "Log the gpu utilization every n steps. Set to 0 to disable.");
@@ -189,7 +189,7 @@ void TrainingRunner::load_training_config(int argc, const char** argv) {
     }
 
     if (!std::filesystem::exists(ModelRootPath)) {
-        if (ModelRootPath.find("/") != std::string::npos) {
+        if (ModelRootPath.find('/') != std::string::npos) {
             std::string hf_path = get_hf_model_files(ModelRootPath);
             if (hf_path.empty()) {
                 throw std::runtime_error("Could not find model files for " + ModelRootPath);
