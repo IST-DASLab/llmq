@@ -205,11 +205,18 @@ private:
     std::array<sBlockState, 2> mGradStates;
     std::vector<sLLamaBlockWeights<TensorShard>> mGradShards;
     cudaEvent_t mNonBlockEvent;
+
+protected:
+    bool mOffloadGrads = false;
+    sLLamaBlockWeights<TensorShard> mOffloadBuffer;
+    cudaEvent_t mOffloadEvent = nullptr;
+    cudaStream_t mOffloadStream = nullptr;
 };
 
 LLamaGradientsBlockShardedBase::LLamaGradientsBlockShardedBase(std::uint64_t seed, int step, const LLamaConfig& config, const LLamaOptions& options, int rank, int world, const std::shared_ptr<TensorAllocator>& alloc):
     LLamaGradsManager(seed, step),
-    mFullNonBlock( allocate_non_block_full(config, config.DType, EAllocationType::ON_DEVICE, *alloc))
+    mFullNonBlock( allocate_non_block_full(config, config.DType, EAllocationType::ON_DEVICE, *alloc)),
+    mOffloadGrads(options.OffloadGrads)
 {
     mGradBuffers[0] = allocate_block_full(config, config.DType, config.DType, EAllocationType::ON_DEVICE, *alloc);
     mGradBuffers[1] = allocate_block_full(config, config.DType, config.DType, EAllocationType::ON_DEVICE, *alloc);
@@ -218,11 +225,18 @@ LLamaGradientsBlockShardedBase::LLamaGradientsBlockShardedBase(std::uint64_t see
     mNonBlockEvent = create_named_event("grad_nonblock_event");
     mGradShards.reserve(config.NumLayers);
     for(int i = 0; i < config.NumLayers; ++i) {
-        EAllocationType kind = options.OffloadGrads ? EAllocationType::PINNED : EAllocationType::ON_DEVICE;
+        EAllocationType kind = mOffloadGrads ? EAllocationType::PINNED : EAllocationType::ON_DEVICE;
         mGradShards.push_back(allocate_block_shard(config, config.DType, config.DType, kind, rank, world, *alloc));
     }
 
     mNonBlockShards = shard_non_block(mFullNonBlock, rank, world);
+
+    // allocate auxiliary buffers to memcpy offloaded grads
+    if (mOffloadGrads) {
+        mOffloadBuffer = allocate_block_shard(config, config.DType, config.DType, EAllocationType::ON_DEVICE, rank, world, *alloc);
+        mOffloadEvent = create_named_event("grad_offload_event");
+        mOffloadStream = create_named_stream("grad_offload_stream");
+    }
 }
 
 void LLamaGradientsBlockShardedBase::on_first_micro_step(cudaStream_t stream) {
@@ -232,6 +246,7 @@ void LLamaGradientsBlockShardedBase::on_first_micro_step(cudaStream_t stream) {
     }
     fill_zero(mFullNonBlock.LNF_w, stream);
 }
+
 
 void LLamaGradientsBlockShardedBase::end_micro_step(cudaStream_t stream, NCCLCommunicator& comm) {
     for (int i = 0; i < 2; ++i) {
@@ -246,8 +261,13 @@ void LLamaGradientsBlockShardedBase::end_micro_step(cudaStream_t stream, NCCLCom
             state.NeedsAccumulation = false;
         }
     }
-    if (mIsLastMicroStep)
+    if (mIsLastMicroStep) {
         CUDA_CHECK(cudaStreamWaitEvent(stream, mNonBlockEvent, 0));
+        if (mOffloadGrads) {
+            CUDA_CHECK(cudaStreamWaitEvent(comm.stream(), mOffloadEvent));
+            CUDA_CHECK(cudaStreamWaitEvent(stream, mOffloadEvent));
+        }
+    }
 }
 
 Tensor& LLamaGradientsBlockShardedBase::get_embeddings_full(cudaStream_t stream, NCCLCommunicator& comm, bool& accumulate) {
@@ -345,6 +365,7 @@ private:
                              sLLamaBlockWeights<TensorShard> sw,
                              cudaStream_t stream,
                              NCCLCommunicator& comm) override;
+    void sr_accumulate_on_device(int layer_idx, sLLamaBlockWeights<Tensor>& dw, sLLamaBlockWeights<TensorShard> sw, cudaStream_t stream);
 };
 
 void LLamaGradientsBlockSharded_ScatterReduce::sr_accumulate_tensor(TensorShard& dst, Tensor& src, cudaStream_t stream, unsigned seed) {
@@ -362,6 +383,59 @@ void LLamaGradientsBlockSharded_ScatterReduce::sr_accumulate_layer(int layer_idx
                                                                    cudaStream_t stream,
                                                                    NCCLCommunicator& comm) {
     NvtxRange range("accumulate_layer", layer_idx);
+    if (mOffloadGrads) {
+        // fetch old gradient values; no old grads in the first step
+        if (!mIsFirstMicroStep) {
+            // fetch the old gradient from the host
+            auto fetch = [stream=mOffloadStream](TensorShard& dst, TensorShard& src) {
+                CUDA_CHECK(cudaMemcpyAsync(dst.Data, src.Data, dst.bytes(), cudaMemcpyHostToDevice, stream));
+            };
+            fetch(mOffloadBuffer.LN1_w, sw.LN1_w);
+            fetch(mOffloadBuffer.LN2_w, sw.LN2_w);
+            fetch(mOffloadBuffer.Attn_QKV_w, sw.Attn_QKV_w);
+            fetch(mOffloadBuffer.Attn_Out_w, sw.Attn_Out_w);
+            fetch(mOffloadBuffer.MLP_Up_w, sw.MLP_Up_w);
+            fetch(mOffloadBuffer.MLP_Down_w, sw.MLP_Down_w);
+            if (sw.Attn_QKV_b.has_value()) {
+                fetch(mOffloadBuffer.Attn_QKV_b.value(), sw.Attn_QKV_b.value());
+            }
+            // and that old grads have been fetched
+            CUDA_CHECK(cudaEventRecord(mOffloadEvent, mOffloadStream));
+        }
+        // wait for the old gradient to be fetched
+        CUDA_CHECK(cudaStreamWaitEvent(stream, mOffloadEvent));
+        // add the new gradient using SR
+        sr_accumulate_on_device(layer_idx, dw, mOffloadBuffer, stream);
+
+        // block the comm stream until the addition is done
+        CUDA_CHECK(cudaEventRecord(mOffloadEvent, stream));
+        CUDA_CHECK(cudaStreamWaitEvent(mOffloadStream, mOffloadEvent));
+
+        // then copy the new gradient back to host
+        auto cpy = [stream=mOffloadStream](TensorShard& dst, TensorShard& src) {
+            CUDA_CHECK(cudaMemcpyAsync(dst.Data, src.Data, dst.bytes(), cudaMemcpyDeviceToHost, stream));
+        };
+        cpy(sw.LN1_w, mOffloadBuffer.LN1_w);
+        cpy(sw.LN2_w, mOffloadBuffer.LN2_w);
+        cpy(sw.Attn_QKV_w, mOffloadBuffer.Attn_QKV_w);
+        cpy(sw.Attn_Out_w, mOffloadBuffer.Attn_Out_w);
+        cpy(sw.MLP_Up_w, mOffloadBuffer.MLP_Up_w);
+        cpy(sw.MLP_Down_w, mOffloadBuffer.MLP_Down_w);
+        if (sw.Attn_QKV_b.has_value()) {
+            cpy(sw.Attn_QKV_b.value(), mOffloadBuffer.Attn_QKV_b.value());
+        }
+
+        // and record that we're done
+        CUDA_CHECK(cudaEventRecord(mOffloadEvent, mOffloadStream));
+    } else {
+        sr_accumulate_on_device(layer_idx, dw, sw, stream);
+    }
+}
+
+
+void LLamaGradientsBlockSharded_ScatterReduce::sr_accumulate_on_device(int layer_idx,
+    sLLamaBlockWeights<Tensor>& dw, sLLamaBlockWeights<TensorShard> sw, cudaStream_t stream)
+{
     auto rng_1 = mRng.generate(2*mStepCounter + 0, layer_idx);
     auto rng_2 = mRng.generate(2*mStepCounter + 1, layer_idx);
 
@@ -375,6 +449,7 @@ void LLamaGradientsBlockSharded_ScatterReduce::sr_accumulate_layer(int layer_idx
         sr_accumulate_tensor(sw.Attn_QKV_b.value(), dw.Attn_QKV_b.value(), stream, rng_2[2]);
     }
 }
+
 
 // ---------------------------------------------------------------------------------------------------------------------
 
