@@ -5,6 +5,7 @@
 #ifndef LLMQ_SRC_UTILITIES_LAZY_ALLOCATOR_H
 #define LLMQ_SRC_UTILITIES_LAZY_ALLOCATOR_H
 
+#include <string_view>
 #include <vector>
 
 class Tensor;
@@ -27,12 +28,12 @@ public:
     //! Allocates memory for all registered tensors from `storage`, using `type` and `name` to request a sufficiently
     //! large area of memory from the underlying `TensorAllocator`.
     //! Returns the backing tensor that must be kept alive for the lifetime of all allocated tensors.
-    Tensor commit(TensorAllocator& storage, EAllocationType type, const char* name);
+    Tensor commit(TensorAllocator& storage, EAllocationType type, const std::string& name);
 
     //! Allocates memory for all registered tensors from `storage`, using `name` to request a sufficiently
     //! large area of memory from the underlying `DeviceMemoryStack`.
     //! Returns the backing tensor that must be kept alive for the lifetime of all allocated tensors.
-    Tensor commit(DeviceMemoryStack& storage, const char* name);
+    Tensor commit(DeviceMemoryStack& storage, const std::string& name);
 private:
     std::vector<Tensor*> mTargets;
 };

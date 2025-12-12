@@ -237,7 +237,7 @@ LLamaGradientsBlockShardedBase::LLamaGradientsBlockShardedBase(std::uint64_t see
         EAllocationType kind = mOffloadGrads ? EAllocationType::PINNED : EAllocationType::ON_DEVICE;
         matrix_params_lazy(mGradShards[i].Tensors, config, config.DType, rank, world, alloc_lazy);
         non_matrix_params_lazy(mGradShards[i].Tensors, config, config.DType, rank, world, alloc_lazy);
-        mGradShards[i].Storage = alloc_lazy.commit(*alloc, kind, "grad_shard");
+        mGradShards[i].Storage = alloc_lazy.commit(*alloc, kind, "grad_shard_" + std::to_string(i));
     }
 
     mNonBlockShards = shard_non_block(mFullNonBlock, rank, world);

@@ -4,6 +4,9 @@
 
 
 #include "llama_optimizer.h"
+
+#include <bits/fs_fwd.h>
+
 #include "llama_config.h"
 #include "llama_model.h"
 #include "utilities/comm.h"
@@ -206,10 +209,11 @@ std::vector<Tensor> allocate_weights_opt(sLLamaWeights& weights, const LLamaConf
     std::vector<Tensor> result;
     weights.Blocks.resize(config.NumLayers);
     LazyAllocator alloc_lazy;
-    for(auto& block : weights.Blocks) {
+    for(int i = 0; i < config.NumLayers; i++) {
+        auto& block = weights.Blocks[i];
         matrix_params_lazy(block, config, dtype, shard_idx, num_shards, alloc_lazy);
         non_matrix_params_lazy(block, config, dtype, shard_idx, num_shards, alloc_lazy);
-        result.push_back(alloc_lazy.commit(alloc, kind, "block_shard"));
+        result.push_back(alloc_lazy.commit(alloc, kind, "block_shard_" + std::to_string(i)));
     }
     weights.NonBlocks = allocate_non_block_shard(config, dtype, kind, shard_idx, num_shards, alloc);
     return result;

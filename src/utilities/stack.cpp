@@ -10,7 +10,7 @@ DeviceMemoryStack::DeviceMemoryStack(std::byte* memory, std::size_t amount, int 
 
 }
 
-std::byte* DeviceMemoryStack::allocate(std::size_t amount, const char* name) {
+std::byte* DeviceMemoryStack::allocate(std::size_t amount, const std::string& name) {
     constexpr size_t alignment = 4096;
     std::size_t aligned_amount = div_ceil(amount, alignment) * alignment;
     std::byte* new_top = mTop + aligned_amount;
@@ -24,7 +24,7 @@ std::byte* DeviceMemoryStack::allocate(std::size_t amount, const char* name) {
     return mAlloc.back().Pointer;
 }
 
-Tensor DeviceMemoryStack::allocate(ETensorDType dtype, const std::vector<long>& shape, const char* name) {
+Tensor DeviceMemoryStack::allocate(ETensorDType dtype, const std::vector<long>& shape, const std::string& name) {
     std::size_t total = std::accumulate(std::begin(shape), std::end(shape), (long)get_dtype_size(dtype), std::multiplies<>());
     return Tensor::from_pointer(allocate(total, name), mDeviceID, dtype, shape);
 }

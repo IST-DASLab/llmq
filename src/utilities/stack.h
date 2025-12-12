@@ -14,8 +14,8 @@ public:
     DeviceMemoryStack() = default;
     DeviceMemoryStack(std::byte* memory, std::size_t amount, int device_id);
 
-    std::byte* allocate(std::size_t amount, const char* name="<unnamed>");
-    Tensor allocate(ETensorDType dtype, const std::vector<long>& shape, const char* name="<unnamed>");
+    std::byte* allocate(std::size_t amount, const std::string& name="<unnamed>");
+    Tensor allocate(ETensorDType dtype, const std::vector<long>& shape, const std::string& name="<unnamed>");
 
     void free(std::byte* ptr);
     void free(Tensor& tensor);
@@ -28,7 +28,7 @@ public:
     struct sAllocRecord {
         std::byte* Pointer;
         std::size_t Amount;
-        const char* Name;
+        std::string Name;
     };
     using AllocationList = std::vector<sAllocRecord>;
 

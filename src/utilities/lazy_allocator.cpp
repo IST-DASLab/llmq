@@ -15,7 +15,7 @@ void LazyAllocator::allocate(Tensor* target, ETensorDType dtype, const std::vect
     mTargets.push_back(target);
 }
 
-Tensor LazyAllocator::commit(TensorAllocator& storage, EAllocationType type, const char* name) {
+Tensor LazyAllocator::commit(TensorAllocator& storage, EAllocationType type, const std::string& name) {
     std::size_t total_size = 0;
     constexpr std::size_t page_size = 4096;
     for(auto& target: mTargets) {
@@ -36,7 +36,7 @@ Tensor LazyAllocator::commit(TensorAllocator& storage, EAllocationType type, con
     return backing;
 }
 
-Tensor LazyAllocator::commit(DeviceMemoryStack& storage, const char* name) {
+Tensor LazyAllocator::commit(DeviceMemoryStack& storage, const std::string& name) {
     std::size_t total_size = 0;
     constexpr std::size_t page_size = 4096;
     for(auto& target: mTargets) {

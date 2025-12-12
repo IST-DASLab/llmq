@@ -79,39 +79,39 @@ void record_stats(std::unordered_map<std::string, sTotalAllocations>& target, st
     target[name][kind] += narrow<long>(bytes);
 }
 
-Tensor TensorAllocator::allocate(ETensorDType dtype, const char* name, EAllocationType kind, const std::initializer_list<long>& shape) {
+Tensor TensorAllocator::allocate(ETensorDType dtype, std::string_view name, EAllocationType kind, const std::initializer_list<long>& shape) {
     return allocate_impl(dtype, name, kind, shape);
 }
 
-Tensor TensorAllocator::allocate(ETensorDType dtype, const char* name, EAllocationType kind, const std::vector<long>& shape) {
+Tensor TensorAllocator::allocate(ETensorDType dtype, std::string_view name, EAllocationType kind, const std::vector<long>& shape) {
     return allocate_impl(dtype, name, kind, shape);
 }
 
-Tensor TensorAllocator::allocate(ETensorDType dtype, const char* name, const std::initializer_list<long>& shape) {
+Tensor TensorAllocator::allocate(ETensorDType dtype, std::string_view name, const std::initializer_list<long>& shape) {
     return allocate_impl(dtype, name, EAllocationType::ON_DEVICE, shape);
 }
 
-Tensor TensorAllocator::allocate(ETensorDType dtype, const char* name, const std::vector<long>& shape) {
+Tensor TensorAllocator::allocate(ETensorDType dtype, std::string_view name, const std::vector<long>& shape) {
     return allocate_impl(dtype, name, EAllocationType::ON_DEVICE, shape);
 }
 
-TensorShard TensorAllocator::allocate_shard(ETensorDType dtype, int shard_idx, int num_shards, const char* name, const std::vector<long>& shape,  EAllocationType kind) {
+TensorShard TensorAllocator::allocate_shard(ETensorDType dtype, int shard_idx, int num_shards,  std::string_view name, const std::vector<long>& shape,  EAllocationType kind) {
     std::vector<long> shard_shape(shape);
     shard_shape[0] = div_exact(shape[0], (long)num_shards);
     return TensorShard(allocate(dtype, name, kind, shard_shape), shard_idx, num_shards, shape);
 }
 
 template<typename Container>
-Tensor TensorAllocator::allocate_impl(ETensorDType dtype, const char* name, EAllocationType kind, const Container& shape) {
+Tensor TensorAllocator::allocate_impl(ETensorDType dtype, std::string_view name, EAllocationType kind, const Container& shape) {
     try {
         Tensor allocated = allocate_tensor(dtype, kind, shape);
         m_Pointers.emplace_back(kind, allocated.Data, allocated.bytes());
-        record_stats(m_Stats->TensorStats, name, kind, allocated.bytes());
+        record_stats(m_Stats->TensorStats, std::string(name), kind, allocated.bytes());
         if (!m_Stats->Context.empty()){
             record_stats(m_Stats->ContextStats, m_Stats->Context, kind, allocated.bytes());
         }
         if(mCallback) {
-            mCallback(m_Stats->Context, name, kind, allocated.bytes());
+            mCallback(m_Stats->Context, name.data(), kind, allocated.bytes());
         }
         return allocated;
     } catch (const cuda_error& error) {
