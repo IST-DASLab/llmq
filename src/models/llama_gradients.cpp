@@ -7,6 +7,7 @@
 #include "kernels/kernels.h"
 #include "llama_model.h"
 #include "utilities/comm.h"
+#include "utilities/lazy_allocator.h"
 
 LLamaGradsManager::LLamaGradsManager(std::uint64_t seed, int step) : mRng(seed), mStepCounter(step) {
 
@@ -186,10 +187,16 @@ public:
     TensorShard& get_lmhead_shard(cudaStream_t stream) override;
     TensorShard& get_lnf_w_shard(cudaStream_t stream) override;
     sLLamaBlockWeights<TensorShard>& get_block_shard(int layer_idx, cudaStream_t stream) override;
+protected:
+    struct sGradShard {
+        sLLamaBlockWeights<TensorShard> Tensors;
+        Tensor Storage;
+    };
 private:
+
     virtual void sr_accumulate_layer(int layer_idx,
                                      sLLamaBlockWeights<Tensor>& dw,
-                                     sLLamaBlockWeights<TensorShard> sw,
+                                     sGradShard& sw,
                                      cudaStream_t stream,
                                      NCCLCommunicator& comm) = 0;
 
@@ -203,12 +210,13 @@ private:
         bool NeedsAccumulation = false;
     };
     std::array<sBlockState, 2> mGradStates;
-    std::vector<sLLamaBlockWeights<TensorShard>> mGradShards;
+    std::vector<sGradShard> mGradShards;
     cudaEvent_t mNonBlockEvent;
 
 protected:
     bool mOffloadGrads = false;
     sLLamaBlockWeights<TensorShard> mOffloadBuffer;
+    Tensor mOffloadStorage;
     cudaEvent_t mOffloadEvent = nullptr;
     cudaStream_t mOffloadStream = nullptr;
 };
@@ -223,17 +231,22 @@ LLamaGradientsBlockShardedBase::LLamaGradientsBlockShardedBase(std::uint64_t see
     mGradStates[0].Event = create_named_event("grad_event_0");
     mGradStates[1].Event = create_named_event("grad_event_1");
     mNonBlockEvent = create_named_event("grad_nonblock_event");
-    mGradShards.reserve(config.NumLayers);
+    mGradShards.resize(config.NumLayers);
+    LazyAllocator alloc_lazy;
     for(int i = 0; i < config.NumLayers; ++i) {
         EAllocationType kind = mOffloadGrads ? EAllocationType::PINNED : EAllocationType::ON_DEVICE;
-        mGradShards.push_back(allocate_block_shard(config, config.DType, config.DType, kind, rank, world, *alloc));
+        matrix_params_lazy(mGradShards[i].Tensors, config, config.DType, rank, world, alloc_lazy);
+        non_matrix_params_lazy(mGradShards[i].Tensors, config, config.DType, rank, world, alloc_lazy);
+        mGradShards[i].Storage = alloc_lazy.commit(*alloc, kind, "grad_shard");
     }
 
     mNonBlockShards = shard_non_block(mFullNonBlock, rank, world);
 
     // allocate auxiliary buffers to memcpy offloaded grads
     if (mOffloadGrads) {
-        mOffloadBuffer = allocate_block_shard(config, config.DType, config.DType, EAllocationType::ON_DEVICE, rank, world, *alloc);
+        matrix_params_lazy(mOffloadBuffer, config, config.DType, rank, world, alloc_lazy);
+        non_matrix_params_lazy(mOffloadBuffer, config, config.DType, rank, world, alloc_lazy);
+        mOffloadStorage = alloc_lazy.commit(*alloc, EAllocationType::ON_DEVICE, "grad_offload");
         mOffloadEvent = create_named_event("grad_offload_event");
         mOffloadStream = create_named_stream("grad_offload_stream");
     }
@@ -350,7 +363,7 @@ TensorShard& LLamaGradientsBlockShardedBase::get_lnf_w_shard(cudaStream_t stream
 }
 
 sLLamaBlockWeights<TensorShard>& LLamaGradientsBlockShardedBase::get_block_shard(int layer_idx, cudaStream_t stream) {
-    return mGradShards.at(layer_idx);
+    return mGradShards.at(layer_idx).Tensors;
 }
 
 // ---------------------------------------------------------------------------------------------------------------------
@@ -362,7 +375,7 @@ private:
     void sr_accumulate_tensor(TensorShard& dst, Tensor& src, cudaStream_t stream, unsigned seed);
     void sr_accumulate_layer(int layer_idx,
                              sLLamaBlockWeights<Tensor>& dw,
-                             sLLamaBlockWeights<TensorShard> sw,
+                             sGradShard& sw,
                              cudaStream_t stream,
                              NCCLCommunicator& comm) override;
     void sr_accumulate_on_device(int layer_idx, sLLamaBlockWeights<Tensor>& dw, sLLamaBlockWeights<TensorShard> sw, cudaStream_t stream);
@@ -379,7 +392,7 @@ void LLamaGradientsBlockSharded_ScatterReduce::sr_accumulate_tensor(TensorShard&
 
 void LLamaGradientsBlockSharded_ScatterReduce::sr_accumulate_layer(int layer_idx,
                                                                    sLLamaBlockWeights<Tensor>& dw,
-                                                                   sLLamaBlockWeights<TensorShard> sw,
+                                                                   sGradShard& sw,
                                                                    cudaStream_t stream,
                                                                    NCCLCommunicator& comm) {
     NvtxRange range("accumulate_layer", layer_idx);
@@ -387,18 +400,7 @@ void LLamaGradientsBlockSharded_ScatterReduce::sr_accumulate_layer(int layer_idx
         // fetch old gradient values; no old grads in the first step
         if (!mIsFirstMicroStep) {
             // fetch the old gradient from the host
-            auto fetch = [stream=mOffloadStream](TensorShard& dst, TensorShard& src) {
-                CUDA_CHECK(cudaMemcpyAsync(dst.Data, src.Data, dst.bytes(), cudaMemcpyHostToDevice, stream));
-            };
-            fetch(mOffloadBuffer.LN1_w, sw.LN1_w);
-            fetch(mOffloadBuffer.LN2_w, sw.LN2_w);
-            fetch(mOffloadBuffer.Attn_QKV_w, sw.Attn_QKV_w);
-            fetch(mOffloadBuffer.Attn_Out_w, sw.Attn_Out_w);
-            fetch(mOffloadBuffer.MLP_Up_w, sw.MLP_Up_w);
-            fetch(mOffloadBuffer.MLP_Down_w, sw.MLP_Down_w);
-            if (sw.Attn_QKV_b.has_value()) {
-                fetch(mOffloadBuffer.Attn_QKV_b.value(), sw.Attn_QKV_b.value());
-            }
+            CUDA_CHECK(cudaMemcpyAsync(mOffloadStorage.Data, sw.Storage.Data, mOffloadStorage.bytes(), cudaMemcpyHostToDevice, mOffloadStream));
             // and that old grads have been fetched
             CUDA_CHECK(cudaEventRecord(mOffloadEvent, mOffloadStream));
         }
@@ -412,23 +414,12 @@ void LLamaGradientsBlockSharded_ScatterReduce::sr_accumulate_layer(int layer_idx
         CUDA_CHECK(cudaStreamWaitEvent(mOffloadStream, mOffloadEvent));
 
         // then copy the new gradient back to host
-        auto cpy = [stream=mOffloadStream](TensorShard& dst, TensorShard& src) {
-            CUDA_CHECK(cudaMemcpyAsync(dst.Data, src.Data, dst.bytes(), cudaMemcpyDeviceToHost, stream));
-        };
-        cpy(sw.LN1_w, mOffloadBuffer.LN1_w);
-        cpy(sw.LN2_w, mOffloadBuffer.LN2_w);
-        cpy(sw.Attn_QKV_w, mOffloadBuffer.Attn_QKV_w);
-        cpy(sw.Attn_Out_w, mOffloadBuffer.Attn_Out_w);
-        cpy(sw.MLP_Up_w, mOffloadBuffer.MLP_Up_w);
-        cpy(sw.MLP_Down_w, mOffloadBuffer.MLP_Down_w);
-        if (sw.Attn_QKV_b.has_value()) {
-            cpy(sw.Attn_QKV_b.value(), mOffloadBuffer.Attn_QKV_b.value());
-        }
+        CUDA_CHECK(cudaMemcpyAsync(sw.Storage.Data, mOffloadStorage.Data, mOffloadStorage.bytes(), cudaMemcpyDeviceToHost, mOffloadStream));
 
         // and record that we're done
         CUDA_CHECK(cudaEventRecord(mOffloadEvent, mOffloadStream));
     } else {
-        sr_accumulate_on_device(layer_idx, dw, sw, stream);
+        sr_accumulate_on_device(layer_idx, dw, sw.Tensors, stream);
     }
 }
 
@@ -461,7 +452,7 @@ private:
     void sr_accumulate_tensor(TensorShard& dst, Tensor& src, cudaStream_t stream, bool first, float scale, int shard, unsigned seed);
     void sr_accumulate_layer(int layer_idx,
                              sLLamaBlockWeights<Tensor>& dw,
-                             sLLamaBlockWeights<TensorShard> sw,
+                             sGradShard& sw,
                              cudaStream_t stream,
                              NCCLCommunicator& comm) override;
 };
@@ -516,7 +507,7 @@ void LLamaGradientsBlockSharded_AllToAll::sr_accumulate_tensor(TensorShard& dst,
 
 void LLamaGradientsBlockSharded_AllToAll::sr_accumulate_layer(int layer_idx,
                                                  sLLamaBlockWeights<Tensor>& dw,
-                                                 sLLamaBlockWeights<TensorShard> sw,
+                                                 sGradShard& sw,
                                                  cudaStream_t stream,
                                                  NCCLCommunicator& comm) {
     NvtxRange range("accumulate_layer", layer_idx);
@@ -531,14 +522,15 @@ void LLamaGradientsBlockSharded_AllToAll::sr_accumulate_layer(int layer_idx,
     auto rng_1 = mRng.generate(2*mStepCounter + 0, layer_idx);
     auto rng_2 = mRng.generate(2*mStepCounter + 1, layer_idx + 12345);
 
-    vector_reduce_sr(sw.LN1_w, dw.LN1_w, scale, world, (rank + world - 1) % world, sw.LN1_w.nelem(), true, rng_1[0], stream);
-    vector_reduce_sr(sw.LN2_w, dw.LN2_w, scale, world, (rank + world - 1) % world, sw.LN2_w.nelem(), true, rng_1[1], stream);
-    vector_reduce_sr(sw.MLP_Up_w, dw.MLP_Up_w, scale, world, (rank + world - 1) % world, sw.MLP_Up_w.nelem(), true, rng_1[2], stream);
-    vector_reduce_sr(sw.MLP_Down_w, dw.MLP_Down_w, scale, world, (rank + world - 1) % world, sw.MLP_Down_w.nelem(), true, rng_1[3], stream);
-    vector_reduce_sr(sw.Attn_QKV_w, dw.Attn_QKV_w, scale, world, (rank + world - 1) % world, sw.Attn_QKV_w.nelem(), true, rng_2[0], stream);
-    vector_reduce_sr(sw.Attn_Out_w, dw.Attn_Out_w, scale, world, (rank + world - 1) % world, sw.Attn_Out_w.nelem(), true, rng_2[1], stream);
-    if(sw.Attn_QKV_b.has_value()) {
-        vector_reduce_sr(sw.Attn_QKV_b.value(), dw.Attn_QKV_b.value(), scale, world, (rank + world - 1) % world, sw.Attn_QKV_b->nelem(), true, rng_2[2], stream);
+    auto& swt = sw.Tensors;
+    vector_reduce_sr(swt.LN1_w, dw.LN1_w, scale, world, (rank + world - 1) % world, swt.LN1_w.nelem(), true, rng_1[0], stream);
+    vector_reduce_sr(swt.LN2_w, dw.LN2_w, scale, world, (rank + world - 1) % world, swt.LN2_w.nelem(), true, rng_1[1], stream);
+    vector_reduce_sr(swt.MLP_Up_w, dw.MLP_Up_w, scale, world, (rank + world - 1) % world, swt.MLP_Up_w.nelem(), true, rng_1[2], stream);
+    vector_reduce_sr(swt.MLP_Down_w, dw.MLP_Down_w, scale, world, (rank + world - 1) % world, swt.MLP_Down_w.nelem(), true, rng_1[3], stream);
+    vector_reduce_sr(swt.Attn_QKV_w, dw.Attn_QKV_w, scale, world, (rank + world - 1) % world, swt.Attn_QKV_w.nelem(), true, rng_2[0], stream);
+    vector_reduce_sr(swt.Attn_Out_w, dw.Attn_Out_w, scale, world, (rank + world - 1) % world, swt.Attn_Out_w.nelem(), true, rng_2[1], stream);
+    if(swt.Attn_QKV_b.has_value()) {
+        vector_reduce_sr(swt.Attn_QKV_b.value(), dw.Attn_QKV_b.value(), scale, world, (rank + world - 1) % world, swt.Attn_QKV_b->nelem(), true, rng_2[2], stream);
     }
 }
 
