@@ -318,81 +318,96 @@ TTB: Time to a billion tokens.
 Note that the numbers below are snapshots on a single machine. There can be significant variability
 depending on cooling, power supply, etc, especially in non-datacenter deployments.
 
+All numbers are generated with bf16 optimizer states `--model-dtype=bf16 --opt-m-dtype=bf16 --opt-v-dtype=bf16` and a total batch size of 524,288 tokens at sequence length 1024.
+
 ### RTX PRO 6000 (courtesy of [Datacrunch](https://datacrunch.io/))
-Using `--model-dtype=bf16 --opt-m-dtype=bf16 --opt-v-dtype=bf16 --use-cuda-graphs`, and a total batch size of 524288
-for <= 3B (single-GPU 7B uses half the total batch size).
+See the [benchmarks](benchmarks) directory for details of the [x1](benchmarks/Pro6000x1.md), [x4](benchmarks/Pro6000x4.md)
+and [x8](benchmarks/Pro6000x8.md) configurations.
 
-| Model        | nGPU | DType | Batch | TPS    | SOL | TTB   |
-|--------------|------|-------|-------|--------|-----|-------|
-| Qwen2.5-0.5B | 1    | fp8   | 32    | 90k    | 36% | 3:05h |
-| Qwen2.5-0.5B | 1    | bf16  | 32    | 85k    | 52% | 3:16h |
-| Qwen2.5-1.5B | 1    | fp8   | 32    | 36k    | 41% | 7:43h |
-| Qwen2.5-1.5B | 1    | bf16  | 32    | 32k    | 61% | 8:41h |
-| Qwen2.5-3B   | 1    | fp8   | 16    | 22k    | 46% | 13h   |
-| Qwen2.5-3B   | 1    | bf16  | 16    | 17k    | 63% | 16h   |
-| Qwen2.5-7B   | 1    | fp8   | 4     | 11k    | 53% | 25h   |
-| Qwen2.5-7B   | 1    | bf16  | 4     | 8k     | 67% | 35h   |
-| Qwen2.5-1.5B | 4    | fp8   | 32    | 145k   | 40% | 1:55h |
-| Qwen2.5-1.5B | 4    | bf16  | 32    | 129k   | 61% | 2:09h |
-| Qwen2.5-3B   | 4    | fp8   | 16    | 87k    | 46% | 3:11h |
-| Qwen2.5-3B   | 4    | bf16  | 16    | 68k    | 64% | 4:05h |
-| Qwen2.5-7B   | 4    | fp8   | 8     | 45k    | 53% | 6:10h |
-| Qwen2.5-7B   | 4    | bf16  | 4     | 23k    | 62% | 12h   |
-| Qwen2.5-14B  | 4    | fp8   | 4     | 23k    | 52% | 12h   |
-| Qwen2.5-7B*  | 4    | fp8   | 16    | 46k    | 54% | 6:02h |
+| Model        | nGPU | DType | Batch |  TPS | SOL |    TTB |
+|--------------|------|-------|------:|-----:|----:|-------:|
+| Qwen2.5-0.5B | 1    | fp8   |    32 |  96k | 38% |  2:53h |
+| Qwen2.5-0.5B | 1    | bf16  |    32 |  86k | 53% |  3:13h |
+| Qwen2.5-1.5B | 1    | fp8   |    32 |  40k | 45% |  6:53h |
+| Qwen2.5-1.5B | 1    | bf16  |    32 |  32k | 61% |  8:34h |
+| Qwen2.5-3B   | 1    | fp8   |    16 |  23k | 49% | 12:01h |
+| Qwen2.5-3B   | 1    | bf16  |    16 |  17k | 65% | 16:09h |
+| Qwen2.5-7B   | 1    | fp8   |     8 |  11k | 54% | 24:03h |
+| Qwen2.5-7B   | 1    | bf16  |     8 |   8k | 69% | 34:22h |
+| Qwen2.5-14B  | 1    | fp8   |     8 |   6k | 55% | 46:06h |
+| Qwen2.5-14B  | 1    | bf16  |     4 |   4k | 69% | 68:47h |
+| Qwen2.5-0.5B | 4    | fp8   |    32 | 380k | 38% |  0:43h |
+| Qwen2.5-0.5B | 4    | bf16  |    32 | 340k | 52% |  0:49h |
+| Qwen2.5-1.5B | 4    | fp8   |    32 | 159k | 44% |  1:44h |
+| Qwen2.5-1.5B | 4    | bf16  |    32 | 127k | 61% |  2:10h |
+| Qwen2.5-3B   | 4    | fp8   |    16 |  91k | 48% |  3:01h |
+| Qwen2.5-3B   | 4    | bf16  |    16 |  68k | 66% |  4:04h |
+| Qwen2.5-7B   | 4    | fp8   |    16 |  46k | 54% |  5:59h |
+| Qwen2.5-7B   | 4    | bf16  |     8 |  32k | 68% |  8:40h |
+| Qwen2.5-14B  | 4    | fp8   |     8 |  24k | 54% | 11:41h |
+| Qwen2.5-14B  | 4    | bf16  |     4 |  16k | 67% | 17:30h |
+| Qwen2.5-32B  | 4    | fp8   |    16 | 9.0k | 45% | 30:43h |
+| Qwen2.5-32B  | 4    | bf16  |    16 | 5.8k | 56% | 47:18h |
+| Qwen2.5-7B*  | 4    | fp8   |    16 |  46k | 54% |  6:02h |
+| Qwen2.5-0.5B | 8    | fp8   |    32 | 744k | 37% |  0:22h |
+| Qwen2.5-0.5B | 8    | bf16  |    32 | 673k | 52% |  0:24h |
+| Qwen2.5-1.5B | 8    | fp8   |    32 | 315k | 44% |  0:52h |
+| Qwen2.5-1.5B | 8    | bf16  |    32 | 255k | 60% |  1:05h |
+| Qwen2.5-3B   | 8    | fp8   |    16 | 181k | 48% |  1:32h |
+| Qwen2.5-3B   | 8    | bf16  |    16 | 135k | 64% |  2:03h |
+| Qwen2.5-7B   | 8    | fp8   |    16 |  91k | 53% |  3:02h |
+| Qwen2.5-7B   | 8    | bf16  |     8 |  62k | 67% |  4:26h |
+| Qwen2.5-14B  | 8    | fp8   |     8 |  47k | 53% |  5:55h |
+| Qwen2.5-14B  | 8    | bf16  |     4 |  30k | 64% |  9:08h |
+| Qwen2.5-32B  | 8    | fp8   |    16 |  19k | 46% | 14:51h |
+| Qwen2.5-32B  | 8    | bf16  |    16 |  12k | 59% | 22:41h |
 
-The run marked with * uses additional arguments `--shard-weights --memcpy-all-gather --persistent-quants --offload-quants` to offload quantized weights, which enables the increase in batch size.
 
 ### H100
-| Model        | nGPU | DType | Batch | TPS  | SOL | TTB   |
-|--------------|------|-------|-------|------|-----|-------|
-| Qwen2.5-0.5B | 1    | fp8   | 32    | 155k | 32% | 1:47h |
-| Qwen2.5-0.5B | 1    | bf16  | 32    | 144k | 45% | 1:55h |
-| Qwen2.5-1.5B | 1    | fp8   | 16    | 68k  | 39% | 4:05h |
-| Qwen2.5-1.5B | 1    | bf16  | 16    | 58k  | 55% | 4.47h |
-| Qwen2.5-3B   | 1    | fp8   | 16    | 39k  | 42% | 7:07h |
-| Qwen2.5-3B   | 1    | bf16  | 8     | 30k  | 57% | 9:15h |
-| Qwen2.5-7B¹  | 1    | fp8   | 4     | 18k  | 42% | 15h   |
-| Qwen2.5-7B   | 1    | bf16  | 4     | 14k  | 60% | 20h   |
+See the [benchmarks](benchmarks/H100x1.md) for details.
 
-^1: `--recompute-swiglu --recompute-norm` to fit batch size 4. Smaller batch sizes drastically reduce efficiency.
+| Model        | nGPU | DType | Batch |  TPS | SOL |    TTB |
+|--------------|------|-------|------:|-----:|----:|-------:|
+| Qwen2.5-0.5B | 1    | fp8   |    32 | 164k | 34% |  1:41h |
+| Qwen2.5-0.5B | 1    | bf16  |    32 | 149k | 47% |  1:51h |
+| Qwen2.5-1.5B | 1    | fp8   |    16 |  73k | 41% |  3:49h |
+| Qwen2.5-1.5B | 1    | bf16  |    16 |  59k | 57% |  4.42h |
+| Qwen2.5-3B   | 1    | fp8   |    16 |  40k | 43% |  6:51h |
+| Qwen2.5-3B   | 1    | bf16  |    16 |  31k | 59% |  8:58h |
+| Qwen2.5-7B   | 1    | fp8   |    16 |  19k | 45% | 14:28h |
+| Qwen2.5-7B   | 1    | bf16  |     4 |  14k | 60% | 20:02h |
+| Qwen2.5-14B  | 1    | fp8   |    16 | 9.3k | 43% | 29:39h |
+| Qwen2.5-14B  | 1    | bf16  |     8 | 6.3k | 55% | 43:56h |
+
 
 ### RTX 4090
+Detailed benchmarks, including the exact command lines used, can be found [here](benchmarks/4090x1.md) for
+a single 4090 and [here](benchmarks/4090x4.md) for a 4x4090 system.
 
-All settings use `--use-cuda-graphs --memcpy-all-gather --lmhead-chunks=${BATCH_SIZE}`
-
-| Model         | nGPU | DType | Batch | TPS  | SOL | TTB   |
-|---------------|------|-------|-------|------|-----|-------|
-| Qwen2.5-0.5B  | 1    | fp8   | 16    | 48k  | 59% | 5.47h |
-| Qwen2.5-0.5B  | 1    | bf16  | 16    | 41k  | 76% | 6:48h |
-| Qwen2.5-1.5B  | 1    | fp8   | 4     | 20k  | 70% | 14h   |
-| Qwen2.5-1.5B  | 1    | bf16  | 4     | 14k  | 83% | 19h   |
-| Qwen2.5-3B¹   | 1    | fp8   | 4     | 10k  | 66% | 28h   |
-| Qwen2.5-3B²   | 1    | bf16  | 4     | 7.0k | 80% | 40h   |
-| Qwen2.5-7B³   | 1    | fp8   | 4     | 3.9k | 56% | 71h   |
-| Qwen2.5-7B⁴   | 1    | bf16  | 4     | 2.4k | 64% | 116h  |
-| Qwen2.5-0.5B  | 4    | fp8   | 16    | 175k | 53% | 1:35h |
-| Qwen2.5-0.5B  | 4    | bf16  | 16    | 148k | 69% | 1:52h |
-| Qwen2.5-1.5B  | 4    | fp8   | 8     | 71k  | 60% | 3:55h |
-| Qwen2.5-1.5B⁵ | 4    | bf16  | 8     | 50k  | 73% | 5:30h |
-| Qwen2.5-3B¹⁰  | 4    | fp8   | 4     | 36k  | 58% | 7:40h |
-| Qwen2.5-3B¹⁰  | 4    | bf16  | 4     | 25k  | 71% | 11h   |
-| Qwen2.5-7B⁶   | 4    | fp8   | 16    | 16k  | 57% | 17h   |
-| Qwen2.5-7B⁷   | 4    | bf16  | 16    | 9.3k | 61% | 30h   |
-| Qwen2.5-14B⁸  | 4    | fp8   | 16    | 7.8k | 54% | 36h   |
-| Qwen2.5-14B⁹  | 4    | bf16  | 16    | 5.1k | 66% | 54h   |
-
-
-^1: `--offload-opt-m --offload-opt-v --recompute-swiglu --offload-master`
-^2: `--offload-opt-m --offload-opt-v --recompute-swiglu --recompute-norm`
-^3: `--offload-opt-m --offload-opt-v --recompute-ffn --recompute-norm --recompute-att --offload-master --shard-weights --persistent-quants --offload-quants`
-^4: `--offload-opt-m --offload-opt-v --recompute-ffn --recompute-norm --recompute-att --offload-master --shard-weights`
-^5: `--recompute-norm --recompute-swiglu`
-^6: `--offload-opt-m --offload-opt-v --recompute-ffn --recompute-norm --recompute-att --offload-master --shard-weights --shard-gradients --memcpy-send-recv --all-to-all-reduce --persistent-quants --offload-quants`
-^7: `--offload-opt-m --offload-opt-v --recompute-ffn --recompute-norm --recompute-att --offload-master --shard-weights --shard-gradients --memcpy-send-recv --all-to-all-reduce`
-^8: `--offload-opt-m --offload-opt-v --recompute-block --offload-master --offload-residual --shard-weights --memcpy-all-gather --shard-gradients --memcpy-send-recv --all-to-all-reduce --persistent-quants --offload-quants`
-^9: `--offload-opt-m --offload-opt-v --recompute-block --offload-master --offload-residual --shard-weights --memcpy-all-gather --shard-gradients --memcpy-send-recv --all-to-all-reduce`
-^10: `--offload-opt-m --recompute-swiglu --recompute-norm`
+| Model        | nGPU | DType | Batch |  TPS | SOL |    TTB |
+|--------------|------|-------|------:|-----:|----:|-------:|
+| Qwen2.5-0.5B | 1    | fp8   |    16 |  48k | 58% |  5.50h |
+| Qwen2.5-0.5B | 1    | bf16  |    16 |  40k | 75% |  6:58h |
+| Qwen2.5-1.5B | 1    | fp8   |     4 |  20k | 69% | 13:40h |
+| Qwen2.5-1.5B | 1    | bf16  |     4 |  14k | 81% | 19:45h |
+| Qwen2.5-3B   | 1    | fp8   |     4 |  10k | 69% | 26:04h |
+| Qwen2.5-3B   | 1    | bf16  |     4 | 7.0k | 80% | 39:40h |
+| Qwen2.5-7B   | 1    | fp8   |    16 | 4.3k | 61% | 64:10h |
+| Qwen2.5-7B   | 1    | bf16  |    16 | 2.8k | 72% |   100h |
+| Qwen2.5-14B  | 1    | fp8   |    32 | 2.0k | 56% |   139h |
+| Qwen2.5-14B  | 1    | bf16  |    32 | 1.3k | 70% |   206h |
+| Qwen2.5-0.5B | 4    | fp8   |    16 | 181k | 56% |  1:32h |
+| Qwen2.5-0.5B | 4    | bf16  |    16 | 154k | 73% |  1:48h |
+| Qwen2.5-1.5B | 4    | fp8   |     8 |  72k | 61% |  3:51h |
+| Qwen2.5-1.5B | 4    | bf16  |     8 |  52k | 76% |  5:17h |
+| Qwen2.5-3B   | 4    | fp8   |     4 |  38k | 62% |  7:15h |
+| Qwen2.5-3B   | 4    | bf16  |     4 |  26k | 75% | 10:40h |
+| Qwen2.5-7B   | 4    | fp8   |    16 |  16k | 58% | 16:50h |
+| Qwen2.5-7B   | 4    | bf16  |    16 |  11k | 71% | 25:30h |
+| Qwen2.5-14B  | 4    | fp8   |    16 | 7.8k | 54% | 35:24h |
+| Qwen2.5-14B  | 4    | bf16  |    16 | 5.2k | 68% | 52:43h |
+| Qwen2.5-32B  | 4    | fp8   |    32 | 3.4k | 52% | 81:49h |
+| Qwen2.5-32B  | 4    | bf16  |    32 | 2.2k | 65% |   126h |
 
 ### L40S
 On the L40S system, we found zero-copy access to offloaded optimizer states (`--use-zero-copy`) to be much more performant than cudaMemcpy-based double buffering.
