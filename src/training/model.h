@@ -10,9 +10,14 @@
 #include <string_view>
 #include <vector>
 
+#include "utilities/tensor.h"
+
 class ITensorContainer;
-class Tensor;
 class NCCLCommunicator;
+class TensorAllocator;
+
+typedef struct cudnnContext* cudnnHandle_t;
+typedef struct cublasLtContext* cublasLtHandle_t;
 
 //! \brief Abstract model base class.
 //! \details Provides access to the different underlying tensor containers.
@@ -90,6 +95,54 @@ public:
 
 protected:
     ~IModel() = default;
+};
+
+
+/*!
+ *  \brief Architecture-agnostic base class for model run states
+ *  \details Contains model run data that is independent of the actual
+ *  model architecture, e.g., cublas handles, generic cuda events etc.
+ */
+class RunState {
+public:
+    RunState() = default;
+    RunState(long batch_size, long seq_len, std::shared_ptr<TensorAllocator> alloc);
+    RunState(RunState&&) = default;
+    RunState&  operator=(RunState&&) = default;
+
+    long B;
+    long T;
+
+    std::shared_ptr<TensorAllocator> Allocator;
+
+    Tensor Inputs;          // (B, T) Int32
+    Tensor Targets;         // (B, T) Int32
+    Tensor Inputs_CPU;      // (B, T) Int32
+    Tensor Targets_CPU;     // (B, T) Int32
+    Tensor Losses;          // (B, T) FP32
+
+    cudaDeviceProp DeviceProp;
+
+    cudaStream_t MainStream = nullptr;
+
+    cudaEvent_t ForwardDone  = nullptr;        //!< recorded at the end of the forward pass
+    cudaEvent_t BackwardDone = nullptr;       //!< recorded at the end of the backward pass
+    cudaEvent_t TransferDone = nullptr;       //!< recorded once CPU-side buffers have been copied to GPU
+
+    cudnnHandle_t CudnnHandle = nullptr;
+    cublasLtHandle_t CublasLtHandle = nullptr;
+
+    // events for debugging timings
+    void setup_timing_events(int micro_steps);
+
+    cudaEvent_t TimingOptimizerStart = nullptr;
+    cudaEvent_t TimingOptimizerEnd   = nullptr;
+    std::vector<cudaEvent_t> TimingForwardStart;
+    std::vector<cudaEvent_t> TimingForwardEnd;
+    std::vector<cudaEvent_t> TimingHeadStart;
+    std::vector<cudaEvent_t> TimingHeadEnd;
+    std::vector<cudaEvent_t> TimingBackwardStart;
+    std::vector<cudaEvent_t> TimingBackwardEnd;
 };
 
 #endif //LLMQ_SRC_TRAINING_MODEL_H

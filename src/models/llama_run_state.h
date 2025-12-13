@@ -53,21 +53,12 @@ struct sLLamaLayerGradients {
     Tensor DLN1;                       // (B, T, C)
 };
 
-struct LLamaRunState {
+struct LLamaRunState : public RunState {
     using LayerActivations = ::sLLamaLayerActivations;
     using LayerGradients = ::sLLamaLayerGradients;
 
     LLamaConfig Config;
-    long B;
-    long T;
     LLamaOptions Options;
-    std::shared_ptr<TensorAllocator> Allocator;
-
-    Tensor Inputs;          // (B, T) Int32
-    Tensor Targets;         // (B, T) Int32
-    Tensor Inputs_CPU;      // (B, T) Int32
-    Tensor Targets_CPU;     // (B, T) Int32
-    Tensor Losses;          // (B, T) FP32
 
     // Activations
     Tensor Encoded;         // (B, T, C)
@@ -127,15 +118,8 @@ struct LLamaRunState {
 
     DeviceMemoryStack Stack;
 
-    // cached GPU info
-    cudaDeviceProp DeviceProp;
-
-    cudaStream_t MainStream;
     cudaStream_t SideStream;
     cudaEvent_t SideStreamEvent;
-    cudaEvent_t ForwardDone;        //!< recorded at the end of the forward pass
-    cudaEvent_t BackwardDone;       //!< recorded at the end of the backward pass
-    cudaEvent_t TransferDone;       //!< recorded once CPU-side buffers have been copied to GPU
     cudaEvent_t NormDone;           //!< recorded after norm calculation completes
     cudaEvent_t OptEmbeddingsDone;      //!< recorded after the optimizer has done an update to the LMHead
     std::vector<cudaEvent_t> LayerUpdateDone;   //!< Recorded after the optimizer has done an update to the specified layer.
@@ -145,22 +129,6 @@ struct LLamaRunState {
     cudaGraphExec_t GlobalNormGraph = nullptr;
     cudaGraphExec_t ForwardBlockGraph = nullptr;
     cudaGraphExec_t BackwardBlockGraph = nullptr;
-
-    // events for debugging timings
-    cudaEvent_t TimingOptimizerStart = nullptr;
-    cudaEvent_t TimingOptimizerEnd   = nullptr;
-
-    void setup_timing_events(int micro_steps);
-
-    std::vector<cudaEvent_t> TimingForwardStart;
-    std::vector<cudaEvent_t> TimingForwardEnd;
-    std::vector<cudaEvent_t> TimingHeadStart;
-    std::vector<cudaEvent_t> TimingHeadEnd;
-    std::vector<cudaEvent_t> TimingBackwardStart;
-    std::vector<cudaEvent_t> TimingBackwardEnd;
-
-    cudnnHandle_t CudnnHandle;
-    cublasLtHandle_t CublasLtHandle;
 
     void init(LLamaConfig config, long B, long T, DeviceMemoryStack& stack);
 

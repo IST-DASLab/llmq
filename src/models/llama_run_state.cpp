@@ -264,15 +264,6 @@ void LLamaRunState::init(LLamaConfig config, long B, long T, DeviceMemoryStack& 
 
     RunStateBuilder builder(config, Options, B, T, alloc);
 
-    int did;
-    CUDA_CHECK(cudaGetDevice(&did));
-    CUDA_CHECK(cudaGetDeviceProperties(&DeviceProp, did));
-
-    Inputs = alloc->allocate(ETensorDType::INT32, "inputs", {B, T});
-    Targets = alloc->allocate(ETensorDType::INT32, "targets", {B, T});
-    Inputs_CPU = alloc->allocate(ETensorDType::INT32, "inputs_cpu", EAllocationType::PINNED, {B, T});
-    Targets_CPU = alloc->allocate(ETensorDType::INT32, "targets_cpu", EAllocationType::PINNED, {B, T});
-    Losses = alloc->allocate(ETensorDType::FP32, "losses", {B, T});
     Encoded = alloc->allocate(config.DType, "encoded", {B, T, C});
     FreqCis = builder.generate_frequencies();
     // We're chunking the logit computation, so we can allocate a much smaller tensor.
@@ -283,8 +274,6 @@ void LLamaRunState::init(LLamaConfig config, long B, long T, DeviceMemoryStack& 
     DLNF = alloc->allocate(config.DType, "d_lnf", {B, T, C});
     long rms_scratch_size = get_rmsnorm_backward_scratch_size(C, DeviceProp);
     long bias_scratch_size = get_bias_backward_scratch_size(config.DType, config.qkv_channels(), DeviceProp);
-    CudnnHandle = create_cudnn_handle();
-    CublasLtHandle = create_cublaslt_handle();
     RMSNormScratch = alloc->allocate(ETensorDType::BYTE, "rms_scratch", {rms_scratch_size});
     MatmulBiasScratch = alloc->allocate(ETensorDType::FP32, "bias_scratch", {bias_scratch_size / (long)sizeof(float)});
     CuBlasWorkspace = alloc->allocate(ETensorDType::BYTE, "cublas_ws", {32*1024*1024});
@@ -327,17 +316,12 @@ void LLamaRunState::init(LLamaConfig config, long B, long T, DeviceMemoryStack& 
     NormHost = host_buffer.get<float>();
     LossHost = host_buffer.get<float>() + 1;
 
-    MainStream = create_named_stream("main stream");
     SideStream = create_named_stream("side stream");
-
     SideStreamEvent = create_named_event("side stream event");
 
-    ForwardDone = create_named_event("forward done");
-    BackwardDone = create_named_event("backward done");
     NormDone = create_named_event("norm done");
     OptEmbeddingsDone = create_named_event("optimizer lmhead done");
     OptimizerDone = create_named_event("optimizer done");
-    TransferDone = create_named_event("transfer done");
 
     for(int i = 0; i < config.NumLayers + 1; ++i) {
         LayerUpdateDone.push_back(create_named_event(("opt " + std::to_string(i) + " done").c_str()));
@@ -446,7 +430,8 @@ void LLamaRunState::debug_iterate_abs_maxes(const std::function<void(const std::
 
 
 LLamaRunState allocate_run_state(LLamaConfig config, LLamaOptions options, long B, long T, DeviceMemoryStack& stack, std::shared_ptr<TensorAllocator> alloc) {
-    LLamaRunState state{config, B, T, options, std::move(alloc)};
+    LLamaRunState state{{B, T, alloc}};
+    state.Options = options;
     state.init(config, B, T, stack);
     return state;
 }
@@ -465,17 +450,6 @@ void LLamaRunState::temp_acquire(Tensor& target) {
 
 void LLamaRunState::temp_free(Tensor& tensor) {
     Stack.free(tensor);
-}
-
-void LLamaRunState::setup_timing_events(int micro_steps) {
-    for(int i = TimingForwardStart.size(); i < micro_steps + 1; ++i) {
-        TimingForwardStart.push_back(create_named_event(("timing_fwd_" + std::to_string(i) + "_start").c_str(), true));
-        TimingForwardEnd.push_back(create_named_event(("timing_fwd_" + std::to_string(i) + "_end").c_str(), true));
-        TimingHeadStart.push_back(create_named_event(("timing_head_" + std::to_string(i) + "_start").c_str(), true));
-        TimingHeadEnd.push_back(create_named_event(("timing_head_" + std::to_string(i) + "_end").c_str(), true));
-        TimingBackwardStart.push_back(create_named_event(("timing_bwd_" + std::to_string(i) + "_start").c_str(), true));
-        TimingBackwardEnd.push_back(create_named_event(("timing_bwd_" + std::to_string(i) + "_end").c_str(), true));
-    }
 }
 
 Tensor LLamaRunState::acquire_mlp_up(int layer) {
