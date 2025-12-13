@@ -257,8 +257,15 @@ void TrainingRunner::launch_training(int argc, const char** argv) {
         run_training(argc, argv, *comm);
     } else {
         // Threads code path -- launch one thread per GPU
+        int gpus_available = 0;
+        CUDA_CHECK(cudaGetDeviceCount(&gpus_available));
         if (NGPUs == 0) {
-            CUDA_CHECK(cudaGetDeviceCount(&NGPUs));
+            NGPUs = gpus_available;
+        }
+
+        if (NGPUs > gpus_available) {
+            std::cerr << "Error: requested " << NGPUs << " GPUs, but only " << gpus_available << " found" << std::endl;
+            std::exit(1);
         }
         NCCLCommunicator::launch_threads_communicators(
             NGPUs, MemcpyAllGather, MemcpySendRecv,
