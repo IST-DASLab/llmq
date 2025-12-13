@@ -360,6 +360,15 @@ void TrainingRunLogger::set_callback(std::function<void(std::string_view)> cb) {
     mCallback = std::move(cb);
 }
 
+void TrainingRunLogger::log_message(int step, const std::string& msg) {
+    if(mRank != 0) return;
+    if(mVerbosity >= 0) {
+        fprintf(stdout, "%s\n", msg.c_str());
+    }
+    log_line(fmt::format(R"(  {{"log": "info", "time": "{}", "step": {}, "message": {}}})",
+                         std::chrono::system_clock::now(), step, msg ));
+}
+
 TrainingRunLogger::RAII_Section TrainingRunLogger::log_section_start(int step, const std::string& info) {
     if(mRank != 0) return RAII_Section{nullptr};
     mSectionInfo = info;

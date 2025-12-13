@@ -62,6 +62,8 @@ public:
 
         friend class TrainingRunLogger;
     };
+
+    void log_message(int step, const std::string& msg);
     RAII_Section log_section_start(int step, const std::string& info);
     void log_section_end();
 private:
