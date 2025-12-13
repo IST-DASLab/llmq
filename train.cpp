@@ -457,8 +457,10 @@ void TrainingRunner::run_training(int argc, const char** argv, NCCLCommunicator&
         throw std::invalid_argument("Unknown learning rate schedule: " + LrScheduleType);
     }
 
-    fprintf(stdout, "Starting training for %d steps (%f epochs in total)\n", MaxSteps, float(MaxSteps) / steps_per_epoch);
-    fprintf(stdout, "Setup took %ld seconds\n", std::chrono::duration_cast<std::chrono::seconds>(std::chrono::steady_clock::now() - BeginStartup).count());
+    logger.log_message(0, fmt::format("Starting training for {} steps ({:.2f} epochs in total)",
+        MaxSteps, float(MaxSteps) / steps_per_epoch));
+    logger.log_message(0, fmt::format("Setup took {} seconds",
+        std::chrono::duration_cast<std::chrono::seconds>(std::chrono::steady_clock::now() - BeginStartup).count()));
 
 
     for (int step = latest_step; step < MaxSteps; ++step) {
@@ -476,7 +478,7 @@ void TrainingRunner::run_training(int argc, const char** argv, NCCLCommunicator&
             std::string save_path = save_checkpoint(CkptDir, step, model, &train_loader, comm);
             if(CkptToKeep > 0) {
                 auto cleaned = clean_old_checkpoints(CkptDir, CkptToKeep, MajorCkptEvery);
-                printf("Cleaned %z checkpoints\n", cleaned.size());
+                logger.log_message(0, fmt::format("Cleaned {} checkpoints", cleaned.size()));
             }
         }
 
@@ -526,7 +528,7 @@ void TrainingRunner::run_training(int argc, const char** argv, NCCLCommunicator&
     }
 
     float loss = run_evaluation(test_loader, model, logger, train_loader.epoch() + 0.01f*train_loader.progress(), MaxSteps, comm, test_loader.num_chunks(), inputs, targets);
-    printf("done. validation loss %10f\n", loss);
+    logger.log_message(0, fmt::format("Done. validation loss {:10f}", loss));
 
     auto log = logger.log_section_start(MaxSteps, fmt::format("Saving model to `{}`", OutDir.c_str()));
     std::filesystem::path p(OutDir);
