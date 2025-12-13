@@ -149,6 +149,7 @@ add_library(llmq-common SHARED
         src/training/dataloader.cpp
         src/training/logging.cpp
         src/training/checkpoint.cpp
+        src/training/model.cpp
 
         src/models/llama_run_state.cpp
         src/models/llama_model.cpp
