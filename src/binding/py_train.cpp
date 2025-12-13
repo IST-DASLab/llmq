@@ -19,6 +19,15 @@
 MultiGPUPyTrainer::MultiGPUPyTrainer(int ngpus, LLamaConfig config, LLamaOptions options, int batch_size, int seq_len, int grad_accum, bool memcpy_all_gather, bool memcpy_send_recv) :
     mConfig(config), mOptions(options), B(batch_size), T(seq_len), mGradAccumulation(grad_accum)
 {
+    int gpus_available = 0;
+    CUDA_CHECK(cudaGetDeviceCount(&gpus_available));
+    if (ngpus == 0) {
+        ngpus = gpus_available;
+    }
+
+    if (ngpus > gpus_available) {
+        throw std::runtime_error(fmt::format("Requested {} GPUs, only {} available", ngpus, gpus_available));
+    }
     mContexts.resize(ngpus);
     mThreads = NCCLCommunicator::launch_threads_communicators(
        ngpus, memcpy_all_gather, memcpy_send_recv,
