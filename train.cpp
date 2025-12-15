@@ -526,6 +526,21 @@ void TrainingRunner::run_training(int argc, const char** argv, NCCLCommunicator&
     std::filesystem::create_directories(p);
     save_llama_config(config, (p / "config.json").c_str());
     model.export_weights((p / "model.safetensors").c_str(), comm);
+
+    // copy config files from source model, if we have them and they don't exist already
+    if (std::filesystem::exists(ModelRootPath)) {
+        auto maybe_copy = [root=std::filesystem::path(ModelRootPath),dest=std::filesystem::path(p)](const char* file_name){
+            if (std::filesystem::exists(root / file_name) && !std::filesystem::exists(dest / file_name)) {
+                std::filesystem::copy_file(root / file_name, dest / file_name);
+            }
+        };
+
+        maybe_copy("tokenizer_config.json");
+        maybe_copy("generation_config.json");
+        maybe_copy("merges.txt");
+        maybe_copy("vocab.json");
+        maybe_copy("tokenizer.json");
+    }
 }
 
 float run_evaluation(DataLoader& test_loader, LLamaModel& model, TrainingRunLogger& logger, float epoch, int step,
