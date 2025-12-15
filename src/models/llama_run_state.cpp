@@ -276,7 +276,6 @@ void LLamaRunState::init(LLamaConfig config, long B, long T, DeviceMemoryStack& 
     long bias_scratch_size = get_bias_backward_scratch_size(config.DType, config.qkv_channels(), DeviceProp);
     RMSNormScratch = alloc->allocate(ETensorDType::BYTE, "rms_scratch", {rms_scratch_size});
     MatmulBiasScratch = alloc->allocate(ETensorDType::FP32, "bias_scratch", {bias_scratch_size / (long)sizeof(float)});
-    CuBlasWorkspace = alloc->allocate(ETensorDType::BYTE, "cublas_ws", {32*1024*1024});
     // batch size for chunked attention backward
     long chunk_batch_size = div_exact(B, (long)Options.AttBwdChunks);
     long cudnn_ws_size = cudnn_get_workspace_size(chunk_batch_size, T, config.NumQueryHeads, config.NumKeyValHeads, config.head_size(), CudnnHandle);
@@ -312,16 +311,11 @@ void LLamaRunState::init(LLamaConfig config, long B, long T, DeviceMemoryStack& 
     EncoderBwdInfo = alloc->allocate(ETensorDType::INT32, "env_bw_info", EAllocationType::PINNED, {B, T, 4 * num_c_groups});
 
     NormBuffer = alloc->allocate(ETensorDType::FP32, "norm_buffer", {get_max_num_block_sums(DeviceProp)});;
-    Tensor host_buffer = alloc->allocate(ETensorDType::FP32, "host_buffer", EAllocationType::PINNED, {2});
-    NormHost = host_buffer.get<float>();
-    LossHost = host_buffer.get<float>() + 1;
 
     SideStream = create_named_stream("side stream");
     SideStreamEvent = create_named_event("side stream event");
 
-    NormDone = create_named_event("norm done");
     OptEmbeddingsDone = create_named_event("optimizer lmhead done");
-    OptimizerDone = create_named_event("optimizer done");
 
     for(int i = 0; i < config.NumLayers + 1; ++i) {
         LayerUpdateDone.push_back(create_named_event(("opt " + std::to_string(i) + " done").c_str()));
@@ -390,14 +384,6 @@ void LLamaRunState::init(LLamaConfig config, long B, long T, DeviceMemoryStack& 
     }
     stack.free(mlp_up);
     stack.free(stack.allocate(Output.bytes(), "output"));  // lm-head
-
-    MatmulScales = alloc->allocate(ETensorDType::FP32, "mm_scales", {2});
-
-    // debug timings
-    if(Options.TriggerTimingEvents) {
-        TimingOptimizerStart = create_named_event("timing_opt_start", true);
-        TimingOptimizerEnd = create_named_event("timing_opt_done", true);
-    }
 }
 
 void LLamaRunState::debug_iterate_abs_maxes(const std::function<void(const std::string&, float)>& callback) {
@@ -436,22 +422,6 @@ LLamaRunState allocate_run_state(LLamaConfig config, LLamaOptions options, long 
     return state;
 }
 
-Tensor LLamaRunState::temp_alloc(ETensorDType dtype, const std::vector<long>& shape) {
-    return  Stack.allocate(dtype, shape);
-}
-
-void LLamaRunState::temp_acquire(Tensor& target) {
-    if(target.Device != Stack.device_id()) {
-        throw std::logic_error("device mismatch");
-    }
-
-    target.Data = Stack.allocate(target.bytes());
-}
-
-void LLamaRunState::temp_free(Tensor& tensor) {
-    Stack.free(tensor);
-}
-
 Tensor LLamaRunState::acquire_mlp_up(int layer) {
     if(Options.RecomputeFFN) {
         return Stack.allocate(Options.ModelType.value(), {B, T, 2 * Config.IntermediateSize});
@@ -464,22 +434,4 @@ void LLamaRunState::release_mlp_up(Tensor& mlp_up) {
     if(Options.RecomputeFFN) {
         Stack.free(mlp_up);
     }
-}
-
-float get_loss(LLamaRunState& acts) {
-    CUDA_CHECK(cudaEventSynchronize(acts.BackwardDone));
-    return acts.LossHost[0];
-}
-
-float get_norm(LLamaRunState& acts) {
-    CUDA_CHECK(cudaEventSynchronize(acts.NormDone));
-    return acts.NormHost[0];
-}
-
-Tensor& get_input_buffer(LLamaRunState& acts) {
-    return acts.Inputs_CPU;
-}
-
-Tensor& get_target_buffer(LLamaRunState& acts) {
-    return acts.Targets_CPU;
 }

@@ -10,6 +10,7 @@
 #include <string_view>
 #include <vector>
 
+#include "utilities/stack.h"
 #include "utilities/tensor.h"
 
 class ITensorContainer;
@@ -18,6 +19,8 @@ class TensorAllocator;
 
 typedef struct cudnnContext* cudnnHandle_t;
 typedef struct cublasLtContext* cublasLtHandle_t;
+
+class IRunState;
 
 //! \brief Abstract model base class.
 //! \details Provides access to the different underlying tensor containers.
@@ -47,16 +50,16 @@ public:
     virtual void update(NCCLCommunicator& comm, float learning_rate, float beta_1, float beta_2, int t, float epsilon, float weight_decay, float grad_clip) = 0;
 
     //! Gets the loss of the preceding validate or backward call (forward does _not_ calculate the loss)
-    virtual float get_loss() const = 0;
+    virtual float get_loss() const;
 
     //! Gets the gradient norm of the preceding update call.
-    virtual float get_norm() const = 0;
+    virtual float get_norm() const;
 
     //! Gets the tensor into which model inputs are to be placed.
-    virtual Tensor& get_input_buffer() = 0;
+    virtual Tensor& get_input_buffer();
 
     //! Gets the tensor into which model targets are to be placed.
-    virtual Tensor& get_target_buffer() = 0;
+    virtual Tensor& get_target_buffer();
 
     //! Model (master) weights. Sharded.
     virtual ITensorContainer& weights() = 0;
@@ -93,6 +96,9 @@ public:
     //! Get the model type identifier
     virtual std::string_view model_type() const = 0;
 
+    //! Get a const reference to the model's RunState.
+    virtual IRunState& get_run_state() const = 0;
+
 protected:
     ~IModel() = default;
 };
@@ -101,36 +107,58 @@ protected:
 /*!
  *  \brief Architecture-agnostic base class for model run states
  *  \details Contains model run data that is independent of the actual
- *  model architecture, e.g., cublas handles, generic cuda events etc.
+ *  model architecture, e.g., cublas handles, generic cuda events, etc.
  */
-class RunState {
+class IRunState {
+    friend class IModel;
 public:
-    RunState() = default;
-    RunState(long batch_size, long seq_len, std::shared_ptr<TensorAllocator> alloc);
-    RunState(RunState&&) = default;
-    RunState&  operator=(RunState&&) = default;
+    IRunState() = default;
+    IRunState(long batch_size, long seq_len, std::shared_ptr<TensorAllocator> alloc);
+    IRunState(IRunState&&) = default;
+    IRunState& operator=(IRunState&&) = default;
 
-    long B;
-    long T;
+    //! gets the accumulated loss after the last backward operation.
+    //! only should be called after the last backward step (i.e., where `micro_step==grad_accum_steps`)
+    //! will block the caller until `backward` is done, i.e., the function is safe to call without
+    //! additional synchronization.
+    float get_loss() const;
+
+    //! gets the global gradient norm.
+    //! will block the caller until `update` has finished the norm calculation,
+    //! i.e., the function is safe to call without additional synchronization.
+    float get_norm() const;
+
+    // temporary buffers
+    Tensor temp_alloc(ETensorDType dtype, const std::vector<long>& shape);
+    void temp_acquire(Tensor& target);
+    void temp_free(Tensor& tensor);
+
+    long B;     //!< Batch size
+    long T;     //!< Sequence length
 
     std::shared_ptr<TensorAllocator> Allocator;
+    DeviceMemoryStack Stack;
 
     Tensor Inputs;          // (B, T) Int32
     Tensor Targets;         // (B, T) Int32
-    Tensor Inputs_CPU;      // (B, T) Int32
-    Tensor Targets_CPU;     // (B, T) Int32
     Tensor Losses;          // (B, T) FP32
+
+    float* NormHost = nullptr;        // single value
+    float* LossHost = nullptr;        // single value
 
     cudaDeviceProp DeviceProp;
 
     cudaStream_t MainStream = nullptr;
 
-    cudaEvent_t ForwardDone  = nullptr;        //!< recorded at the end of the forward pass
-    cudaEvent_t BackwardDone = nullptr;       //!< recorded at the end of the backward pass
-    cudaEvent_t TransferDone = nullptr;       //!< recorded once CPU-side buffers have been copied to GPU
+    cudaEvent_t ForwardDone   = nullptr;       //!< recorded at the end of the forward pass
+    cudaEvent_t BackwardDone  = nullptr;       //!< recorded at the end of the backward pass
+    cudaEvent_t TransferDone  = nullptr;       //!< recorded once CPU-side buffers have been copied to GPU
+    cudaEvent_t NormDone      = nullptr;       //!< recorded after norm calculation completes
+    cudaEvent_t OptimizerDone = nullptr;       //!< recorded after the optimizer completes
 
     cudnnHandle_t CudnnHandle = nullptr;
     cublasLtHandle_t CublasLtHandle = nullptr;
+    Tensor CuBlasWorkspace;
 
     // events for debugging timings
     void setup_timing_events(int micro_steps);
@@ -143,6 +171,10 @@ public:
     std::vector<cudaEvent_t> TimingHeadEnd;
     std::vector<cudaEvent_t> TimingBackwardStart;
     std::vector<cudaEvent_t> TimingBackwardEnd;
+
+private:
+    Tensor Inputs_CPU;      // (B, T) Int32
+    Tensor Targets_CPU;     // (B, T) Int32
 };
 
 #endif //LLMQ_SRC_TRAINING_MODEL_H

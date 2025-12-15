@@ -53,7 +53,7 @@ struct sLLamaLayerGradients {
     Tensor DLN1;                       // (B, T, C)
 };
 
-struct LLamaRunState : public RunState {
+struct LLamaRunState : public IRunState {
     using LayerActivations = ::sLLamaLayerActivations;
     using LayerGradients = ::sLLamaLayerGradients;
 
@@ -94,36 +94,23 @@ struct LLamaRunState : public RunState {
     // scratch buffers
     Tensor RMSNormScratch;      // (#Blocks*C+128)
     Tensor MatmulBiasScratch;   // TODO
-    Tensor CuBlasWorkspace;
     Tensor CuDNNWorkspace;
     Tensor EncoderBwdScratch;   // (B, T, 5 * C / (x128::size * 32))
     Tensor EncoderBwdIndices;   // (B, T, 1 * C / (x128::size * 32)) [on CPU!]
     Tensor EncoderBwdInfo;      // (B, T, 4 * C / (x128::size * 32)) [on CPU!]
 
     std::optional<Tensor> AbsMaxes; // (L, ...)
-    Tensor MatmulScales;        // 2 floats
 
     // Optimizer scratch
     Tensor NormBuffer;
-    float* NormHost;
-    float* LossHost;
-
-    // temporary buffers
-    Tensor temp_alloc(ETensorDType dtype, const std::vector<long>& shape);
-    void temp_acquire(Tensor& target);
-    void temp_free(Tensor& tensor);
 
     Tensor acquire_mlp_up(int layer);
     void release_mlp_up(Tensor& mlp_up);
 
-    DeviceMemoryStack Stack;
-
     cudaStream_t SideStream;
     cudaEvent_t SideStreamEvent;
-    cudaEvent_t NormDone;           //!< recorded after norm calculation completes
     cudaEvent_t OptEmbeddingsDone;      //!< recorded after the optimizer has done an update to the LMHead
     std::vector<cudaEvent_t> LayerUpdateDone;   //!< Recorded after the optimizer has done an update to the specified layer.
-    cudaEvent_t OptimizerDone;      //!< recorded after the optimizer completes
     cudaEvent_t ResidualsAreReady;  //!< recorded after the residuals have been calculated in forward, indicating that they may be offloaded
 
     cudaGraphExec_t GlobalNormGraph = nullptr;
@@ -137,8 +124,6 @@ struct LLamaRunState : public RunState {
 
 LLamaRunState allocate_run_state(LLamaConfig config, LLamaOptions options, long B, long T, DeviceMemoryStack& stack, std::shared_ptr<TensorAllocator> alloc);
 
-float get_loss(LLamaRunState& acts);
-float get_norm(LLamaRunState& acts);
 Tensor& get_input_buffer(LLamaRunState& acts);
 Tensor& get_target_buffer(LLamaRunState& acts);
 
