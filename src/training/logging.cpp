@@ -365,7 +365,7 @@ void TrainingRunLogger::log_message(int step, const std::string& msg) {
     if(mVerbosity >= 0) {
         fprintf(stdout, "%s\n", msg.c_str());
     }
-    log_line(fmt::format(R"(  {{"log": "info", "time": "{}", "step": {}, "message": {}}})",
+    log_line(fmt::format(R"(  {{"log": "info", "time": "{}", "step": {}, "message": "{}"}})",
                          std::chrono::system_clock::now(), step, msg ));
 }
 
@@ -384,7 +384,7 @@ void TrainingRunLogger::log_section_end() {
     auto duration = std::chrono::steady_clock::now() - mSectionStart;
     long milliseconds = std::chrono::duration_cast<std::chrono::milliseconds>(duration).count();
     if(mRank != 0) return;
-    log_line(fmt::format(R"(  {{"log": "info", "time": "{}", "step": {}, "message": {}, "duration_ms": {}}})",
+    log_line(fmt::format(R"(  {{"log": "info", "time": "{}", "step": {}, "message": "{}", "duration_ms": {}}})",
                          std::chrono::system_clock::now(), mSectionStep, mSectionInfo, milliseconds ));
 
     if(mVerbosity >= 0) {
