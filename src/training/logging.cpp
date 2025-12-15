@@ -17,7 +17,8 @@
 #include "utilities/allocator.h"
 #include "utilities/stack.h"
 #include "utilities/sol.h"
-#include <iostream>
+
+#include "model.h"
 
 TrainingRunLogger::TrainingRunLogger(const std::string& file_name, int rank, EVerbosity verbosity) :
     mFileName(std::move(file_name)), mRank(rank), mVerbosity(verbosity)
@@ -331,7 +332,7 @@ void TrainingRunLogger::log_allocator(
     for (auto& [name, amount]: stats) {
         if (!first) stat_str += ", ";
         first = false;
-        stat_str += fmt::format("{{\"name\": \"{}\", \"device\": {}, \"managed\": {}, \"pinned\": {}, \"pageable\": {}}}",
+        stat_str += fmt::format(R"({{"name": "{}", "device": {}, "managed": {}, "pinned": {}, "pageable": {}}})",
                                 name, amount.OnDevice, amount.Managed, amount.PinnedHost, amount.PageableHost);
     }
     stat_str += "]";
@@ -354,6 +355,37 @@ void TrainingRunLogger::log_allocator(
         }
         printf("\n");
     }
+}
+
+void TrainingRunLogger::log_time_breakdown(int step, int gpu_id, const IRunState& state) {
+    if(mRank != 0) return;
+    // timing breakdown
+    std::string breakdown_msg = "[";
+    if(mVerbosity >= 0) {
+        printf("%s", "\nTiming breakdown:\n");
+    }
+    for(int i = 0; i < state.TimingForwardStart.size(); ++i) {
+        float fwd, bwd, head;
+        CUDA_CHECK(cudaEventSynchronize(state.TimingBackwardEnd.at(i)));
+        CUDA_CHECK(cudaEventElapsedTime(&fwd, state.TimingForwardStart.at(i), state.TimingForwardEnd.at(i)));
+        CUDA_CHECK(cudaEventElapsedTime(&head, state.TimingHeadStart.at(i), state.TimingHeadEnd.at(i)));
+        CUDA_CHECK(cudaEventElapsedTime(&bwd, state.TimingBackwardStart.at(i), state.TimingBackwardEnd.at(i)));
+        // not: head events are nested in bwd, so need to subtract times
+        if(mVerbosity >= 0) {
+            printf("  fwd %7.2fms, head %7.2fms, bwd %7.2fms\n", fwd, head, bwd - head);
+        }
+        breakdown_msg += fmt::format(R"({{"step": {}, "fwd": {}, "head": {}, "bwd": {}}}, )", i, fwd, head, bwd);
+    }
+    float opt;
+    CUDA_CHECK(cudaEventSynchronize(state.TimingOptimizerEnd));
+    CUDA_CHECK(cudaEventElapsedTime(&opt, state.TimingOptimizerStart, state.TimingOptimizerEnd));
+    if(mVerbosity >= 0) {
+        printf("  opt %7.2fms\n", opt);
+        printf("%s", "\n");
+    }
+    breakdown_msg += fmt::format(R"({{"opt": {}}}])", opt);
+    log_line(fmt::format(R"(  {{"log": "info", "time": "{}", "step": {}, "gpu": {}, "type": "time-breakdown", "breakdown": {}}})",
+        std::chrono::system_clock::now(), step, gpu_id, breakdown_msg));
 }
 
 void TrainingRunLogger::log_abs_maxes(int step, const std::vector<std::pair<std::string, float>>& abs_maxes) {
@@ -392,7 +424,7 @@ void TrainingRunLogger::log_message(int step, const std::string& msg) {
     if(mVerbosity >= 0) {
         fprintf(stdout, "%s\n", msg.c_str());
     }
-    log_line(fmt::format(R"(  {{"log": "info", "time": "{}", "step": {}, "message": "{}"}})",
+    log_line(fmt::format(R"(  {{"log": "info", "time": "{}", "step": {}, "type": "message", "message": "{}"}})",
                          std::chrono::system_clock::now(), step, msg ));
 }
 
@@ -411,7 +443,7 @@ void TrainingRunLogger::log_section_end() {
     auto duration = std::chrono::steady_clock::now() - mSectionStart;
     long milliseconds = std::chrono::duration_cast<std::chrono::milliseconds>(duration).count();
     if(mRank != 0) return;
-    log_line(fmt::format(R"(  {{"log": "info", "time": "{}", "step": {}, "message": "{}", "duration_ms": {}}})",
+    log_line(fmt::format(R"(  {{"log": "info", "time": "{}", "step": {}, "type": "message", "message": "{}", "duration_ms": {}}})",
                          std::chrono::system_clock::now(), mSectionStep, mSectionInfo, milliseconds ));
 
     if(mVerbosity >= 0) {

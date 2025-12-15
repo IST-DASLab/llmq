@@ -545,21 +545,7 @@ void TrainingRunner::run_training(int argc, const char** argv, NCCLCommunicator&
         }
 
         if(Options.TriggerTimingEvents) {
-            // timing breakdown
-            printf("%s", "\nTiming breakdown:\n");
-            auto& rs = model.run_state();
-            for(int i = 0; i < GradAccSteps; ++i) {
-                float fwd, bwd, head;
-                CUDA_CHECK(cudaEventElapsedTime(&fwd, rs.TimingForwardStart[i], rs.TimingForwardEnd[i]));
-                CUDA_CHECK(cudaEventElapsedTime(&head, rs.TimingHeadStart[i], rs.TimingHeadEnd[i]));
-                CUDA_CHECK(cudaEventElapsedTime(&bwd, rs.TimingBackwardStart[i], rs.TimingBackwardEnd[i]));
-                // not: head events are nested in bwd, so need to subtract times
-                printf("  fwd %7.2fms, head %7.2fms, bwd %7.2fms\n", fwd, head, bwd - head);
-            }
-            float opt;
-            CUDA_CHECK(cudaEventElapsedTime(&opt, rs.TimingOptimizerStart, rs.TimingOptimizerEnd));
-            printf("  opt %7.2fms\n", opt);
-            printf("%s", "\n");
+            logger.log_time_breakdown(step, 0, model.get_run_state());
         }
     }
 

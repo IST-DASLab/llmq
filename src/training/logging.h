@@ -17,6 +17,7 @@ struct GPUUtilInfo;
 struct sSegmentMemory;
 class NCCLCommunicator;
 class DataLoader;
+class IRunState;
 enum class ETensorDType : int;
 
 class TrainingRunLogger
@@ -46,6 +47,7 @@ public:
         const std::vector<std::pair<std::string, sSegmentMemory>>& stats,
         const std::vector<std::pair<std::string, long>>& stack_info
         );
+    void log_time_breakdown(int step, int gpu_id, const IRunState& state);
 
     void log_abs_maxes(int step, const std::vector<std::pair<std::string, float>>& abs_maxes);
 
@@ -58,7 +60,7 @@ public:
                 mLogger->log_section_end();
         };
     private:
-        RAII_Section(TrainingRunLogger* l) : mLogger(l) {}
+        explicit RAII_Section(TrainingRunLogger* l) : mLogger(l) {}
         RAII_Section(RAII_Section&&) = default;
         TrainingRunLogger* mLogger;
 
