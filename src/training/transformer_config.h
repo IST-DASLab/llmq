@@ -12,13 +12,13 @@
 // Struct that contains the basic configuration for the model.
 // This includes both architecture and run configurations
 struct TransformerConfig {
-    enum LLamaBasedModels {
+    enum EArchitecture {
         LLAMA,
         QWEN2,
     } Architecture;
     int BosTokenId;
     int EosTokenId;
-    int PadTokenId;
+    int PadTokenId = -100;
 
     int HiddenSize;
     int IntermediateSize;
@@ -40,8 +40,8 @@ struct TransformerConfig {
     [[nodiscard]] std::string_view model_name() const;
 };
 
-TransformerConfig load_llama_config(const char* file_name, ETensorDType dtype);
-void save_llama_config(const TransformerConfig& config, const char* file_name);
+TransformerConfig load_transformer_config(const char* file_name, ETensorDType dtype);
+void save_transformer_config(const TransformerConfig& config, const char* file_name);
 TransformerConfig create_config_from_name(std::string_view name, ETensorDType dtype);
 
 #endif //LLMQ_SRC_MODELS_LLAMA_CONFIG_H

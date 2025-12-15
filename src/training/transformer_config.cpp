@@ -10,7 +10,7 @@
 #include <nlohmann/json.hpp>
 #include <fmt/core.h>
 
-TransformerConfig load_llama_config(const char* file_name, ETensorDType dtype) {
+TransformerConfig load_transformer_config(const char* file_name, ETensorDType dtype) {
     std::ifstream file(file_name);
     if(!file.is_open()) {
         throw std::runtime_error(fmt::format("could not open config file {}", file_name));
@@ -22,7 +22,7 @@ TransformerConfig load_llama_config(const char* file_name, ETensorDType dtype) {
     if(archs.size() != 1) {
         throw std::runtime_error("got multiple values for architecture");
     }
-    TransformerConfig::LLamaBasedModels arch_id;
+    TransformerConfig::EArchitecture arch_id;
     if(archs.front() == "LlamaForCausalLM") {
         arch_id = TransformerConfig::LLAMA;
     } else if(archs.front() == "Qwen2ForCausalLM") {
@@ -36,6 +36,9 @@ TransformerConfig load_llama_config(const char* file_name, ETensorDType dtype) {
 
     result.BosTokenId = config_json["bos_token_id"].get<int>();
     result.EosTokenId = config_json["eos_token_id"].get<int>();
+    if (config_json.contains("pad_token_id")) {
+        result.PadTokenId = config_json["pad_token_id"].get<int>();
+    }
 
     result.HiddenSize = config_json["hidden_size"].get<int>();
     result.IntermediateSize = config_json["intermediate_size"].get<int>();
@@ -68,7 +71,7 @@ TransformerConfig load_llama_config(const char* file_name, ETensorDType dtype) {
     }
 }
 
-void save_llama_config(const TransformerConfig& config, const char* file_name) {
+void save_transformer_config(const TransformerConfig& config, const char* file_name) {
     std::ofstream file(file_name);
     if(!file.is_open()) {
         throw std::runtime_error(fmt::format("could not open file for writing {}", file_name));

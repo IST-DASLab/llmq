@@ -134,7 +134,7 @@ def main():
         if config.continue_from_checkpoint:
             latest_step = pyllmq.find_latest_checkpoint(ckpt_dir)
             if latest_step >= 0:
-                trainer = pyllmq.LLMQTrainer(ngpu=config.gpus, config=pyllmq.LLamaConfig.from_pretrained(config.model, config.model_dtype),
+                trainer = pyllmq.LLMQTrainer(ngpu=config.gpus, config=pyllmq.Config.from_pretrained(config.model, config.model_dtype),
                                              options=options, batch_size=config.batch_size, seq_len=config.seq_len, grad_accum=config.grad_accumulation,
                                              memcpy_all_gather=config.memcpy_all_gather, memcpy_send_recv=config.memcpy_send_recv)
                 print(f"Loading checkpoint from step {latest_step}...")
@@ -144,7 +144,7 @@ def main():
                 exit(1)
         elif config.from_scratch:
             print(f"Creating {config.model} from scratch...")
-            trainer = pyllmq.LLMQTrainer(ngpu=config.gpus, config=pyllmq.LLamaConfig.from_name(config.model, config.model_dtype),
+            trainer = pyllmq.LLMQTrainer(ngpu=config.gpus, config=pyllmq.Config.from_name(config.model, config.model_dtype),
                                          options=options, batch_size=config.batch_size, seq_len=config.seq_len, grad_accum=config.grad_accumulation,
                                          memcpy_all_gather=config.memcpy_all_gather, memcpy_send_recv=config.memcpy_send_recv)
             trainer.init_weights()
