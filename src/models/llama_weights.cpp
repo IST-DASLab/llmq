@@ -13,7 +13,7 @@
 #include "utilities/safetensors.h"
 
 template<class T>
-void allocate_non_matrix_params(sLLamaBlockWeights<T>& target, const LLamaConfig& config, ETensorDType dtype, EAllocationType kind, int shard_idx, int num_shards, TensorAllocator& alloc) {
+void allocate_non_matrix_params(sLLamaBlockWeights<T>& target, const TransformerConfig& config, ETensorDType dtype, EAllocationType kind, int shard_idx, int num_shards, TensorAllocator& alloc) {
     long C = config.HiddenSize;
     long HS = config.head_size();
 
@@ -28,7 +28,7 @@ void allocate_non_matrix_params(sLLamaBlockWeights<T>& target, const LLamaConfig
 }
 
 template<class T>
-void allocate_matrix_params(sLLamaBlockWeights<T>& target, const LLamaConfig& config, ETensorDType dtype, EAllocationType kind, int shard_idx, int num_shards, TensorAllocator& alloc) {
+void allocate_matrix_params(sLLamaBlockWeights<T>& target, const TransformerConfig& config, ETensorDType dtype, EAllocationType kind, int shard_idx, int num_shards, TensorAllocator& alloc) {
     long C = config.HiddenSize;
     long H = config.IntermediateSize;
 
@@ -40,7 +40,7 @@ void allocate_matrix_params(sLLamaBlockWeights<T>& target, const LLamaConfig& co
     target.MLP_Down_w = alloc.allocate_shard(dtype, shard_idx, num_shards, "mlp_down_w", {C, H}, kind);
 }
 
-void matrix_params_lazy(sLLamaBlockWeights<TensorShard>& target, const LLamaConfig& config, ETensorDType dtype, int shard_idx, int num_shards, LazyAllocator& alloc) {
+void matrix_params_lazy(sLLamaBlockWeights<TensorShard>& target, const TransformerConfig& config, ETensorDType dtype, int shard_idx, int num_shards, LazyAllocator& alloc) {
     long C = config.HiddenSize;
     long H = config.IntermediateSize;
 
@@ -61,7 +61,7 @@ void matrix_params_lazy(sLLamaBlockWeights<TensorShard>& target, const LLamaConf
     create_matrix_shard(target.MLP_Down_w, C, H, "MLP_Down_w");
 }
 
-void non_matrix_params_lazy(sLLamaBlockWeights<TensorShard>& target, const LLamaConfig& config, ETensorDType dtype, int shard_idx, int num_shards, LazyAllocator& alloc) {
+void non_matrix_params_lazy(sLLamaBlockWeights<TensorShard>& target, const TransformerConfig& config, ETensorDType dtype, int shard_idx, int num_shards, LazyAllocator& alloc) {
     long C = config.HiddenSize;
     long HS = config.head_size();
 
@@ -88,7 +88,7 @@ std::size_t aligned_size(std::size_t raw, int num_shards) {
     return div_ceil(div_exact(raw, static_cast<std::size_t>(num_shards)), static_cast<std::size_t>(4096)) * 4096;
 }
 
-std::size_t bytes_for_block_matrices(const LLamaConfig& config, ETensorDType dtype, int num_shards) {
+std::size_t bytes_for_block_matrices(const TransformerConfig& config, ETensorDType dtype, int num_shards) {
     std::size_t C = config.HiddenSize;
     std::size_t HS = config.head_size();
 
@@ -100,7 +100,7 @@ std::size_t bytes_for_block_matrices(const LLamaConfig& config, ETensorDType dty
     return total;
 }
 
-std::size_t bytes_for_block_non_matrix(const LLamaConfig& config, ETensorDType dtype, int num_shards) {
+std::size_t bytes_for_block_non_matrix(const TransformerConfig& config, ETensorDType dtype, int num_shards) {
     std::size_t C = config.HiddenSize;
     long H = config.IntermediateSize;
     long HS = C / config.NumQueryHeads;
@@ -114,18 +114,18 @@ std::size_t bytes_for_block_non_matrix(const LLamaConfig& config, ETensorDType d
     return total;
 }
 
-std::size_t bytes_for_block(const LLamaConfig& config, ETensorDType matrix_dtype, ETensorDType other_dtype, int num_shards) {
+std::size_t bytes_for_block(const TransformerConfig& config, ETensorDType matrix_dtype, ETensorDType other_dtype, int num_shards) {
     return bytes_for_block_non_matrix(config, other_dtype, num_shards) + bytes_for_block_matrices(config, matrix_dtype, num_shards);
 }
 
-sLLamaBlockWeights<Tensor> allocate_block_full(const LLamaConfig& config, ETensorDType matrix_dtype, ETensorDType other_dtype, EAllocationType kind, TensorAllocator& alloc) {
+sLLamaBlockWeights<Tensor> allocate_block_full(const TransformerConfig& config, ETensorDType matrix_dtype, ETensorDType other_dtype, EAllocationType kind, TensorAllocator& alloc) {
     sLLamaBlockWeights<Tensor> layer;
     allocate_matrix_params(layer, config, matrix_dtype, kind, 0, 1, alloc);
     allocate_non_matrix_params(layer, config, other_dtype, kind, 0, 1, alloc);
     return layer;
 }
 
-sLLamaBlockWeights<TensorShard> allocate_block_shard(const LLamaConfig& config, ETensorDType matrix_dtype, ETensorDType other_dtype, EAllocationType kind, int shard_idx, int num_shards, TensorAllocator& alloc) {
+sLLamaBlockWeights<TensorShard> allocate_block_shard(const TransformerConfig& config, ETensorDType matrix_dtype, ETensorDType other_dtype, EAllocationType kind, int shard_idx, int num_shards, TensorAllocator& alloc) {
     sLLamaBlockWeights<TensorShard> layer;
     allocate_matrix_params(layer, config, matrix_dtype, kind, shard_idx, num_shards, alloc);
     allocate_non_matrix_params(layer, config, other_dtype, kind, shard_idx, num_shards, alloc);
@@ -146,7 +146,7 @@ sLLamaBlockWeights<TensorShard> shard_block(const sLLamaBlockWeights<Tensor>& bl
     return result;
 }
 
-sLLamaNonBlockWeights<Tensor> allocate_non_block_full(LLamaConfig config, ETensorDType dtype, EAllocationType kind, TensorAllocator& alloc) {
+sLLamaNonBlockWeights<Tensor> allocate_non_block_full(TransformerConfig config, ETensorDType dtype, EAllocationType kind, TensorAllocator& alloc) {
     long V = config.VocabSize;
     long C = config.HiddenSize;
 
@@ -162,7 +162,7 @@ sLLamaNonBlockWeights<Tensor> allocate_non_block_full(LLamaConfig config, ETenso
     return w;
 }
 
-sLLamaNonBlockWeights<TensorShard> allocate_non_block_shard(LLamaConfig config, ETensorDType dtype, EAllocationType kind, int shard_idx, int num_shard, TensorAllocator& alloc) {
+sLLamaNonBlockWeights<TensorShard> allocate_non_block_shard(TransformerConfig config, ETensorDType dtype, EAllocationType kind, int shard_idx, int num_shard, TensorAllocator& alloc) {
     long V = config.VocabSize;
     long C = config.HiddenSize;
 
@@ -186,7 +186,7 @@ sLLamaNonBlockWeights<TensorShard> shard_non_block(const sLLamaNonBlockWeights<T
     return result;
 }
 
-sLLamaWeightsSet<Tensor> allocate_full_weights(const LLamaConfig& config, EAllocationType kind, TensorAllocator& alloc) {
+sLLamaWeightsSet<Tensor> allocate_full_weights(const TransformerConfig& config, EAllocationType kind, TensorAllocator& alloc) {
     sLLamaWeightsSet<Tensor> result;
     result.Blocks.resize(config.NumLayers);
     for(auto& block : result.Blocks) {
@@ -196,7 +196,7 @@ sLLamaWeightsSet<Tensor> allocate_full_weights(const LLamaConfig& config, EAlloc
     return result;
 }
 
-sLLamaWeights allocate_weights(const LLamaConfig& config, EAllocationType kind, int shard_idx, int num_shards, TensorAllocator& alloc) {
+sLLamaWeights allocate_weights(const TransformerConfig& config, EAllocationType kind, int shard_idx, int num_shards, TensorAllocator& alloc) {
     sLLamaWeights result;
     result.Blocks.resize(config.NumLayers);
     for(auto& block : result.Blocks) {
@@ -206,7 +206,7 @@ sLLamaWeights allocate_weights(const LLamaConfig& config, EAllocationType kind, 
     return result;
 }
 
-LLamaWeightsManager::LLamaWeightsManager(const LLamaConfig& config, const LLamaOptions& options, int rank, int world) :
+LLamaWeightsManager::LLamaWeightsManager(const TransformerConfig& config, const LLamaOptions& options, int rank, int world) :
     mMasterDType(options.MasterDType.value_or(config.DType)), mWorkMatDType(options.matmul_dtype()),
     mShardIdx(rank), mNumShards(world), mConfig(config)
 {
@@ -259,7 +259,7 @@ std::pair<float*, float*> LLamaWeightsManager::get_scales_for_block(int layer_id
 }
 
 
-void LLamaWeightsManager::setup_master_buffers(const LLamaConfig& config, TensorAllocator& alloc) {
+void LLamaWeightsManager::setup_master_buffers(const TransformerConfig& config, TensorAllocator& alloc) {
     if (mOffloadMaster && !mUseZeroCopy) {
         for(int i = 0; i < 2; ++i) {
             mMasterDeviceBufferStatus.at(i) = sGatherData{i, create_named_event(("master_event_" + std::to_string(i)).c_str())};
@@ -660,7 +660,7 @@ void LLamaWeightsManager::iterate_tensors(const std::function<void(std::string, 
  */
 class WeightsMgrUnsharded final: public LLamaWeightsManager {
 public:
-    WeightsMgrUnsharded(const LLamaConfig& config, const LLamaOptions& options, int rank, int world, TensorAllocator& alloc);
+    WeightsMgrUnsharded(const TransformerConfig& config, const LLamaOptions& options, int rank, int world, TensorAllocator& alloc);
 private:
     sLLamaBlockWeights<Tensor>& lookup_block_weights(int layer_idx) override;
     sQuantBlock& lookup_block_quants(int layer_idx) override;
@@ -669,7 +669,7 @@ private:
     std::vector<sQuantBlock> mQuants;
 };
 
-WeightsMgrUnsharded::WeightsMgrUnsharded(const LLamaConfig& config, const LLamaOptions& options, int rank, int world, TensorAllocator& alloc) : LLamaWeightsManager(config, options, rank, world) {
+WeightsMgrUnsharded::WeightsMgrUnsharded(const TransformerConfig& config, const LLamaOptions& options, int rank, int world, TensorAllocator& alloc) : LLamaWeightsManager(config, options, rank, world) {
     auto ctx = alloc.with_context("Weights");
     mOffloadMaster = options.OffloadMaster;
     EAllocationType master_alloc = mOffloadMaster ? options.offload_alloc() : EAllocationType::ON_DEVICE;
@@ -727,7 +727,7 @@ WeightsMgrUnsharded::sGatherData& WeightsMgrUnsharded::lookup_block_status(int l
  */
 class WeightsMgrSharded final: public LLamaWeightsManager {
 public:
-    WeightsMgrSharded(const LLamaConfig& config, const LLamaOptions& options, int rank, int world, TensorAllocator& alloc);
+    WeightsMgrSharded(const TransformerConfig& config, const LLamaOptions& options, int rank, int world, TensorAllocator& alloc);
 private:
     sLLamaBlockWeights<Tensor>& lookup_block_weights(int layer_idx) override;
     sQuantBlock& lookup_block_quants(int layer_idx) override;
@@ -738,7 +738,7 @@ private:
     bool mOffloadQuants = false;
 };
 
-WeightsMgrSharded::WeightsMgrSharded(const LLamaConfig& config, const LLamaOptions& options, int rank, int world, TensorAllocator& alloc) : LLamaWeightsManager(config, options, rank, world) {
+WeightsMgrSharded::WeightsMgrSharded(const TransformerConfig& config, const LLamaOptions& options, int rank, int world, TensorAllocator& alloc) : LLamaWeightsManager(config, options, rank, world) {
     mOffloadMaster = options.OffloadMaster;
     mPersistentQuants = options.PersistentQuants;
     mOffloadQuants = options.OffloadQuants;
@@ -765,7 +765,7 @@ WeightsMgrSharded::WeightsMgrSharded(const LLamaConfig& config, const LLamaOptio
         }
 
         // ensure there's just one buffer for Emb and LMHead
-        LLamaConfig cpy{config};
+        TransformerConfig cpy{config};
         cpy.TiedWordEmbeddings = true;
         mWork.NonBlocks = allocate_non_block_full(cpy, config.DType, EAllocationType::ON_DEVICE, alloc);
     }
@@ -809,7 +809,7 @@ WeightsMgrSharded::sGatherData& WeightsMgrSharded::lookup_block_status(int layer
     return mBlockStatus[layer_idx % 2];
 }
 
-std::unique_ptr<LLamaWeightsManager> LLamaWeightsManager::create(const LLamaConfig& config, const LLamaOptions& options, int rank, int world, TensorAllocator& alloc) {
+std::unique_ptr<LLamaWeightsManager> LLamaWeightsManager::create(const TransformerConfig& config, const LLamaOptions& options, int rank, int world, TensorAllocator& alloc) {
     if (options.ShardWeights) {
         return std::make_unique<WeightsMgrSharded>(config, options, rank, world, alloc);
     } else {

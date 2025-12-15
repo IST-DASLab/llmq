@@ -99,15 +99,15 @@ NB_MODULE(_pyllmq, m) {
         })
         ;
 
-    nb::class_<LLamaConfig> (m, "LLamaConfig")
-        .def("__init__", [](LLamaConfig *t,
+    nb::class_<TransformerConfig> (m, "LLamaConfig")
+        .def("__init__", [](TransformerConfig *t,
             const std::string& arch, std::optional<int> bos_token_id, std::optional<int> eos_token_id,
             int hidden_size, int intermediate_size, std::optional<int> vocab_size, int num_attention_heads, int num_key_value_heads,
             int num_hidden_layers, std::optional<int> max_position_embeddings, std::optional<float> rope_theta, float rms_norm_eps, bool tie_word_embeddings, std::optional<bool> use_qkv_bias, std::string dtype) {
             // default values depend on selected architecture
-             LLamaConfig::LLamaBasedModels architecture;
+             TransformerConfig::LLamaBasedModels architecture;
             if(arch == "qwen2" || arch == "Qwen2" || arch == "Qwen2ForCausalLM") {
-                architecture = LLamaConfig::QWEN2;
+                architecture = TransformerConfig::QWEN2;
                 eos_token_id = eos_token_id.value_or(151643);
                 bos_token_id = bos_token_id.value_or(151643);
                 vocab_size = vocab_size.value_or(151936);
@@ -118,7 +118,7 @@ NB_MODULE(_pyllmq, m) {
                 throw std::runtime_error("At this point, only qwen2 architecture is supported.");
             }
 
-            new (t) LLamaConfig{
+            new (t) TransformerConfig{
                 .Architecture = architecture,
                 .BosTokenId = bos_token_id.value(),
                 .EosTokenId = eos_token_id.value(),
@@ -139,26 +139,26 @@ NB_MODULE(_pyllmq, m) {
              nb::arg("architecture"), nb::arg("bos_token_id") = nb::none(), nb::arg("eos_token_id") = nb::none(), nb::arg("hidden_size"), nb::arg("intermediate_size"),
              nb::arg("vocab_size") = nb::none(), nb::arg("num_attention_heads"), nb::arg("num_key_value_heads"), nb::arg("num_hidden_layers"), nb::arg("max_position_embeddings") = nb::none(),
              nb::arg("rope_theta") = nb::none(), nb::arg("rms_norm_eps"), nb::arg("tie_word_embeddings"), nb::arg("use_qkv_bias") = nb::none(), nb::arg("dtype") = "bf16")
-        .def_rw("architecture", &LLamaConfig::Architecture)
-        .def_rw("bos_token_id", &LLamaConfig::BosTokenId)
-        .def_rw("eos_token_id", &LLamaConfig::EosTokenId)
-        .def_rw("hidden_size", &LLamaConfig::HiddenSize)
-        .def_rw("intermediate_size", &LLamaConfig::IntermediateSize)
-        .def_rw("vocab_size", &LLamaConfig::VocabSize)
-        .def_rw("num_attention_heads", &LLamaConfig::NumQueryHeads)
-        .def_rw("num_key_value_heads", &LLamaConfig::NumKeyValHeads)
-        .def_rw("num_hidden_layers", &LLamaConfig::NumLayers)
-        .def_rw("max_position_embeddings", &LLamaConfig::MaxPositionEmbeddings)
-        .def_rw("rope_theta", &LLamaConfig::RopeTheta)
-        .def_rw("rms_norm_eps", &LLamaConfig::RopeTheta)
-        .def_rw("tie_word_embeddings", &LLamaConfig::TiedWordEmbeddings)
-        .def_rw("use_qkv_bias", &LLamaConfig::UseQKVBias)
+        .def_rw("architecture", &TransformerConfig::Architecture)
+        .def_rw("bos_token_id", &TransformerConfig::BosTokenId)
+        .def_rw("eos_token_id", &TransformerConfig::EosTokenId)
+        .def_rw("hidden_size", &TransformerConfig::HiddenSize)
+        .def_rw("intermediate_size", &TransformerConfig::IntermediateSize)
+        .def_rw("vocab_size", &TransformerConfig::VocabSize)
+        .def_rw("num_attention_heads", &TransformerConfig::NumQueryHeads)
+        .def_rw("num_key_value_heads", &TransformerConfig::NumKeyValHeads)
+        .def_rw("num_hidden_layers", &TransformerConfig::NumLayers)
+        .def_rw("max_position_embeddings", &TransformerConfig::MaxPositionEmbeddings)
+        .def_rw("rope_theta", &TransformerConfig::RopeTheta)
+        .def_rw("rms_norm_eps", &TransformerConfig::RopeTheta)
+        .def_rw("tie_word_embeddings", &TransformerConfig::TiedWordEmbeddings)
+        .def_rw("use_qkv_bias", &TransformerConfig::UseQKVBias)
         .def_prop_rw("dtype",
-                     [](const LLamaConfig* cfg){ return dtype_to_str(cfg->DType); },
-                     [](LLamaConfig* cfg, const std::string& dtype_str){ cfg->DType = dtype_from_str(dtype_str); })
-        .def_prop_ro("head_size", &LLamaConfig::head_size)
-        .def_prop_ro("qkv_channels", &LLamaConfig::qkv_channels)
-        .def_prop_ro("model_name", &LLamaConfig::model_name)
+                     [](const TransformerConfig* cfg){ return dtype_to_str(cfg->DType); },
+                     [](TransformerConfig* cfg, const std::string& dtype_str){ cfg->DType = dtype_from_str(dtype_str); })
+        .def_prop_ro("head_size", &TransformerConfig::head_size)
+        .def_prop_ro("qkv_channels", &TransformerConfig::qkv_channels)
+        .def_prop_ro("model_name", &TransformerConfig::model_name)
         .def_static("from_pretrained", [](const std::string& name, const std::string& dtype_str)
         {
             std::string hf_path = get_hf_model_files(name);
@@ -166,11 +166,11 @@ NB_MODULE(_pyllmq, m) {
                 throw std::runtime_error("Could not find model files for " + name);
             }
             std::string config_path = hf_path + "/config.json";
-            return new LLamaConfig(load_llama_config(config_path.c_str(), dtype_from_str(dtype_str)));
+            return new TransformerConfig(load_llama_config(config_path.c_str(), dtype_from_str(dtype_str)));
         }, nb::arg("name"), nb::arg("dtype"), "Load the config file from an existing hf model")
         .def_static("from_name", [](const std::string& name, const std::string& dtype_str)
         {
-            return new LLamaConfig(create_config_from_name(name, dtype_from_str(dtype_str)));
+            return new TransformerConfig(create_config_from_name(name, dtype_from_str(dtype_str)));
         }, nb::arg("name"), nb::arg("dtype"), "Create a config based on the model name.")
         ;
 
@@ -263,7 +263,7 @@ NB_MODULE(_pyllmq, m) {
         ;
 
     nb::class_<MultiGPUPyTrainer>(m, "LLMQTrainer")
-        .def("__init__", [](MultiGPUPyTrainer *t, int ngpu, LLamaConfig config, LLamaOptions options, int batch_size, int seq_len, int grad_accum, bool memcpy_all_gather, bool memcpy_send_recv) {
+        .def("__init__", [](MultiGPUPyTrainer *t, int ngpu, TransformerConfig config, LLamaOptions options, int batch_size, int seq_len, int grad_accum, bool memcpy_all_gather, bool memcpy_send_recv) {
             options.ModelType = config.DType;
             new (t) MultiGPUPyTrainer(ngpu, config, options, batch_size, seq_len, grad_accum, memcpy_all_gather, memcpy_send_recv);
         }, nb::arg("ngpu"), nb::arg("config"), nb::arg("options"), nb::arg("batch_size"), nb::arg("seq_len"), nb::arg("grad_accum"),
@@ -280,7 +280,7 @@ NB_MODULE(_pyllmq, m) {
             if (!std::filesystem::exists(model_path)) {
                 model_path = hf_path + "/model.safetensors.index.json";
             }
-            LLamaConfig config = load_llama_config(config_path.c_str(), dtype_from_str(dtype));
+            TransformerConfig config = load_llama_config(config_path.c_str(), dtype_from_str(dtype));
             options.ModelType = config.DType;
             auto trainer = new MultiGPUPyTrainer(ngpu, config, options, batch_size, seq_len, grad_accum, memcpy_all_gather, memcpy_send_recv);
             trainer->import_weights(model_path);

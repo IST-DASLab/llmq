@@ -11,7 +11,7 @@
 
 // Struct that contains the basic configuration for the model.
 // This includes both architecture and run configurations
-struct LLamaConfig {
+struct TransformerConfig {
     enum LLamaBasedModels {
         LLAMA,
         QWEN2,
@@ -40,8 +40,8 @@ struct LLamaConfig {
     [[nodiscard]] std::string_view model_name() const;
 };
 
-LLamaConfig load_llama_config(const char* file_name, ETensorDType dtype);
-void save_llama_config(const LLamaConfig& config, const char* file_name);
-LLamaConfig create_config_from_name(std::string_view name, ETensorDType dtype);
+TransformerConfig load_llama_config(const char* file_name, ETensorDType dtype);
+void save_llama_config(const TransformerConfig& config, const char* file_name);
+TransformerConfig create_config_from_name(std::string_view name, ETensorDType dtype);
 
 #endif //LLMQ_SRC_MODELS_LLAMA_CONFIG_H

@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //
 
-#include "llama_config.h"
+#include "transformer_config.h"
 #include "utilities/utils.h"
 
 #include <fstream>
@@ -10,7 +10,7 @@
 #include <nlohmann/json.hpp>
 #include <fmt/core.h>
 
-LLamaConfig load_llama_config(const char* file_name, ETensorDType dtype) {
+TransformerConfig load_llama_config(const char* file_name, ETensorDType dtype) {
     std::ifstream file(file_name);
     if(!file.is_open()) {
         throw std::runtime_error(fmt::format("could not open config file {}", file_name));
@@ -22,15 +22,15 @@ LLamaConfig load_llama_config(const char* file_name, ETensorDType dtype) {
     if(archs.size() != 1) {
         throw std::runtime_error("got multiple values for architecture");
     }
-    LLamaConfig::LLamaBasedModels arch_id;
+    TransformerConfig::LLamaBasedModels arch_id;
     if(archs.front() == "LlamaForCausalLM") {
-        arch_id = LLamaConfig::LLAMA;
+        arch_id = TransformerConfig::LLAMA;
     } else if(archs.front() == "Qwen2ForCausalLM") {
-        arch_id = LLamaConfig::QWEN2;
+        arch_id = TransformerConfig::QWEN2;
     } else {
         throw std::runtime_error(fmt::format("unknown architecture {}", archs.front()));
     }
-    LLamaConfig result;
+    TransformerConfig result;
     result.Architecture = arch_id;
     result.DType = dtype;
 
@@ -49,35 +49,35 @@ LLamaConfig load_llama_config(const char* file_name, ETensorDType dtype) {
     if(config_json.contains("rms_norm_eps")) {
         result.RmsNormEps = config_json["rms_norm_eps"].get<float>();
     } else {
-        result.RmsNormEps = result.Architecture == LLamaConfig::LLAMA ? 1e-5 : 1e-6;
+        result.RmsNormEps = result.Architecture == TransformerConfig::LLAMA ? 1e-5 : 1e-6;
     }
 
-    result.UseQKVBias = arch_id == LLamaConfig::QWEN2;
+    result.UseQKVBias = arch_id == TransformerConfig::QWEN2;
 
     return result;
 }
 
-[[nodiscard]] std::string_view LLamaConfig::model_name() const {
+[[nodiscard]] std::string_view TransformerConfig::model_name() const {
     switch(Architecture) {
-        case LLamaConfig::QWEN2:
+        case TransformerConfig::QWEN2:
             return "Qwen2";
-        case LLamaConfig::LLAMA:
+        case TransformerConfig::LLAMA:
             return "LLaMA";
         default:
             throw std::logic_error("Unknown architecture");
     }
 }
 
-void save_llama_config(const LLamaConfig& config, const char* file_name) {
+void save_llama_config(const TransformerConfig& config, const char* file_name) {
     std::ofstream file(file_name);
     if(!file.is_open()) {
         throw std::runtime_error(fmt::format("could not open file for writing {}", file_name));
     }
 
     std::vector<std::string> archs;
-    if(config.Architecture == LLamaConfig::QWEN2) {
+    if(config.Architecture == TransformerConfig::QWEN2) {
         archs = {"Qwen2ForCausalLM"};
-    } else if (config.Architecture == LLamaConfig::LLAMA) {
+    } else if (config.Architecture == TransformerConfig::LLAMA) {
         archs = {"LlamaForCausalLM"};
     }
 
@@ -101,13 +101,13 @@ void save_llama_config(const LLamaConfig& config, const char* file_name) {
     config_json["initializer_range"] = 0.02f;
     config_json["hidden_act"] = "silu";
     config_json["use_cache"] = true;
-    if(config.Architecture == LLamaConfig::QWEN2) {
+    if(config.Architecture == TransformerConfig::QWEN2) {
         config_json["model_type"] = "qwen2";
         config_json["max_window_layers"] = config.NumLayers;
         config_json["sliding_window"] = config.MaxPositionEmbeddings;
         config_json["use_sliding_window"] = false;
         config_json["use_mrope"] = false;
-    } else if (config.Architecture == LLamaConfig::LLAMA) {
+    } else if (config.Architecture == TransformerConfig::LLAMA) {
         config_json["model_type"] = "llama";
         config_json["attention_bias"] = false;
         config_json["mlp_bias"] = false;
@@ -116,9 +116,9 @@ void save_llama_config(const LLamaConfig& config, const char* file_name) {
     file << config_json.dump(4);
 }
 
-static LLamaConfig create_qwen25_config(int hidden_size, int intermediate_size, int q_heads, int kv_heads, int depth, float rms, bool tied, ETensorDType dtype) {
+static TransformerConfig create_qwen25_config(int hidden_size, int intermediate_size, int q_heads, int kv_heads, int depth, float rms, bool tied, ETensorDType dtype) {
     return {
-        .Architecture = LLamaConfig::QWEN2,
+        .Architecture = TransformerConfig::QWEN2,
         .BosTokenId = 151643,
         .EosTokenId = 151643,
         .HiddenSize = hidden_size,
@@ -136,9 +136,9 @@ static LLamaConfig create_qwen25_config(int hidden_size, int intermediate_size, 
     };
 }
 
-static LLamaConfig create_llama2_config(int hidden_size, int intermediate_size, int heads, int depth, ETensorDType dtype) {
+static TransformerConfig create_llama2_config(int hidden_size, int intermediate_size, int heads, int depth, ETensorDType dtype) {
     return {
-        .Architecture = LLamaConfig::LLAMA,
+        .Architecture = TransformerConfig::LLAMA,
         .BosTokenId = 1,
         .EosTokenId = 2,
         .PadTokenId = 0,
@@ -157,9 +157,9 @@ static LLamaConfig create_llama2_config(int hidden_size, int intermediate_size, 
     };
 }
 
-static LLamaConfig create_llama3_config(int hidden_size, int intermediate_size, int q_heads, int kv_heads, int depth, ETensorDType dtype) {
+static TransformerConfig create_llama3_config(int hidden_size, int intermediate_size, int q_heads, int kv_heads, int depth, ETensorDType dtype) {
     return {
-        .Architecture = LLamaConfig::LLAMA,
+        .Architecture = TransformerConfig::LLAMA,
         .BosTokenId = 128000,
         .EosTokenId = 128001,
         .PadTokenId = 128255,
@@ -178,7 +178,7 @@ static LLamaConfig create_llama3_config(int hidden_size, int intermediate_size, 
     };
 }
 
-LLamaConfig create_config_from_name(std::string_view name, ETensorDType dtype) {
+TransformerConfig create_config_from_name(std::string_view name, ETensorDType dtype) {
     if(iequals(name, "Qwen2.5-0.5B")) {
         return create_qwen25_config(896, 4864, 14, 2, 24, 1e-06f, true, dtype);
     } else if(iequals(name, "Qwen2.5-1.5B")) {

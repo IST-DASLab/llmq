@@ -33,7 +33,7 @@ public:
     virtual void notify_lnf_w(cudaStream_t stream, NCCLCommunicator& comm) = 0;
     virtual void notify_block(int layer_idx, cudaStream_t stream, NCCLCommunicator& comm) = 0;
 
-    static std::unique_ptr<LLamaGradsManager> create(std::uint64_t seed, int step, const LLamaConfig& config,
+    static std::unique_ptr<LLamaGradsManager> create(std::uint64_t seed, int step, const TransformerConfig& config,
                                                      const LLamaOptions& options, int rank, int world,
                                                      const std::shared_ptr<TensorAllocator>& alloc);
 

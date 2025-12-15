@@ -11,7 +11,7 @@
 
 class LLamaOptimizerStateManager {
 public:
-    LLamaOptimizerStateManager(LLamaConfig cfg, LLamaOptions options, cudaStream_t stream, NCCLCommunicator& comm, TensorAllocator& alloc);
+    LLamaOptimizerStateManager(TransformerConfig cfg, LLamaOptions options, cudaStream_t stream, NCCLCommunicator& comm, TensorAllocator& alloc);
     sLLamaNonBlockWeights<TensorShard>& non_block_m();
     sLLamaNonBlockWeights<TensorShard>& non_block_v();
 
@@ -27,7 +27,7 @@ public:
     sLLamaBlockWeights<TensorShard>& get_block_v(int layer_idx, cudaStream_t stream);
     void store_block(int layer_idx, cudaStream_t stream, cudaStream_t put_stream);
 private:
-    LLamaConfig mConfig;
+    TransformerConfig mConfig;
 
     // mOptM.Blocks[i] and mOptMBlockStorage[i] alias the same memory.
     // mOptM provides convenient access to the individual tensors of a block, whereas

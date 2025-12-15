@@ -16,7 +16,7 @@ constexpr const int QWEN2_NUM_LINEAR_OPS = 4;
 
 class RunStateBuilder {
 public:
-    RunStateBuilder(LLamaConfig config, LLamaOptions options, int B, int T, std::shared_ptr<TensorAllocator> alloc)
+    RunStateBuilder(TransformerConfig config, LLamaOptions options, int B, int T, std::shared_ptr<TensorAllocator> alloc)
         : Config(config), Options(options), B(B), T(T), C(config.HiddenSize), H(config.IntermediateSize), Alloc(alloc)
     {
     }
@@ -50,7 +50,7 @@ private:
         }
     }
 
-    LLamaConfig Config;
+    TransformerConfig Config;
     LLamaOptions Options;
     long B;
     long T;
@@ -256,7 +256,7 @@ void LLamaRunState::release_res_ffn(int layer_idx, cudaStream_t main_stream) {
     CUDA_CHECK(cudaEventRecord(status.Event, main_stream));
 }
 
-void LLamaRunState::init(LLamaConfig config, long B, long T, DeviceMemoryStack& stack) {
+void LLamaRunState::init(TransformerConfig config, long B, long T, DeviceMemoryStack& stack) {
     long V = config.VocabSize;
     long C = config.HiddenSize;
     long H = config.IntermediateSize;
@@ -415,7 +415,7 @@ void LLamaRunState::debug_iterate_abs_maxes(const std::function<void(const std::
 }
 
 
-LLamaRunState allocate_run_state(LLamaConfig config, LLamaOptions options, long B, long T, DeviceMemoryStack& stack, std::shared_ptr<TensorAllocator> alloc) {
+LLamaRunState allocate_run_state(TransformerConfig config, LLamaOptions options, long B, long T, DeviceMemoryStack& stack, std::shared_ptr<TensorAllocator> alloc) {
     LLamaRunState state{{B, T, alloc}};
     state.Options = options;
     state.init(config, B, T, stack);
