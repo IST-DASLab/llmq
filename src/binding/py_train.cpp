@@ -16,7 +16,7 @@
 #include "models/llama_gradients.h"
 #include "models/llama_run_state.h"
 
-MultiGPUPyTrainer::MultiGPUPyTrainer(int ngpus, LLamaConfig config, LLamaOptions options, int batch_size, int seq_len, int grad_accum, bool memcpy_all_gather, bool memcpy_send_recv) :
+MultiGPUPyTrainer::MultiGPUPyTrainer(int ngpus, TransformerConfig config, LLamaOptions options, int batch_size, int seq_len, int grad_accum, bool memcpy_all_gather, bool memcpy_send_recv) :
     mConfig(config), mOptions(options), B(batch_size), T(seq_len), mGradAccumulation(grad_accum)
 {
     int gpus_available = 0;

@@ -14,7 +14,7 @@
 #include "llama_weights.h"
 #include "utilities/comm.h"
 
-LLamaModel::LLamaModel(LLamaConfig config, const LLamaOptions& options, int rank, int world, const std::shared_ptr<TensorAllocator>& alloc) :
+LLamaModel::LLamaModel(TransformerConfig config, const LLamaOptions& options, int rank, int world, const std::shared_ptr<TensorAllocator>& alloc) :
         Config(config), Options(options), Allocator(alloc ? alloc : std::make_shared<TensorAllocator>())
 {
     Parameters = LLamaWeightsManager::create(Config, options, rank, world, *Allocator);

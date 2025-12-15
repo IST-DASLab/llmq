@@ -4,7 +4,7 @@
 
 
 #include "llama_optimizer.h"
-#include "llama_config.h"
+#include "../training/transformer_config.h"
 #include "llama_model.h"
 #include "utilities/comm.h"
 #include "kernels/kernels.h"
@@ -158,7 +158,7 @@ void zero_opt_non_block(sLLamaWeights& weights, cudaStream_t stream) {
     }
 }
 
-sLLamaWeights allocate_scales(LLamaConfig config, int shard_idx, int num_shards, TensorAllocator& alloc) {
+sLLamaWeights allocate_scales(TransformerConfig config, int shard_idx, int num_shards, TensorAllocator& alloc) {
     long C = config.HiddenSize;
     long V = config.VocabSize;
     long H = config.IntermediateSize;
@@ -202,7 +202,7 @@ sLLamaWeights allocate_scales(LLamaConfig config, int shard_idx, int num_shards,
     return result;
 }
 
-std::vector<Tensor> allocate_weights_opt(sLLamaWeights& weights, const LLamaConfig& config, ETensorDType dtype, EAllocationType kind, int shard_idx, int num_shards, TensorAllocator& alloc) {
+std::vector<Tensor> allocate_weights_opt(sLLamaWeights& weights, const TransformerConfig& config, ETensorDType dtype, EAllocationType kind, int shard_idx, int num_shards, TensorAllocator& alloc) {
     std::vector<Tensor> result;
     weights.Blocks.resize(config.NumLayers);
     LazyAllocator alloc_lazy;
@@ -216,7 +216,7 @@ std::vector<Tensor> allocate_weights_opt(sLLamaWeights& weights, const LLamaConf
 }
 
 
-LLamaOptimizerStateManager::LLamaOptimizerStateManager(LLamaConfig cfg, LLamaOptions options, cudaStream_t stream, NCCLCommunicator& comm, TensorAllocator& alloc):
+LLamaOptimizerStateManager::LLamaOptimizerStateManager(TransformerConfig cfg, LLamaOptions options, cudaStream_t stream, NCCLCommunicator& comm, TensorAllocator& alloc):
     mOffloadM(options.OffloadOptM), mOffloadV(options.OffloadOptV), mUseZeroCopy(options.UseZeroCopy), mConfig(cfg), mRank(comm.rank()), mWorld(comm.world_size())
 {
     {

@@ -9,7 +9,7 @@
 #include <optional>
 #include <random>
 
-#include "llama_config.h"
+#include "../training/transformer_config.h"
 #include "training/model.h"
 #include "utilities/allocator.h"
 #include "utilities/tensor.h"
@@ -83,7 +83,7 @@ using sLLamaGradBlock = sLLamaBlockWeights<Tensor>;
 //! \details Implements a transformer model with a gated linear unit in the feed-forward layer and RoPE attention.
 class LLamaModel : public IModel {
 public:
-    LLamaModel(LLamaConfig config, const LLamaOptions& options, int rank, int world, const std::shared_ptr<TensorAllocator>& alloc = nullptr);
+    LLamaModel(TransformerConfig config, const LLamaOptions& options, int rank, int world, const std::shared_ptr<TensorAllocator>& alloc = nullptr);
     ~LLamaModel();
 
     void init_weights(NCCLCommunicator& comm) override;
@@ -113,7 +113,7 @@ public:
 
     const TensorAllocator& get_allocator() const { return *Allocator; }
 
-    const LLamaConfig& config() { return Config; }
+    const TransformerConfig& config() { return Config; }
     LLamaGradsManager& grads() { return *Grads; }
     LLamaRunState& run_state() { return *RunState; }
 
@@ -129,7 +129,7 @@ protected:
     void _backward_block(bool accumulate, sLLamaBlockWeights<Tensor>& weights, sLLamaGradBlock& grads,
                          sLLamaLayerActivations& activations, sLLamaLayerGradients& d_activations);
 private:
-    LLamaConfig Config;
+    TransformerConfig Config;
     LLamaOptions Options;
     std::shared_ptr<TensorAllocator> Allocator;
     std::unique_ptr<LLamaWeightsManager> Parameters;

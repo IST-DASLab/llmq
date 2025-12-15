@@ -10,7 +10,7 @@
 #include <thread>
 #include <functional>
 
-#include "models/llama_config.h"
+#include "../training/transformer_config.h"
 #include "models/llama_model.h"
 
 class DataLoader;
@@ -41,7 +41,7 @@ class CommunicatorThreadsPack;
 class MultiGPUPyTrainer
 {
 public:
-    MultiGPUPyTrainer(int ngpus, LLamaConfig config, LLamaOptions options, int batch_size, int seq_len, int grad_accum, bool memcpy_all_gather, bool memcpy_send_recv);
+    MultiGPUPyTrainer(int ngpus, TransformerConfig config, LLamaOptions options, int batch_size, int seq_len, int grad_accum, bool memcpy_all_gather, bool memcpy_send_recv);
     ~MultiGPUPyTrainer();
 
     void import_weights(std::string path);
@@ -59,7 +59,7 @@ public:
     int world_size() const;
     int batch_size() const { return B; }
     int seq_length() const { return T; }
-    const LLamaConfig& config() const { return mConfig; }
+    const TransformerConfig& config() const { return mConfig; }
     const LLamaOptions& options() const { return mOptions; }
 
     std::vector<std::pair<std::string, sSegmentMemory>> get_allocations(int gpu_id);
@@ -67,7 +67,7 @@ public:
     std::vector<std::pair<std::string, Tensor>> get_gradients(int gpu_id);
 
 private:
-    LLamaConfig mConfig;
+    TransformerConfig mConfig;
     LLamaOptions mOptions;
     int B;
     int T;

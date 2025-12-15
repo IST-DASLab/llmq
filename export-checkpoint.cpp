@@ -56,7 +56,7 @@ int main(int argc, const char** argv) {
 
 
     std::string config_path = ModelRootPath + "/config.json";
-    LLamaConfig config = load_llama_config(config_path.c_str(), ModelDType);
+    TransformerConfig config = load_llama_config(config_path.c_str(), ModelDType);
 
     int latest_step = find_latest_checkpoint(CkptDir);
     if (latest_step < 0) {

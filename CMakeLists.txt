@@ -150,12 +150,12 @@ add_library(llmq-common SHARED
         src/training/logging.cpp
         src/training/checkpoint.cpp
         src/training/model.cpp
+        src/training/transformer_config.cpp
 
         src/models/llama_run_state.cpp
         src/models/llama_model.cpp
         src/models/llama_weights.cpp
         src/models/llama_gradients.cpp
-        src/models/llama_config.cpp
         src/models/llama_optimizer.cpp
 
         src/kernels/kernels.cpp

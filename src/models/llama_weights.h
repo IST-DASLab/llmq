@@ -10,7 +10,7 @@
 
 #include "utilities/tensor.h"
 #include "utilities/tensor_container.h"
-#include "llama_config.h"
+#include "../training/transformer_config.h"
 
 struct LLamaOptions;
 struct LLamaRunState;
@@ -55,7 +55,7 @@ class LLamaWeightsManager : public ITensorContainer {
 public:
     virtual ~LLamaWeightsManager();
 
-    static std::unique_ptr<LLamaWeightsManager> create(const LLamaConfig& config, const LLamaOptions& options, int rank, int world, TensorAllocator& alloc);
+    static std::unique_ptr<LLamaWeightsManager> create(const TransformerConfig& config, const LLamaOptions& options, int rank, int world, TensorAllocator& alloc);
 
     void random_init(int seed, const LLamaOptions& options, NCCLCommunicator& comm);
     void import_from_file(const std::string& file_name, bool allow_cast, NCCLCommunicator& comm);
@@ -124,9 +124,9 @@ public:
 
     void iterate_tensors(const std::function<void(std::string, const TensorShard&)>& callback) override;
 protected:
-    LLamaWeightsManager(const LLamaConfig& config, const LLamaOptions& options, int rank, int world);
+    LLamaWeightsManager(const TransformerConfig& config, const LLamaOptions& options, int rank, int world);
     void setup_scales(TensorAllocator& alloc);
-    void setup_master_buffers(const LLamaConfig& config, TensorAllocator& alloc);
+    void setup_master_buffers(const TransformerConfig& config, TensorAllocator& alloc);
 
     struct sGatherData {
         int LayerIdx = -1;                  // which layer currently stored in this buffer
@@ -164,7 +164,7 @@ protected:
 
     void convert_dtype_for_gather(TensorShard& src, TensorShard& qnt, bool& convert, bool src_is_persistent, LLamaRunState& run_state);
 
-    LLamaConfig mConfig;
+    TransformerConfig mConfig;
     long HQ;    // number of query heads
     long HKV;   // number of key/value heads
     int mShardIdx;
@@ -180,23 +180,23 @@ protected:
     bool mUseZeroCopy;
 };
 
-sLLamaNonBlockWeights<Tensor> allocate_non_block_full(LLamaConfig config, ETensorDType dtype, EAllocationType kind, TensorAllocator& alloc);
-sLLamaNonBlockWeights<TensorShard> allocate_non_block_shard(LLamaConfig config, ETensorDType dtype, EAllocationType kind, int shard_idx, int num_shard, TensorAllocator& alloc);
+sLLamaNonBlockWeights<Tensor> allocate_non_block_full(TransformerConfig config, ETensorDType dtype, EAllocationType kind, TensorAllocator& alloc);
+sLLamaNonBlockWeights<TensorShard> allocate_non_block_shard(TransformerConfig config, ETensorDType dtype, EAllocationType kind, int shard_idx, int num_shard, TensorAllocator& alloc);
 
-sLLamaBlockWeights<Tensor> allocate_block_full(const LLamaConfig& config, ETensorDType matrix_dtype, ETensorDType other_dtype, EAllocationType kind, TensorAllocator& alloc);
-sLLamaBlockWeights<TensorShard> allocate_block_shard(const LLamaConfig& config, ETensorDType matrix_dtype, ETensorDType other_dtype, EAllocationType kind, int shard_idx, int num_shards, TensorAllocator& alloc);
+sLLamaBlockWeights<Tensor> allocate_block_full(const TransformerConfig& config, ETensorDType matrix_dtype, ETensorDType other_dtype, EAllocationType kind, TensorAllocator& alloc);
+sLLamaBlockWeights<TensorShard> allocate_block_shard(const TransformerConfig& config, ETensorDType matrix_dtype, ETensorDType other_dtype, EAllocationType kind, int shard_idx, int num_shards, TensorAllocator& alloc);
 
-sLLamaWeightsSet<Tensor> allocate_full_weights(const LLamaConfig& config, EAllocationType kind, TensorAllocator& alloc);
-sLLamaWeights allocate_weights(const LLamaConfig& config, EAllocationType kind, int shard_idx, int num_shards, TensorAllocator& alloc);
+sLLamaWeightsSet<Tensor> allocate_full_weights(const TransformerConfig& config, EAllocationType kind, TensorAllocator& alloc);
+sLLamaWeights allocate_weights(const TransformerConfig& config, EAllocationType kind, int shard_idx, int num_shards, TensorAllocator& alloc);
 
 sLLamaBlockWeights<TensorShard> shard_block(const sLLamaBlockWeights<Tensor>& block, int shard_idx, int num_shards);
 sLLamaNonBlockWeights<TensorShard> shard_non_block(const sLLamaNonBlockWeights<Tensor>& block, int shard_idx, int num_shards);
 
-void matrix_params_lazy(sLLamaBlockWeights<TensorShard>& target, const LLamaConfig& config, ETensorDType dtype, int shard_idx, int num_shards, LazyAllocator& alloc);
-void non_matrix_params_lazy(sLLamaBlockWeights<TensorShard>& target, const LLamaConfig& config, ETensorDType dtype, int shard_idx, int num_shards, LazyAllocator& alloc);
+void matrix_params_lazy(sLLamaBlockWeights<TensorShard>& target, const TransformerConfig& config, ETensorDType dtype, int shard_idx, int num_shards, LazyAllocator& alloc);
+void non_matrix_params_lazy(sLLamaBlockWeights<TensorShard>& target, const TransformerConfig& config, ETensorDType dtype, int shard_idx, int num_shards, LazyAllocator& alloc);
 
-std::size_t bytes_for_block(const LLamaConfig& config, ETensorDType matrix_dtype, ETensorDType other_dtype, int num_shards);
-std::size_t bytes_for_block_matrices(const LLamaConfig& config, ETensorDType dtype, int num_shards);
-std::size_t bytes_for_block_non_matrix(const LLamaConfig& config, ETensorDType dtype, int num_shards);
+std::size_t bytes_for_block(const TransformerConfig& config, ETensorDType matrix_dtype, ETensorDType other_dtype, int num_shards);
+std::size_t bytes_for_block_matrices(const TransformerConfig& config, ETensorDType dtype, int num_shards);
+std::size_t bytes_for_block_non_matrix(const TransformerConfig& config, ETensorDType dtype, int num_shards);
 
 #endif //LLMQ_LLAMA_WEIGHTS_H

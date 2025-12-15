@@ -278,7 +278,7 @@ void TrainingRunner::launch_training(int argc, const char** argv) {
     }
 }
 
-LLamaConfig create_config(const std::string& root, bool from_scratch, ETensorDType dtype) {
+TransformerConfig create_config(const std::string& root, bool from_scratch, ETensorDType dtype) {
     std::string config_path = root + "/config.json";
     if(std::filesystem::exists(config_path)) {
         return load_llama_config(config_path.c_str(), dtype);
@@ -306,7 +306,7 @@ void TrainingRunner::run_training(int argc, const char** argv, NCCLCommunicator&
     if (!std::filesystem::exists(model_path)) {
         model_path = ModelRootPath + "/model.safetensors.index.json";
     }
-    LLamaConfig config = create_config(ModelRootPath, FromScratch, ModelDType);
+    TransformerConfig config = create_config(ModelRootPath, FromScratch, ModelDType);
     Options.ModelType = config.DType;
 
     TrainingRunLogger logger(LogFile, comm.rank(), TrainingRunLogger::DEFAULT);
