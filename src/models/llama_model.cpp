@@ -692,6 +692,10 @@ void LLamaModel::calculate_gradient_norm(NCCLCommunicator& comm, float grad_clip
     CUDA_CHECK(cudaEventRecord(rs->NormDone, main_stream));
 }
 
+IRunState& LLamaModel::get_run_state() const {
+    return *RunState;
+}
+
 void LLamaModel::_calculate_gradient_norm(NCCLCommunicator& comm, float grad_clip, cudaStream_t stream) {
     auto& rs = RunState;
 
@@ -908,17 +912,4 @@ void LLamaModel::on_restore_checkpoint(NCCLCommunicator& comm) {
 
 std::string_view LLamaModel::model_type() const {
     return Config.model_name();
-}
-
-float LLamaModel::get_loss() const {
-    return ::get_loss(*RunState);
-}
-float LLamaModel::get_norm() const {
-    return ::get_norm(*RunState);
-}
-Tensor& LLamaModel::get_input_buffer() {
-    return ::get_input_buffer(*RunState);
-}
-Tensor& LLamaModel::get_target_buffer() {
-    return ::get_target_buffer(*RunState);
 }

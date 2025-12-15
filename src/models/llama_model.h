@@ -103,11 +103,6 @@ public:
     //! \details Runs asynchronously, signalling completion through the NormDone event.
     void calculate_gradient_norm(NCCLCommunicator& comm, float grad_clip);
 
-    float get_loss() const override;
-    float get_norm() const override;
-    Tensor& get_input_buffer() override;
-    Tensor& get_target_buffer() override;
-
     ITensorContainer& weights() override;
     ITensorContainer& opt_momentum() override;
     ITensorContainer& opt_momentum_scales() override;
@@ -121,6 +116,8 @@ public:
     const LLamaConfig& config() { return Config; }
     LLamaGradsManager& grads() { return *Grads; }
     LLamaRunState& run_state() { return *RunState; }
+
+    IRunState& get_run_state() const override;
 
 protected:
     void _calculate_gradient_norm(NCCLCommunicator& comm, float grad_clip, cudaStream_t stream);
