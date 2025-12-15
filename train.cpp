@@ -281,7 +281,7 @@ void TrainingRunner::launch_training(int argc, const char** argv) {
 TransformerConfig create_config(const std::string& root, bool from_scratch, ETensorDType dtype) {
     std::string config_path = root + "/config.json";
     if(std::filesystem::exists(config_path)) {
-        return load_llama_config(config_path.c_str(), dtype);
+        return load_transformer_config(config_path.c_str(), dtype);
     } else if(from_scratch) {
         auto cfg = create_config_from_name(root, dtype);
         return cfg;
@@ -569,7 +569,7 @@ void TrainingRunner::run_training(int argc, const char** argv, NCCLCommunicator&
     auto log = logger.log_section_start(MaxSteps, fmt::format("Saving model to `{}`", OutDir.c_str()));
     std::filesystem::path p(OutDir);
     std::filesystem::create_directories(p);
-    save_llama_config(config, (p / "config.json").c_str());
+    save_transformer_config(config, (p / "config.json").c_str());
     model.export_weights((p / "model.safetensors").c_str(), comm);
 
     // copy config files from source model, if we have them and they don't exist already

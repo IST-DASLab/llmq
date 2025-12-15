@@ -56,7 +56,7 @@ int main(int argc, const char** argv) {
 
 
     std::string config_path = ModelRootPath + "/config.json";
-    TransformerConfig config = load_llama_config(config_path.c_str(), ModelDType);
+    TransformerConfig config = load_transformer_config(config_path.c_str(), ModelDType);
 
     int latest_step = find_latest_checkpoint(CkptDir);
     if (latest_step < 0) {
@@ -76,7 +76,7 @@ int main(int argc, const char** argv) {
 
                 std::filesystem::path p(OutDir);
                 std::filesystem::create_directories(p);
-                save_llama_config(config, (p / "config.json").c_str());
+                save_transformer_config(config, (p / "config.json").c_str());
                 model.export_weights((p / "model.safetensors").c_str(), comm);
             });
 }

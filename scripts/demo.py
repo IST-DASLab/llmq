@@ -14,7 +14,7 @@ from pathlib import Path
 
 def main():
     # configure the model architecture
-    config = pyllmq.LLamaConfig(
+    config = pyllmq.Config(
         architecture="qwen2",
         hidden_size=896,
         intermediate_size=4864,

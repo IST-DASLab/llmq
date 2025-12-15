@@ -99,13 +99,13 @@ NB_MODULE(_pyllmq, m) {
         })
         ;
 
-    nb::class_<TransformerConfig> (m, "LLamaConfig")
+    nb::class_<TransformerConfig> (m, "Config")
         .def("__init__", [](TransformerConfig *t,
             const std::string& arch, std::optional<int> bos_token_id, std::optional<int> eos_token_id,
             int hidden_size, int intermediate_size, std::optional<int> vocab_size, int num_attention_heads, int num_key_value_heads,
             int num_hidden_layers, std::optional<int> max_position_embeddings, std::optional<float> rope_theta, float rms_norm_eps, bool tie_word_embeddings, std::optional<bool> use_qkv_bias, std::string dtype) {
             // default values depend on selected architecture
-             TransformerConfig::LLamaBasedModels architecture;
+             TransformerConfig::EArchitecture architecture;
             if(arch == "qwen2" || arch == "Qwen2" || arch == "Qwen2ForCausalLM") {
                 architecture = TransformerConfig::QWEN2;
                 eos_token_id = eos_token_id.value_or(151643);
@@ -166,7 +166,7 @@ NB_MODULE(_pyllmq, m) {
                 throw std::runtime_error("Could not find model files for " + name);
             }
             std::string config_path = hf_path + "/config.json";
-            return new TransformerConfig(load_llama_config(config_path.c_str(), dtype_from_str(dtype_str)));
+            return new TransformerConfig(load_transformer_config(config_path.c_str(), dtype_from_str(dtype_str)));
         }, nb::arg("name"), nb::arg("dtype"), "Load the config file from an existing hf model")
         .def_static("from_name", [](const std::string& name, const std::string& dtype_str)
         {
@@ -280,7 +280,7 @@ NB_MODULE(_pyllmq, m) {
             if (!std::filesystem::exists(model_path)) {
                 model_path = hf_path + "/model.safetensors.index.json";
             }
-            TransformerConfig config = load_llama_config(config_path.c_str(), dtype_from_str(dtype));
+            TransformerConfig config = load_transformer_config(config_path.c_str(), dtype_from_str(dtype));
             options.ModelType = config.DType;
             auto trainer = new MultiGPUPyTrainer(ngpu, config, options, batch_size, seq_len, grad_accum, memcpy_all_gather, memcpy_send_recv);
             trainer->import_weights(model_path);

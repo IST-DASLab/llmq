@@ -71,7 +71,7 @@ void MultiGPUPyTrainer::export_model(std::string path) {
     run_work([path](sThreadContext& ctx) {
         std::filesystem::path p(path);
         std::filesystem::create_directories(p);
-        save_llama_config(ctx.Model->config(), (p / "config.json").c_str());
+        save_transformer_config(ctx.Model->config(), (p / "config.json").c_str());
         ctx.Model->export_weights((p / "model.safetensors").c_str(), *ctx.Communicator);
     });
 }
