@@ -3,6 +3,8 @@
 //
 
 #include "model.h"
+
+#include "transformer_config.h"
 #include "utilities/allocator.h"
 
 cudnnHandle_t create_cudnn_handle();
@@ -24,7 +26,7 @@ Tensor& IModel::get_target_buffer() {
 }
 
 
-IRunState::IRunState(long batch_size, long seq_len, std::shared_ptr<TensorAllocator> alloc) : B(batch_size), T(seq_len), Allocator(std::move(alloc)) {
+IRunState::IRunState(TransformerConfig config, long batch_size, long seq_len, std::shared_ptr<TensorAllocator> alloc) : Config(config), B(batch_size), T(seq_len), Allocator(std::move(alloc)) {
     int did;
     CUDA_CHECK(cudaGetDevice(&did));
     CUDA_CHECK(cudaGetDeviceProperties(&DeviceProp, did));

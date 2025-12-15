@@ -12,6 +12,7 @@
 
 #include "utilities/stack.h"
 #include "utilities/tensor.h"
+#include "training/transformer_config.h"
 
 class ITensorContainer;
 class NCCLCommunicator;
@@ -113,7 +114,7 @@ class IRunState {
     friend class IModel;
 public:
     IRunState() = default;
-    IRunState(long batch_size, long seq_len, std::shared_ptr<TensorAllocator> alloc);
+    IRunState(TransformerConfig config, long batch_size, long seq_len, std::shared_ptr<TensorAllocator> alloc);
     IRunState(IRunState&&) = default;
     IRunState& operator=(IRunState&&) = default;
 
@@ -133,6 +134,7 @@ public:
     void temp_acquire(Tensor& target);
     void temp_free(Tensor& tensor);
 
+    TransformerConfig Config;
     long B;     //!< Batch size
     long T;     //!< Sequence length
 

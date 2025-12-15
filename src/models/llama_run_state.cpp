@@ -256,56 +256,57 @@ void LLamaRunState::release_res_ffn(int layer_idx, cudaStream_t main_stream) {
     CUDA_CHECK(cudaEventRecord(status.Event, main_stream));
 }
 
-void LLamaRunState::init(TransformerConfig config, long B, long T, DeviceMemoryStack& stack) {
-    long V = config.VocabSize;
-    long C = config.HiddenSize;
-    long H = config.IntermediateSize;
-    auto& alloc = Allocator;
+LLamaRunState::LLamaRunState(TransformerConfig config, LLamaOptions options, long B, long T, DeviceMemoryStack& stack, std::shared_ptr<TensorAllocator> alloc) :
+        IRunState(config, B, T, alloc), Options(options)
+{
+    long V = Config.VocabSize;
+    long C = Config.HiddenSize;
+    long H = Config.IntermediateSize;
 
-    RunStateBuilder builder(config, Options, B, T, alloc);
+    RunStateBuilder builder(Config, Options, B, T, alloc);
 
-    Encoded = alloc->allocate(config.DType, "encoded", {B, T, C});
+    Encoded = alloc->allocate(Config.DType, "encoded", {B, T, C});
     FreqCis = builder.generate_frequencies();
     // We're chunking the logit computation, so we can allocate a much smaller tensor.
     long out_size = div_exact(B*T, (long)Options.LMHeadChunks);
-    Output = Tensor{config.DType,{out_size, V}, nullptr, nullptr, 2, Inputs.Device};
-    LNF = alloc->allocate(config.DType, "lnf", {B, T, C});
+    Output = Tensor{Config.DType,{out_size, V}, nullptr, nullptr, 2, Inputs.Device};
+    LNF = alloc->allocate(Config.DType, "lnf", {B, T, C});
     LNF_Rstd = alloc->allocate(ETensorDType::FP32, "lnf_rstd", {B, T});
-    DLNF = alloc->allocate(config.DType, "d_lnf", {B, T, C});
+    DLNF = alloc->allocate(Config.DType, "d_lnf", {B, T, C});
     long rms_scratch_size = get_rmsnorm_backward_scratch_size(C, DeviceProp);
-    long bias_scratch_size = get_bias_backward_scratch_size(config.DType, config.qkv_channels(), DeviceProp);
+    long bias_scratch_size = get_bias_backward_scratch_size(Config.DType, Config.qkv_channels(), DeviceProp);
     RMSNormScratch = alloc->allocate(ETensorDType::BYTE, "rms_scratch", {rms_scratch_size});
     MatmulBiasScratch = alloc->allocate(ETensorDType::FP32, "bias_scratch", {bias_scratch_size / (long)sizeof(float)});
     // batch size for chunked attention backward
     long chunk_batch_size = div_exact(B, (long)Options.AttBwdChunks);
-    long cudnn_ws_size = cudnn_get_workspace_size(chunk_batch_size, T, config.NumQueryHeads, config.NumKeyValHeads, config.head_size(), CudnnHandle);
+    long cudnn_ws_size = cudnn_get_workspace_size(chunk_batch_size, T, Config.NumQueryHeads, Config.NumKeyValHeads, Config.head_size(), CudnnHandle);
     CuDNNWorkspace = Tensor{ETensorDType::BYTE, {cudnn_ws_size}, nullptr, nullptr, 1, Inputs.Device};
-    DEmb = alloc->allocate(config.DType, "d_emb", {B, T, C});
+    DEmb = alloc->allocate(Config.DType, "d_emb", {B, T, C});
 
     Acts = builder.allocate_forward_buffers(LNF);
     ResidualsAreReady = create_named_event("residual_ready");
     if(Options.OffloadResidual) {
         DeviceResiduals.reserve(2);
-        OffloadedResiduals.reserve(config.NumLayers);
+        OffloadedResiduals.reserve(Config.NumLayers);
         for(int i = 0; i < 2; ++i) {
-            DeviceResiduals.emplace_back(alloc->allocate(config.DType, "res_ffn", {B, T, C}));
+            DeviceResiduals.emplace_back(alloc->allocate(Config.DType, "res_ffn", {B, T, C}));
             OffloadedResidualState.emplace_back(
                 create_named_event((std::string("offload_res_ffn_") + std::to_string(i)).c_str()),
                 -1, false
             );
         }
-        for(int i = 0; i < config.NumLayers; ++i) {
+        for(int i = 0; i < Config.NumLayers; ++i) {
             OffloadedResiduals.push_back(
-                alloc->allocate(config.DType, "ffn-res-off", EAllocationType::PINNED, {B, T, C}));
+                alloc->allocate(Config.DType, "ffn-res-off", EAllocationType::PINNED, {B, T, C}));
         }
     } else {
-        DeviceResiduals.reserve(config.NumLayers);
-        for(int i = 0; i < config.NumLayers; ++i) {
-            DeviceResiduals.emplace_back(alloc->allocate(config.DType, "res_ffn", {B, T, C}));
+        DeviceResiduals.reserve(Config.NumLayers);
+        for(int i = 0; i < Config.NumLayers; ++i) {
+            DeviceResiduals.emplace_back(alloc->allocate(Config.DType, "res_ffn", {B, T, C}));
         }
     }
 
-    long num_c_groups = div_ceil(C, (long)(16 / get_dtype_size(config.DType) * 32));
+    long num_c_groups = div_ceil(C, (long)(16 / get_dtype_size(Config.DType) * 32));
     EncoderBwdScratch = alloc->allocate(ETensorDType::INT32, "enc_bw_scratch", {B, T, num_c_groups * 5});
     EncoderBwdIndices = alloc->allocate(ETensorDType::INT32, "enc_bw_idx", EAllocationType::PINNED, {B, T, num_c_groups});
     EncoderBwdInfo = alloc->allocate(ETensorDType::INT32, "env_bw_info", EAllocationType::PINNED, {B, T, 4 * num_c_groups});
@@ -317,20 +318,20 @@ void LLamaRunState::init(TransformerConfig config, long B, long T, DeviceMemoryS
 
     OptEmbeddingsDone = create_named_event("optimizer lmhead done");
 
-    for(int i = 0; i < config.NumLayers + 1; ++i) {
+    for(int i = 0; i < Config.NumLayers + 1; ++i) {
         LayerUpdateDone.push_back(create_named_event(("opt " + std::to_string(i) + " done").c_str()));
     }
 
     DActs = builder.allocate_backward_buffers(DLNF);
-    for (int i = 0; i < config.NumLayers; ++i) {
+    for (int i = 0; i < Config.NumLayers; ++i) {
         // DMlpUp is handled in-place
         DActs[i].DMlpUp.Value = Acts[i].MlpUp;
     }
 
-    if(Options.matmul_dtype() != config.DType) {
-        AbsMaxes = alloc->allocate(ETensorDType::FP32, "abs_max", {config.NumLayers, 8l*QWEN2_NUM_LINEAR_OPS});
+    if(Options.matmul_dtype() != Config.DType) {
+        AbsMaxes = alloc->allocate(ETensorDType::FP32, "abs_max", {Config.NumLayers, 8l*QWEN2_NUM_LINEAR_OPS});
         float* abs_max_ptr = AbsMaxes->get<float>();
-        for(int i = 0; i < config.NumLayers; ++i) {
+        for(int i = 0; i < Config.NumLayers; ++i) {
             float* layer_abs_maxes = abs_max_ptr + 8 * QWEN2_NUM_LINEAR_OPS * i;
 
             Acts[i].LN1.Quant->Stats = layer_abs_maxes + 0;
@@ -416,10 +417,7 @@ void LLamaRunState::debug_iterate_abs_maxes(const std::function<void(const std::
 
 
 LLamaRunState allocate_run_state(TransformerConfig config, LLamaOptions options, long B, long T, DeviceMemoryStack& stack, std::shared_ptr<TensorAllocator> alloc) {
-    LLamaRunState state{{B, T, alloc}};
-    state.Options = options;
-    state.init(config, B, T, stack);
-    return state;
+    return LLamaRunState(config, options, B, T, stack, alloc);
 }
 
 Tensor LLamaRunState::acquire_mlp_up(int layer) {

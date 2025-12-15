@@ -57,7 +57,8 @@ struct LLamaRunState : public IRunState {
     using LayerActivations = ::sLLamaLayerActivations;
     using LayerGradients = ::sLLamaLayerGradients;
 
-    TransformerConfig Config;
+    LLamaRunState() = default;
+    LLamaRunState(TransformerConfig config, LLamaOptions options, long B, long T, DeviceMemoryStack& stack, std::shared_ptr<TensorAllocator> alloc);
     LLamaOptions Options;
 
     // Activations
@@ -117,14 +118,9 @@ struct LLamaRunState : public IRunState {
     cudaGraphExec_t ForwardBlockGraph = nullptr;
     cudaGraphExec_t BackwardBlockGraph = nullptr;
 
-    void init(TransformerConfig config, long B, long T, DeviceMemoryStack& stack);
-
     void debug_iterate_abs_maxes(const std::function<void(const std::string&, float)>& callback);
 };
 
 LLamaRunState allocate_run_state(TransformerConfig config, LLamaOptions options, long B, long T, DeviceMemoryStack& stack, std::shared_ptr<TensorAllocator> alloc);
-
-Tensor& get_input_buffer(LLamaRunState& acts);
-Tensor& get_target_buffer(LLamaRunState& acts);
 
 #endif //LLMQ_LLAMA_RUN_STATE_H
