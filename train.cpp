@@ -85,7 +85,7 @@ struct TrainingRunner {
     int MajorCkptEvery = -1;
     int LogGPUEvery = 25;
 
-    bool ContinueFromCheckpoint = false;
+    std::optional<int> ContinueFromCheckpoint;
 
     int NGPUs = 0;
     bool MemcpyAllGather = false;
@@ -161,7 +161,8 @@ void TrainingRunner::load_training_config(int argc, const char** argv) {
     app.add_option("--ckpt-interval", CkptEvery, "How many optimizer steps between checkpoints");
     app.add_option("--ckpt-keep-n", CkptToKeep, "Clean up old checkpoints, only preserving the latest n.");
     app.add_option("--ckpt-major", MajorCkptEvery, "Make every nth checkpoint a major checkpoint, which does not get cleaned up.");
-    app.add_flag("--continue", ContinueFromCheckpoint, "Continue from latest checkpoint");
+    auto continue_from_checkpoint = app.add_option("--continue", ContinueFromCheckpoint,
+        "Continue from checkpoint. If no number is given, uses the latest checkpoint")->expected(0, 1)->default_str("-1");
 
     app.add_option("--log-file", LogFile, "Where to save the training log");
     app.add_option("--gpus", NGPUs, "How many GPUs to use for training.");
@@ -428,8 +429,12 @@ void TrainingRunner::run_training(int argc, const char** argv, NCCLCommunicator&
 
 
     int latest_step = -1;
-    if (ContinueFromCheckpoint) {
-        latest_step = find_latest_checkpoint(CkptDir);
+    if (ContinueFromCheckpoint.has_value()) {
+        if (ContinueFromCheckpoint.value() < 0) {
+            latest_step = find_latest_checkpoint(CkptDir);
+        } else {
+            latest_step = ContinueFromCheckpoint.value();
+        }
         if (latest_step < 0) {
             std::cerr << "No checkpoint found in " << CkptDir << std::endl;
             std::cerr << " starting from scratch" << std::endl;
