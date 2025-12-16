@@ -74,11 +74,17 @@ __device__ SoftmaxParams prepare_softmax_blockwide3(int64_t idx, const floatX* i
     // main loop for the bulk of the iterations (no bounds checking required!)
     for (; i >= 0; i -= blockDim.x) {
         x128 packed_x = x128::load(x + i * x128::size); // load and keep in cache until fused_classifier loop
+        // two-pass calculation: First, determine the new max and adjust the existing
+        // thread_sumval, then add the new values.
+        // having two loops almost halves the number of expf calls required.
+        float old_maxval = thread_maxval;
         for(int k = 0; k < x128::size; ++k) {
             float v = (float)packed_x[k];
-            float old_maxval = thread_maxval;
             thread_maxval = fmaxf(thread_maxval, v);
-            thread_sumval *= expf((old_maxval - thread_maxval));
+        }
+        thread_sumval *= expf(old_maxval - thread_maxval);
+        for(int k = 0; k < x128::size; ++k) {
+            float v = (float)packed_x[k];
             thread_sumval += expf(v - thread_maxval);
         }
     }
