@@ -148,10 +148,10 @@ __global__ void __launch_bounds__(1024, 1)
         if (WriteDLogits){
             // reduce cache persistence for the overwritten logits
             // to maximise the probability that logits remain in cache between prepare_softmax and here
-            packed_logits_vec.store(logits + idx * P + i * x128::size); // TODO CS
+            packed_logits_vec.store_cs(logits + idx * P + i * x128::size);
         }
         if (WriteProbs) {
-            packed_probs.store(probs + idx * P + i * x128::size);
+            packed_probs.store_cs(probs + idx * P + i * x128::size);
         }
     }
 

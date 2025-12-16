@@ -16,7 +16,9 @@ enum class TransferMode {
     DEFAULT,
     LDG,
     LU,
-    CS,
+    LOAD_CS,
+    STORE_CS,
+    STORE_CG
 };
 
 template<TransferMode Mode>
@@ -47,10 +49,26 @@ struct Transfer<TransferMode::LU> {
 };
 
 template<>
-struct Transfer<TransferMode::CS> {
+struct Transfer<TransferMode::LOAD_CS> {
     template<class T>
     __device__ static void call(T* dst, const T* src) {
         *dst = __ldcs(src);
+    }
+};
+
+template<>
+struct Transfer<TransferMode::STORE_CG> {
+    template<class T>
+    __device__ static void call(T* dst, const T* src) {
+        __stcg(dst, *src);
+    }
+};
+
+template<>
+struct Transfer<TransferMode::STORE_CS> {
+    template<class T>
+    __device__ static void call(T* dst, const T* src) {
+        __stcs(dst, *src);
     }
 };
 
@@ -208,12 +226,20 @@ public:
 
     static __device__ GenericVector load_cs(const ElementType* address) {
         GenericVector result;
-        memcpy_aligned<size, detail::TransferMode::CS>(result.values, address);
+        memcpy_aligned<size, detail::TransferMode::LOAD_CS>(result.values, address);
         return result;
     }
 
     __host__ __device__ void store(ElementType* dst) {
         memcpy_aligned<size, detail::TransferMode::DEFAULT>(dst, values);
+    }
+
+    __host__ __device__ void store_cg(ElementType* dst) {
+        memcpy_aligned<size, detail::TransferMode::STORE_CG>(dst, values);
+    }
+
+    __host__ __device__ void store_cs(ElementType* dst) {
+        memcpy_aligned<size, detail::TransferMode::STORE_CS>(dst, values);
     }
 
 private:
