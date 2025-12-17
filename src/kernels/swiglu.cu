@@ -94,7 +94,7 @@ __global__ void swiglu_forward_quant_kernel(__nv_fp8_e4m3* out, float* scale_ptr
 
 //! persistent kernel for swiglu. If the input tensor is large enough, the persistent kernel gives maybe 5-10% speed-up
 //! over the simple baseline.
-template<typename floatX>
+template<bool HasAbsMax, typename floatX>
 __global__ __launch_bounds__(128) void swiglu_forward_persistent_kernel(floatX* out, const floatX* inp, float* abs_max_ptr, int BT, int C) {
     using x128 = GenericVector<floatX, 16/sizeof(floatX)>;
 
@@ -109,7 +109,7 @@ __global__ __launch_bounds__(128) void swiglu_forward_persistent_kernel(floatX* 
 
     // only handle abs-max if requested; these are guaranteed to be warp-convergent branches,
     // so they don't cost us in this memory-bound kernel.
-    if (abs_max_ptr) {
+    if (HasAbsMax) {
         if(threadIdx.x == 0) {
             block_max = 0.f;
         }
@@ -159,7 +159,7 @@ __global__ __launch_bounds__(128) void swiglu_forward_persistent_kernel(floatX* 
             float x1 = (float)up_inp[k];
             float x2 = (float)gate_inp[k];
             packed_out[k] = (floatX)((x1 * x2) / (1.0f + expf(-x2)));
-            if (abs_max_ptr) {
+            if (HasAbsMax) {
                 thread_max = fmaxf(thread_max, fabsf((float)packed_out[k]));
             }
         }
@@ -167,7 +167,9 @@ __global__ __launch_bounds__(128) void swiglu_forward_persistent_kernel(floatX* 
         phase = (phase + 1) % 2;
     }
 
-    handle_absmax_reduction(abs_max_ptr, &block_max, thread_max);
+    if (HasAbsMax) {
+        handle_absmax_reduction(abs_max_ptr, &block_max, thread_max);
+    }
 }
 
 template<typename floatX>
@@ -311,7 +313,11 @@ void swiglu_forward_impl(floatX* out, const floatX* inp, float* abs_max_ptr, int
     assert(C % x128::size == 0);
     assert((B*T*C) % (block_size * x128::size) == 0);
     int bpsm;
-    CUDA_CHECK(cudaOccupancyMaxActiveBlocksPerMultiprocessor(&bpsm, swiglu_forward_persistent_kernel<floatX>, block_size, 0));
+    if (abs_max_ptr) {
+        CUDA_CHECK(cudaOccupancyMaxActiveBlocksPerMultiprocessor(&bpsm, swiglu_forward_persistent_kernel<true, floatX>, block_size, 0));
+    } else {
+        CUDA_CHECK(cudaOccupancyMaxActiveBlocksPerMultiprocessor(&bpsm, swiglu_forward_persistent_kernel<false, floatX>, block_size, 0));
+    }
     int sms;
     CUDA_CHECK(cudaDeviceGetAttribute(&sms, cudaDevAttrMultiProcessorCount, 0));
 
@@ -320,7 +326,11 @@ void swiglu_forward_impl(floatX* out, const floatX* inp, float* abs_max_ptr, int
     if (num_blocks < bpsm * sms) {
         swiglu_forward_kernel<<<num_blocks, block_size, 0, stream>>>(out, inp, abs_max_ptr, C);
     } else {
-        swiglu_forward_persistent_kernel<<<bpsm * sms, block_size, 0, stream>>>(out, inp, abs_max_ptr, B * T, C);
+        if (abs_max_ptr) {
+            swiglu_forward_persistent_kernel<true><<<bpsm * sms, block_size, 0, stream>>>(out, inp, abs_max_ptr, B * T, C);
+        } else {
+            swiglu_forward_persistent_kernel<false><<<bpsm * sms, block_size, 0, stream>>>(out, inp, nullptr, B * T, C);
+        }
     }
     CUDA_CHECK(cudaGetLastError());
 }
