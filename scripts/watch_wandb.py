@@ -9,6 +9,8 @@
 import argparse
 import datetime
 import json
+import time
+from pathlib import Path
 from typing import Optional
 
 import wandb
@@ -62,8 +64,10 @@ def log_line(run: "wandb.Run", entry: dict):
     elif kind == "dataset":
         pass
         # run.config["dataset"] = entry
-    elif kind in ["option", "info", "message"]:
+    elif kind in ["option", "info"]:
         pass
+    elif kind == "message":
+        print(entry["message"])
     elif kind == "abs-maxes":
         for stats in entry["abs_maxes"]:
             run.log({f"abs_maxes/{stats['name']}": stats['value']}, step=step)
@@ -84,29 +88,39 @@ def log_line(run: "wandb.Run", entry: dict):
         raise RuntimeError(f"Unknown kind {kind}")
 
 def convert_log(file_name: str, *, name: Optional[str], project: str, notes: str="", tags: list[str] = None):
-    log_data = json.load(file_name)
-
-    if name is None:
+    while name is None:
+        log_data = json.loads(Path(file_name).read_text())
         for entry in log_data:
             if entry["log"] == "option":
                 opt_name = entry["name"]
                 opt_value = entry["value"]
                 if opt_name == "name":
                     name = opt_value
+        time.sleep(10)
 
+    entry_count = 0
+    running = True
     with wandb.init(
             project=project,
             name=name,
             notes=notes,
             tags=tags,
     ) as run:
-        for entry in log_data:
-            log_line(run, entry)
-
+        while running:
+            content = Path(file_name).read_text()
+            log_data = json.loads(content)
+            for i, entry in enumerate(log_data):
+                if i < entry_count:
+                    continue
+                if entry["log"] == "message" and entry["message"].startswith("Done. validation loss"):
+                    running = False
+                log_line(run, entry)
+                entry_count += 1
+            time.sleep(10)
 
 def main():
     parser = argparse.ArgumentParser(description="Plot training run")
-    parser.add_argument("--log-file", type=argparse.FileType("r"), help="Log file", default="log.json")
+    parser.add_argument("--log-file", type=str, help="Log file", default="log.json")
     parser.add_argument("--project", help="WandB project name")
     parser.add_argument("--name", help="Name for the run", default=None)
     args = parser.parse_args()
