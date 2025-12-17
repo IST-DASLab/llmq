@@ -163,6 +163,8 @@ struct LLamaRunState {
     cublasLtHandle_t CublasLtHandle;
 
     void init(LLamaConfig config, long B, long T, DeviceMemoryStack& stack);
+
+    void debug_iterate_abs_maxes(const std::function<void(const std::string&, float)>& callback);
 };
 
 LLamaRunState allocate_run_state(LLamaConfig config, LLamaOptions options, long B, long T, DeviceMemoryStack& stack, std::shared_ptr<TensorAllocator> alloc);
