@@ -342,7 +342,7 @@ void swiglu_forward_quant(__nv_fp8_e4m3* out, float* scale_ptr, const nv_bfloat1
     assert(C % x128::size == 0);
     assert((B*T*C) % (block_size * x128::size) == 0);
     int bpsm;
-    CUDA_CHECK(cudaOccupancyMaxActiveBlocksPerMultiprocessor(&bpsm, swiglu_forward_persistent_kernel<nv_bfloat16>, block_size, 0));
+    CUDA_CHECK(cudaOccupancyMaxActiveBlocksPerMultiprocessor(&bpsm, swiglu_forward_quant_persistent_kernel<nv_bfloat16>, block_size, 0));
     int sms;
     CUDA_CHECK(cudaDeviceGetAttribute(&sms, cudaDevAttrMultiProcessorCount, 0));
 
