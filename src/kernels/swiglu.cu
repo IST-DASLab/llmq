@@ -11,6 +11,7 @@
 #include "kernels.h"
 #include "utilities/utils.h"
 #include "utilities/vec.cuh"
+#include "utilities/strided_iter.cuh"
 #include "kernel_utils.cuh"
 
 // ----------------------------------------------------------------------------
@@ -103,6 +104,7 @@ __global__ __launch_bounds__(128) void swiglu_forward_persistent_kernel(floatX* 
     __shared__ float block_max;
     __shared__ alignas(16) floatX up_buffer[2 * 128 * (16/sizeof(floatX))];
     __shared__ alignas(16) floatX gate_buffer[2 * 128 * (16/sizeof(floatX))];
+
     // only handle abs-max if requested; these are guaranteed to be warp-convergent branches,
     // so they don't cost us in this memory-bound kernel.
     if (abs_max_ptr) {
@@ -114,18 +116,25 @@ __global__ __launch_bounds__(128) void swiglu_forward_persistent_kernel(floatX* 
     float thread_max = 0.f;
     // Per-thread slice within shared buffers
     const int lane_base = threadIdx.x * x128::size;
+
+    floatX* up_ptr_smem = up_buffer + lane_base;
+    floatX* gate_ptr_smem = gate_buffer + lane_base;
+
+    StridedIterator<int> iter(start, stride, C);
+
     if(start < BT*C) {
-        int bt = start / C;
-        int c = start % C;
-        __pipeline_memcpy_async(up_buffer + lane_base, inp + (bt * C * 2 + c), 16);
-        __pipeline_memcpy_async(gate_buffer + lane_base,  inp + (bt * C * 2 + c + C), 16);
+        auto [bt, c] = iter;
+        __pipeline_memcpy_async(up_ptr_smem, inp + (bt * C * 2 + c), 16);
+        __pipeline_memcpy_async(gate_ptr_smem,  inp + (bt * C * 2 + c + C), 16);
     }
     __pipeline_commit();
+
+    iter.advance();
+
     if(start + stride < BT*C) {
-        int bt = (start + stride) / C;
-        int c = (start + stride) % C;
-        __pipeline_memcpy_async(up_buffer + lane_base + 128 * x128::size, inp + (bt * C * 2 + c), 16);
-        __pipeline_memcpy_async(gate_buffer + lane_base + 128 * x128::size,  inp + (bt * C * 2 + c + C), 16);
+        auto [bt, c] = iter;
+        __pipeline_memcpy_async(up_ptr_smem + 128 * x128::size, inp + (bt * C * 2 + c), 16);
+        __pipeline_memcpy_async(gate_ptr_smem + 128 * x128::size,  inp + (bt * C * 2 + c + C), 16);
     }
     __pipeline_commit();
 
@@ -133,13 +142,13 @@ __global__ __launch_bounds__(128) void swiglu_forward_persistent_kernel(floatX* 
     for(int idx = start; idx < BT*C; idx += stride) {
         // note: each thread reads only what it writes itself, so there is no need for further synchronization here
         __pipeline_wait_prior(1);
-        x128 up_inp = x128::load(up_buffer + lane_base + 128 * x128::size * phase);
-        x128 gate_inp = x128::load(gate_buffer + lane_base + 128 * x128::size * phase);
+        x128 up_inp = x128::load(up_ptr_smem + 128 * x128::size * phase);
+        x128 gate_inp = x128::load(gate_ptr_smem + 128 * x128::size * phase);
+        iter.advance();
         if(idx + 2*stride < BT*C) {
-            int bt = (idx + 2*stride) / C;
-            int c = (idx + 2*stride) % C;
-            __pipeline_memcpy_async(up_buffer + lane_base + 128 * x128::size * phase, inp + (bt * C * 2 + c), 16);
-            __pipeline_memcpy_async(gate_buffer + lane_base + 128 * x128::size * phase,  inp + (bt * C * 2 + c + C), 16);
+            auto [bt, c] = iter;
+            __pipeline_memcpy_async(up_ptr_smem + 128 * x128::size * phase, inp + (bt * C * 2 + c), 16);
+            __pipeline_memcpy_async(gate_ptr_smem + 128 * x128::size * phase,  inp + (bt * C * 2 + c + C), 16);
         }
         __pipeline_commit();
 
@@ -177,16 +186,16 @@ __global__ void swiglu_forward_quant_persistent_kernel(__nv_fp8_e4m3* out, float
 
     // Per-thread slice within shared buffers
     const int lane_base = threadIdx.x * x128::size;
+    StridedIterator<int> iter(start, stride, C);
     if(start < BT*C) {
-        int bt = start / C;
-        int c = start % C;
+        auto [bt, c] = iter;
         __pipeline_memcpy_async(up_buffer + lane_base, inp + (bt * C * 2 + c), 16);
         __pipeline_memcpy_async(gate_buffer + lane_base,  inp + (bt * C * 2 + c + C), 16);
     }
     __pipeline_commit();
+    iter.advance();
     if(start + stride < BT*C) {
-        int bt = (start + stride) / C;
-        int c = (start + stride) % C;
+        auto [bt, c] = iter;
         __pipeline_memcpy_async(up_buffer + lane_base + 128 * x128::size, inp + (bt * C * 2 + c), 16);
         __pipeline_memcpy_async(gate_buffer + lane_base + 128 * x128::size,  inp + (bt * C * 2 + c + C), 16);
     }
@@ -198,9 +207,9 @@ __global__ void swiglu_forward_quant_persistent_kernel(__nv_fp8_e4m3* out, float
         __pipeline_wait_prior(1);
         x128 up_inp = x128::load(up_buffer + lane_base + 128 * x128::size * phase);
         x128 gate_inp = x128::load(gate_buffer + lane_base + 128 * x128::size * phase);
+        iter.advance();
         if(idx + 2*stride < BT*C) {
-            int bt = (idx + 2*stride) / C;
-            int c = (idx + 2*stride) % C;
+            auto [bt, c] = iter;
             __pipeline_memcpy_async(up_buffer + lane_base + 128 * x128::size * phase, inp + (bt * C * 2 + c), 16);
             __pipeline_memcpy_async(gate_buffer + lane_base + 128 * x128::size * phase,  inp + (bt * C * 2 + c + C), 16);
         }
