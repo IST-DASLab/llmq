@@ -134,7 +134,7 @@ __global__ void adamw_kernel(floatX* params_memory, const floatX* grads_memory, 
                  seed,
                  VecElems * (blockIdx.x * blockDim.x + threadIdx.x));
     for (int i = 0; i < VecElems; i++) {
-        thread_abs_max = std::max(thread_abs_max, (float)p_new[i]);
+        thread_abs_max = std::max(thread_abs_max, fabsf((float)p_new[i]));
     }
 
     handle_absmax_reduction(abs_max_ptr, &block_abs_max, thread_abs_max);
