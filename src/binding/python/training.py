@@ -268,6 +268,8 @@ def log_line_to_wandb(run: "wandb.Run", entry: dict):
         # run.config["dataset"] = entry
     elif kind in ["option", "info"]:
         pass
+    elif kind == "message":
+        print(entry["message"])
     elif kind == "sol":
         if entry["rank"] != 0:
             return
