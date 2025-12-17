@@ -4,6 +4,8 @@
 
 #include "model.h"
 
+#include <cmath>
+
 #include "transformer_config.h"
 #include "utilities/allocator.h"
 
@@ -94,4 +96,71 @@ void IRunState::temp_acquire(Tensor& target) {
 
 void IRunState::temp_free(Tensor& tensor) {
     Stack.free(tensor);
+}
+
+
+std::pair<float, float> IRunState::record_step(float loss, float norm) {
+    LossOutliers.record(loss);
+    NormOutliers.record(norm);
+
+    return {LossOutliers.eval(loss), NormOutliers.eval(norm)};
+}
+
+
+IRunState::OutlierDetector::OutlierDetector(int window_size) : mWindowSize(window_size){
+    mValues.reserve(window_size);
+}
+
+void IRunState::OutlierDetector::record(float value) {
+    double v_n = value;
+    if (mValues.size() < mWindowSize) {
+        // simply add the value and accumulate buffers
+        mValues.push_back(value);
+        mSum += v_n;
+        mSumSq += v_n * v_n;
+    } else {
+        // we need to subtract the old value, and add the new one.
+        double v_o = mValues[mIndex];
+        mSum += v_n - v_o;
+        mSumSq += v_n * v_n - v_o * v_o;
+
+        mValues[mIndex] = value;
+        mIndex = (mIndex + 1) % mWindowSize;
+    }
+
+    // periodically recompute to prevent accumulation of
+    // rounding errors
+    if (mIndex == 0 && mValues.size() == mWindowSize) {
+        re_evaluate();
+    }
+}
+
+float IRunState::OutlierDetector::eval(float value) const {
+    if (mValues.size() < mWindowSize) {
+        return 0.0;
+    } else {
+        double mean = mSum / mWindowSize;
+        double variance = mSumSq / mWindowSize - mean * mean;
+        double std_dev = std::sqrt(variance);
+        if (std_dev == 0.0) {
+            return 0.0;
+        }
+        return (static_cast<double>(value) - mean) / std_dev;
+    }
+}
+
+void IRunState::OutlierDetector::re_evaluate() {
+    mSum = 0.0;
+    mSumSq = 0.0;
+    for (float val : mValues) {
+        mSum += val;
+        mSumSq += val * val;
+    }
+}
+
+void IRunState::OutlierDetector::reset(int window_size, int index, std::vector<float> values) {
+    mWindowSize = window_size;
+    mIndex = index;
+    mValues = std::move(values);
+    re_evaluate();
 }
