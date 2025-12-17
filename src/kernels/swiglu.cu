@@ -98,12 +98,14 @@ template<typename floatX>
 __global__ __launch_bounds__(128) void swiglu_forward_persistent_kernel(floatX* out, const floatX* inp, float* abs_max_ptr, int BT, int C) {
     using x128 = GenericVector<floatX, 16/sizeof(floatX)>;
 
-    int start = (blockIdx.x * blockDim.x + threadIdx.x) * x128::size;
-    int stride = gridDim.x * blockDim.x * x128::size;
+    const int start = (blockIdx.x * blockDim.x + threadIdx.x) * x128::size;
+    const int stride = gridDim.x * blockDim.x * x128::size;
 
+    // ensure alignment is multiple of cache-line-sector size, not just multiple of
+    // transfer size, to avoid overfetch!
+    __shared__ alignas(32) floatX up_buffer[2 * 128 * (16/sizeof(floatX))];
+    __shared__ alignas(32) floatX gate_buffer[2 * 128 * (16/sizeof(floatX))];
     __shared__ float block_max;
-    __shared__ alignas(16) floatX up_buffer[2 * 128 * (16/sizeof(floatX))];
-    __shared__ alignas(16) floatX gate_buffer[2 * 128 * (16/sizeof(floatX))];
 
     // only handle abs-max if requested; these are guaranteed to be warp-convergent branches,
     // so they don't cost us in this memory-bound kernel.
@@ -181,8 +183,8 @@ __global__ void swiglu_forward_quant_persistent_kernel(__nv_fp8_e4m3* out, float
     int start = (blockIdx.x * blockDim.x + threadIdx.x) * x128::size;
     int stride = gridDim.x * blockDim.x * x128::size;
 
-    __shared__ alignas(16) floatX up_buffer[2 * 128 * (16/sizeof(floatX))];
-    __shared__ alignas(16) floatX gate_buffer[2 * 128 * (16/sizeof(floatX))];
+    __shared__ alignas(32) floatX up_buffer[2 * 128 * (16/sizeof(floatX))];
+    __shared__ alignas(32) floatX gate_buffer[2 * 128 * (16/sizeof(floatX))];
 
     // Per-thread slice within shared buffers
     const int lane_base = threadIdx.x * x128::size;
