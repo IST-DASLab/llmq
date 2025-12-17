@@ -94,6 +94,7 @@ struct TrainingRunner {
     LLamaOptions Options;
 
     int LogAllocations = -1;
+    int DebugLogAbsMaxes = -1;
     std::chrono::steady_clock::time_point BeginStartup;
 
     void load_training_config(int argc, const char** argv);
@@ -130,6 +131,7 @@ void TrainingRunner::load_training_config(int argc, const char** argv) {
     app.add_option("--name", RunName, "Associate a name with this run. This will not influence any computations. You can use %n as part of specifying log, output, and checkpoint file names.");
     app.add_option("--debug-log-allocations", LogAllocations, "Log all memory allocations larger than the given number (in MiB)");
     app.add_flag("--debug-time-breakdown", Options.TriggerTimingEvents, "Log additional timing information");
+    app.add_flag("--debug-log-abs-max", DebugLogAbsMaxes, "Log abs-maxes every n steps");
 
     // optimizer
     app.add_option("--lr,--learning-rate", LearningRate, "Base learning rate")->check(CLI::NonNegativeNumber);
@@ -532,6 +534,15 @@ void TrainingRunner::run_training(int argc, const char** argv, NCCLCommunicator&
         float step_loss = model.get_loss();
         float step_norm = model.get_norm();
         logger.log_step(step, train_loader.epoch() + 0.01f*train_loader.progress(), B*T*GradAccSteps*comm.world_size(), narrow<int>(ms), step_norm, step_loss / (B*T*GradAccSteps), lr);
+
+        if (DebugLogAbsMaxes > 0 && step % DebugLogAbsMaxes == 0) {
+            auto& rs = model.run_state();
+            std::vector<std::pair<std::string, float>> abs_maxes;
+            rs.debug_iterate_abs_maxes([&abs_maxes](const std::string& name, float value) {
+                abs_maxes.emplace_back(std::make_pair(name, value));
+            });
+            logger.log_abs_maxes(step, abs_maxes);
+        }
 
         if(Options.TriggerTimingEvents) {
             // timing breakdown
