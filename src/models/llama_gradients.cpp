@@ -141,25 +141,34 @@ sLLamaBlockWeights<TensorShard>& LLamaGradientsUnsharded::get_block_shard(int la
 
 void LLamaGradientsUnsharded::notify_embeddings(cudaStream_t stream, NCCLCommunicator& comm) {
     if(!mIsLastMicroStep) return;
-    scatter_reduce(mFullGradient.NonBlocks.Embeddings, stream, mGradEvent, comm);
+    if (comm.world_size() != 1) {
+        NvtxRange r{"notify_embeddings"};
+        scatter_reduce(mFullGradient.NonBlocks.Embeddings, stream, mGradEvent, comm);
+    }
 }
 
 void LLamaGradientsUnsharded::notify_lmhead(cudaStream_t stream, NCCLCommunicator& comm) {
     if(!mIsLastMicroStep) return;
     if(mFullGradient.NonBlocks.LMHead.Data == mFullGradient.NonBlocks.Embeddings.Data) return;    // sync lmhead with embeddings
-    NvtxRange r{"notify_lmhead"};
-    scatter_reduce(mFullGradient.NonBlocks.LMHead, stream, mGradEvent, comm);
+    if (comm.world_size() != 1) {
+        NvtxRange r{"notify_lmhead"};
+        scatter_reduce(mFullGradient.NonBlocks.LMHead, stream, mGradEvent, comm);
+    }
 }
 
 void LLamaGradientsUnsharded::notify_lnf_w(cudaStream_t stream, NCCLCommunicator& comm) {
     if(!mIsLastMicroStep) return;
-    scatter_reduce(mFullGradient.NonBlocks.LNF_w, stream, mGradEvent, comm);
+    if (comm.world_size() != 1) {
+        scatter_reduce(mFullGradient.NonBlocks.LNF_w, stream, mGradEvent, comm);
+    }
 }
 
 void LLamaGradientsUnsharded::notify_block(int layer_idx, cudaStream_t stream, NCCLCommunicator& comm) {
     if(!mIsLastMicroStep) return;
     auto& dw = mFullGradient.Blocks[layer_idx];
-    scatter_reduce(layer_idx, dw, stream, mGradEvent, comm);
+    if (comm.world_size() != 1) {
+        scatter_reduce(layer_idx, dw, stream, mGradEvent, comm);
+    }
 }
 
 // ---------------------------------------------------------------------------------------------------------------------
