@@ -145,12 +145,12 @@ public:
     std::shared_ptr<TensorAllocator> Allocator;
     DeviceMemoryStack Stack;
 
-    Tensor Inputs;          // (B, T) Int32
-    Tensor Targets;         // (B, T) Int32
-    Tensor Losses;          // (B, T) FP32
+    Tensor Inputs;                      // (B, T) Int32
+    Tensor Targets;                     // (B, T) Int32
+    Tensor Losses;                      // (B, T) FP32
 
-    float* NormHost = nullptr;        // single value
-    float* LossHost = nullptr;        // single value
+    float* NormHost = nullptr;          // single value
+    float* LossHost = nullptr;          // single value
 
     std::pair<float, float> record_step(float loss, float norm);
 
