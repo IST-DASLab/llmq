@@ -416,6 +416,35 @@ void LLamaRunState::init(LLamaConfig config, long B, long T, DeviceMemoryStack& 
     }
 }
 
+void LLamaRunState::debug_iterate_abs_maxes(const std::function<void(const std::string&, float)>& callback) {
+    if (Options.MatmulType != ETensorDType::FP8_E4M3) return;
+
+    std::vector<float> abs_max_host(Config.NumLayers * 8 * QWEN2_NUM_LINEAR_OPS);
+    CUDA_CHECK(cudaMemcpy(abs_max_host.data(), AbsMaxes->get<float>(), AbsMaxes->bytes(), cudaMemcpyDeviceToHost));
+    for(int i = 0; i < Config.NumLayers; ++i) {
+        // we do not calculate abs-maxes for all tensors, only those that will be quantized
+        // therefore, only the non-commented-out entries contain meaningful values.
+        float* layer_abs_maxes = abs_max_host.data() + 8 * QWEN2_NUM_LINEAR_OPS * i;
+        callback(std::string("act.ln1.") + std::to_string(i), layer_abs_maxes[0]);
+        // callback(std::string("act.qkv.") + std::to_string(i), layer_abs_maxes[2]);
+        callback(std::string("act.att") + std::to_string(i), layer_abs_maxes[8]);
+        // callback(std::string("act.att_o.") + std::to_string(i), layer_abs_maxes[10]);
+        callback(std::string("act.ln2.") + std::to_string(i), layer_abs_maxes[16]);
+        // callback(std::string("act.mlp_up.") + std::to_string(i), layer_abs_maxes[18]);
+        callback(std::string("act.swiglu.") + std::to_string(i), layer_abs_maxes[24]);
+        // callback(std::string("act.mlp_down.") + std::to_string(i), layer_abs_maxes[26]);
+        callback(std::string("grad.qkv.") + std::to_string(i), layer_abs_maxes[4]);
+        // callback(std::string("grad.ln1.") + std::to_string(i), layer_abs_maxes[6]);
+        callback(std::string("grad.res_att.") + std::to_string(i), layer_abs_maxes[12]);
+        // callback(std::string("grad.att_y.") + std::to_string(i), layer_abs_maxes[14]);
+        callback(std::string("grad.mlp_up.") + std::to_string(i), layer_abs_maxes[20]);
+        // callback(std::string("grad.ln2.") + std::to_string(i), layer_abs_maxes[22]);
+        callback(std::string("grad.res_ffn.") + std::to_string(i), layer_abs_maxes[28]);
+        // callback(std::string("grad.swiglu.") + std::to_string(i), layer_abs_maxes[30]);
+    }
+}
+
+
 LLamaRunState allocate_run_state(LLamaConfig config, LLamaOptions options, long B, long T, DeviceMemoryStack& stack, std::shared_ptr<TensorAllocator> alloc) {
     LLamaRunState state{config, B, T, options, std::move(alloc)};
     state.init(config, B, T, stack);

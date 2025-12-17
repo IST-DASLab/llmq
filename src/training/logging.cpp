@@ -356,6 +356,33 @@ void TrainingRunLogger::log_allocator(
     }
 }
 
+void TrainingRunLogger::log_abs_maxes(int step, const std::vector<std::pair<std::string, float>>& abs_maxes) {
+    if (mRank != 0) return;
+    std::string abs_maxes_str = "[\n          ";
+    int count = 0;
+    for (auto& [name, max]: abs_maxes) {
+        if (count != 0) abs_maxes_str += ", ";
+        ++count;
+        if (count % 10 == 0) {
+            abs_maxes_str += "\n          ";
+        }
+        abs_maxes_str += fmt::format(R"({{"name": "{}", "value": {}}})", name, max);
+    }
+    abs_maxes_str += "]";
+
+    if (mVerbosity >= 1) {
+        printf("[Abs Maxes]\n");
+        for (auto& [name, max]: abs_maxes) {
+            printf("  %16s: %10.4f \n", name.c_str(), max);
+        }
+        printf("\n");
+    }
+
+    std::string line = fmt::format(R"(  {{"log": "abs-maxes", "time": "{}", "step": {}, "abs_maxes": {}}})",
+        std::chrono::system_clock::now(), step, abs_maxes_str);
+    log_line(line);
+}
+
 void TrainingRunLogger::set_callback(std::function<void(std::string_view)> cb) {
     mCallback = std::move(cb);
 }

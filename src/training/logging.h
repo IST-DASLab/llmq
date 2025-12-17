@@ -47,6 +47,8 @@ public:
         const std::vector<std::pair<std::string, long>>& stack_info
         );
 
+    void log_abs_maxes(int step, const std::vector<std::pair<std::string, float>>& abs_maxes);
+
     // call at the beginning and end of a section of processing.
     // will record the time between the two calls
     class RAII_Section {
