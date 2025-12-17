@@ -61,7 +61,18 @@ std::string save_checkpoint(std::string target, int step, IModel& model, const D
         meta_data["run"] = nlohmann::json::object({
             {"step", step},
             {"rng", model.rng_state()},
+            {"past_losses.values", model.get_run_state().LossOutliers.mValues},
+            {"past_losses.index", model.get_run_state().LossOutliers.mIndex},
+            {"past_losses.size", model.get_run_state().LossOutliers.mWindowSize},
+            {"past_norms.values", model.get_run_state().NormOutliers.mValues},
+            {"past_norms.index", model.get_run_state().NormOutliers.mIndex},
+            {"past_norms.size", model.get_run_state().NormOutliers.mWindowSize},
         });
+
+        // in order to ensure that the mSum / mSumSq are bitwise identical, force a re-evaluation
+        // here. we will do the same re-evaluation after loading the checkpoint.
+        model.get_run_state().LossOutliers.re_evaluate();
+        model.get_run_state().NormOutliers.re_evaluate();
 
         meta_data["distributed"] = nlohmann::json::object({
             {"world", comm.world_size()},
@@ -94,6 +105,19 @@ void load_checkpoint(std::string source, int step, IModel& model, DataLoader* lo
     }
 
     model.set_rng_state(meta_data["run"]["rng"].get<std::vector<std::byte>>());
+
+    if (meta_data["run"].contains("past_losses.size")) {
+        model.get_run_state().LossOutliers.reset(
+            meta_data["run"]["past_losses.size"].get<int>(),
+            meta_data["run"]["past_losses.index"].get<int>(),
+            meta_data["run"]["past_losses.values"].get<std::vector<float>>()
+        );
+        model.get_run_state().NormOutliers.reset(
+            meta_data["run"]["past_norms.size"].get<int>(),
+            meta_data["run"]["past_norms.index"].get<int>(),
+            meta_data["run"]["past_norms.values"].get<std::vector<float>>()
+        );
+    }
 
     if (loader) {
         const auto& dl = meta_data["data-loader"];

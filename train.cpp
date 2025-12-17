@@ -533,6 +533,14 @@ void TrainingRunner::run_training(int argc, const char** argv, NCCLCommunicator&
         long ms = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
         float step_loss = model.get_loss();
         float step_norm = model.get_norm();
+        auto [loss_z, grad_z] = model.get_run_state().record_step(step_loss, step_norm);
+        if (loss_z > 10.f) {
+            logger.log_message(step, fmt::format("Loss outlier with z-score: {}", loss_z));
+        }
+        if (grad_z > 10.f) {
+            logger.log_message(step, fmt::format("Gradient norm outlier with z-score: {}", grad_z));
+        }
+
         logger.log_step(step, train_loader.epoch() + 0.01f*train_loader.progress(), B*T*GradAccSteps*comm.world_size(), narrow<int>(ms), step_norm, step_loss / (B*T*GradAccSteps), lr);
 
         if (DebugLogAbsMaxes > 0 && step % DebugLogAbsMaxes == 0) {

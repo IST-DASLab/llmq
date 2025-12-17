@@ -17,6 +17,7 @@
 class ITensorContainer;
 class NCCLCommunicator;
 class TensorAllocator;
+class DataLoader;
 
 typedef struct cudnnContext* cudnnHandle_t;
 typedef struct cublasLtContext* cublasLtHandle_t;
@@ -104,7 +105,6 @@ protected:
     ~IModel() = default;
 };
 
-
 /*!
  *  \brief Architecture-agnostic base class for model run states
  *  \details Contains model run data that is independent of the actual
@@ -112,6 +112,10 @@ protected:
  */
 class IRunState {
     friend class IModel;
+    friend std::string save_checkpoint(std::string checkpoint_directory, int step, IModel& model,
+        const DataLoader* loader, NCCLCommunicator& comm);
+    friend void load_checkpoint(std::string checkpoint_directory, int step, IModel& model,
+        DataLoader* loader, NCCLCommunicator& comm);
 public:
     IRunState() = default;
     IRunState(TransformerConfig config, long batch_size, long seq_len, std::shared_ptr<TensorAllocator> alloc);
@@ -148,6 +152,8 @@ public:
     float* NormHost = nullptr;        // single value
     float* LossHost = nullptr;        // single value
 
+    std::pair<float, float> record_step(float loss, float norm);
+
     cudaDeviceProp DeviceProp;
 
     cudaStream_t MainStream = nullptr;
@@ -177,6 +183,28 @@ public:
 private:
     Tensor Inputs_CPU;      // (B, T) Int32
     Tensor Targets_CPU;     // (B, T) Int32
+
+    // ring-buffers that keep a history of past losses
+    struct OutlierDetector {
+        OutlierDetector(int window_size=100);
+
+        void record(float value);
+        float eval(float value) const;
+
+        void re_evaluate();
+        void reset(int window_size, int index, std::vector<float> values);
+
+        int mWindowSize;
+        int mIndex = 0;
+        std::vector<float> mValues;
+
+        double mSum = 0.0;
+        double mSumSq = 0.0;
+    };
+
+    OutlierDetector LossOutliers;
+    OutlierDetector NormOutliers;
 };
+
 
 #endif //LLMQ_SRC_TRAINING_MODEL_H
