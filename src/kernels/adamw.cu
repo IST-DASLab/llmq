@@ -72,7 +72,6 @@ __device__ auto adamw_update(floatX* params_memory, const floatX* grads_memory, 
     constexpr int VecElems = std::min({16 / sizeof(floatX), 16 / sizeof(floatM), 16 / sizeof(floatV)});
     using vec_f_t = GenericVector<float, VecElems>;
     using vec_x_t = GenericVector<floatX, VecElems>;
-    using vec_m_t = GenericVector<floatM, VecElems>;
     using vec_v_t = GenericVector<floatV, VecElems>;
 
     const unsigned active_mask = __ballot_sync(0xffffffff, idx < num_parameters);
@@ -99,8 +98,8 @@ __device__ auto adamw_update(floatX* params_memory, const floatX* grads_memory, 
 
         stochastic_rounding(v_i, &v_new[i], random_v, false);
 
-        float m_hat = m[i] / beta1_correction;
-        float v_hat = v_i / beta2_correction;
+        float m_hat = m[i] * beta1_correction;
+        float v_hat = v_i * beta2_correction;
         float old_param = (float)p[i];
         float param = old_param - (learning_rate * (m_hat / (sqrtf(v_hat) + eps) + weight_decay * old_param));
         stochastic_rounding(param, &p_new[i], random, false);
@@ -151,8 +150,8 @@ void adamw_update_imp(floatX* params_memory, const floatX* grads_memory, floatM*
     float beta1_correction = 1.0f - powf(beta1, t);
     float beta2_correction = 1.0f - powf(beta2, t);
     adamw_kernel<<<num_blocks, block_size, 0, stream>>>(params_memory, grads_memory, m_memory, v_memory, num_parameters,
-                                                        learning_rate, beta1, beta2, beta1_correction, beta2_correction, eps, weight_decay,
-                                                        grad_scale, m_scales, abs_max, seed);
+                                                        learning_rate, beta1, beta2, 1.f / beta1_correction, 1.f / beta2_correction,
+                                                        eps, weight_decay, grad_scale, m_scales, abs_max, seed);
     CUDA_CHECK(cudaGetLastError());
 }
 
