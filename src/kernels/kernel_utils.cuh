@@ -48,9 +48,18 @@ static __forceinline__ __device__ float warpReduceSum(float val) {
     return val;
 }
 
-__device__ inline float warpReduceMax(float val) {
+static __forceinline__ __device__ nv_bfloat16 dispatch_max(nv_bfloat16 a, nv_bfloat16 b) {
+    return __hmax(a, b);
+}
+
+static __forceinline__ __device__ float dispatch_max(float a, float b) {
+    return fmaxf(a, b);
+}
+
+template<class Float>
+__device__ Float warpReduceMax(Float val) {
     for (int offset = 16; offset > 0; offset /= 2) {
-        val = fmaxf(val, __shfl_xor_sync(0xFFFFFFFFu, val, offset));
+        val = dispatch_max(val, __shfl_xor_sync(0xFFFFFFFFu, val, offset));
     }
     return val;
 }
