@@ -195,6 +195,7 @@ The training script accepts numerous command-line arguments to configure model t
 ### Model Configuration
 - `--model <path>` - Path to the Hugging Face model directory or name of a HF model that is cached locally. The script will automatically locate model files if given a model name, but it will _not_ download new models.
 - `--from-scratch` - Train the model from random initialization instead of loading pre-trained weights.
+- `--init-proj-to-zero` - Initialize projection weights (FFN down and attention out) to zero. Only used with `--from-scratch`.
 - `--model-dtype <dtype>` - Data type for model parameters. Supported types are `fp32`, `bf16`. This is the data type used for model master weights, and also for all activations and gradients. Matrix multiplications may be performed in lower precision according to the `--matmul-dtype` argument.
 
 ### Data Configuration
@@ -202,30 +203,38 @@ The training script accepts numerous command-line arguments to configure model t
 - `--eval-file <path>` - Path to the binary file containing validation tokens.
 - `--batch-size, --batch <int>` - Micro-batch size (default: 4). This is the batch size per GPU.
 - `--seq-len <int>` - Sequence length for training (default: 1024).
+- `--lmhead-chunks <int>` - Split LM-head computation into N chunks to save memory.
+- `--attn-bwd-chunks <int>` - Split attention backward pass into N chunks to save workspace memory.
 
 ### Optimization Parameters and Training Schedule
 - `--learning-rate, --lr <float>` - Base learning rate (default: 1e-5).
 - `--warmup <int>` - Number of warmup steps. If not specified, defaults to a fraction of total steps.
+- `--cooldown <int>` - Number of cool-down steps using 1-sqrt() annealing.
 - `--final-lr-fraction <float>` - Fraction of base learning rate to use for the final steps (default: 1.0).
+- `--lr-schedule <string>` - Learning rate schedule: `cosine` (default) or `linear`.
 - `--beta-1 <float>` - Beta1 parameter for Adam optimizer (default: 0.9).
 - `--beta-2 <float>` - Beta2 parameter for Adam optimizer (default: 0.95).
 - `--grad-accumulation <int>` - Number of micro-batches per optimizer step (default: 4). Effective batch size = batch-size × grad-accumulation × num-gpus.
 - `--grad-clip <float>` - Gradient clipping threshold (default: 1.0).
-- `--weight-decay <float>` - Weight decay for matrix parameters (default: 1.0).
+- `--weight-decay <float>` - Weight decay for matrix parameters (default: 0.1).
 - `--steps <int>` - Total number of training steps (default: 1000).
 - `--eval-every-n-steps <int>` - Run evaluation every N optimizer steps (default: 100).
 - `--eval-num-steps <int>` - Number of evaluation batches to process (default: 100). The evaluation at the end of training is always performed on the full dataset.
 
 ### Checkpointing and Output
-- `--out-file <path>` - Path where to save the final trained model (default: "model.safetensors").
-- `--checkpoint-dir <path>` - Directory for saving training checkpoints (default: "ckpt").
+- `--name <string>` - Name for the run. Replaces `%n` in path templates.
+- `--out-dir <path>` - Directory where to save the final trained model (default: `output/%n`).
+- `--checkpoint-dir <path>` - Directory for saving training checkpoints (default: `ckpt/%n`).
 - `--ckpt-interval <int>` - Save checkpoint every N optimizer steps (default: 100).
-- `--continue` - Continue training from the latest checkpoint in checkpoint-dir.
-- `--log-file <path>` - Path for training log in JSON format (default: "log.json").
+- `--ckpt-keep-n <int>` - Number of recent checkpoints to keep.
+- `--ckpt-major <int>` - Save every Nth checkpoint as a "major" checkpoint (not deleted by cleanup).
+- `--continue [step]` - Continue training from the latest checkpoint, or a specific step if provided.
+- `--log-file <path>` - Path for training log in JSON format (default: `logs/%n-TIMESTAMP.json`).
 - `--log-gpu-util <int>` - Log GPU utilization every N steps (default: 25). Set to 0 to disable.
 
 ### Low-bit settings
 - `--matmul-dtype <dtype>` - Data type for matrix multiplications. If not specified, uses model-dtype.
+- `--gradient-dtype <dtype>` - Data type for activation gradients. Defaults to matmul-dtype.
 - `--opt-m-dtype <dtype>` - Data type for first-order momentum (Adam's m). Can be `fp32` or `bf16`.
 - `--opt-v-dtype <dtype>` - Data type for second-order momentum (Adam's v). Can be `fp32` or `bf16`.
 
@@ -239,7 +248,7 @@ Additional memory savings, especially for larger models, can be achieved by the 
 - `--recompute-qkv` - Recompute QKV projections during backward pass.
 - `--recompute-att` - Recompute the entire attention block during backward pass (implies --recompute-qkv).
 - `--recompute-block` - Recompute the entire transformer block during backward pass (subsumes the other recompute flags).
-- `--offload-residuals` - Offload the residuals (of the ffn block; the only remaining part of the block that is not recomputed) to pinned host memory. Combined with `--recompute-block`, the total activation memory consumption becomes independent of the network depth.
+- `--offload-residual` - Offload the residuals (of the ffn block; the only remaining part of the block that is not recomputed) to pinned host memory. Combined with `--recompute-block`, the total activation memory consumption becomes independent of the network depth.
 - `--lmhead-chunks=N` - Split LM-head computation into `N` chunks, so that the required size of the logit tensor is reduced by a factor of `N`.
 
 ### Multi-GPU
