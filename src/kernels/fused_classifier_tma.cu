@@ -108,19 +108,41 @@ __global__ void __cluster_dims__(8, 1, 1) __launch_bounds__(256, 2)
     bar.wait(std::move(token));
 
     // OK, all logits for _this_ block are ready here. Calculate logsumexp
-    for (int i = threadIdx.x * x128::size; i < logits_per_block; i += x128::size * BLOCK_SIZE) {
-        x128 v = x128::load(smem_logits + i);
-        floatX old_maxval = thread_max;
-        for(int k = 0; k < x128::size; ++k) {
-            thread_max = dispatch_max(thread_max, v[k]);
+    {
+        int i = threadIdx.x * x128::size;
+        for (; i + x128::size * BLOCK_SIZE < logits_per_block; i += 2 * x128::size * BLOCK_SIZE) {
+            x128 v1 = x128::load(smem_logits + i);
+            x128 v2 = x128::load(smem_logits + i + x128::size * BLOCK_SIZE);
+            floatX old_maxval = thread_max;
+            for(int k = 0; k < x128::size; ++k) {
+                floatX m = dispatch_max(v1[k], v2[k]);
+                thread_max = dispatch_max(thread_max, m);
+            }
+            // write this as a two-level reduction. this does not require any additional instructions (we change FMUL to
+            // FMA, but that costs the same), but could give slightly less rounding error accumulation.
+            float vec_sum = 0.f;
+            for(int k = 0; k < x128::size; ++k) {
+                vec_sum += expf(static_cast<float>(v1[k] - thread_max));
+                vec_sum += expf(static_cast<float>(v2[k] - thread_max));
+            }
+            thread_sum = thread_sum * expf(static_cast<float>(old_maxval - thread_max)) + vec_sum;
         }
-        // write this as a two-level reduction. this does not require any additional instructions (we change FMUL to
-        // FMA, but that costs the same), but could give slightly less rounding error accumulation.
-        float vec_sum = 0.f;
-        for(int k = 0; k < x128::size; ++k) {
-            vec_sum += expf(static_cast<float>(v[k] - thread_max));
+
+        // epilogue
+        if (i  < logits_per_block) {
+            x128 v = x128::load(smem_logits + i);
+            floatX old_maxval = thread_max;
+            for(int k = 0; k < x128::size; ++k) {
+                thread_max = dispatch_max(thread_max, v[k]);
+            }
+            // write this as a two-level reduction. this does not require any additional instructions (we change FMUL to
+            // FMA, but that costs the same), but could give slightly less rounding error accumulation.
+            float vec_sum = 0.f;
+            for(int k = 0; k < x128::size; ++k) {
+                vec_sum += expf(static_cast<float>(v[k] - thread_max));
+            }
+            thread_sum = thread_sum * expf(static_cast<float>(old_maxval - thread_max)) + vec_sum;
         }
-        thread_sum = thread_sum * expf(static_cast<float>(old_maxval - thread_max)) + vec_sum;
     }
 
     floatX warp_max = warpReduceMax(thread_max);
