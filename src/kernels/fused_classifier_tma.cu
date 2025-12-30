@@ -30,14 +30,20 @@ static __forceinline__ __device__ void reduce_max_4(float* dst, const float* sme
 }
 
 static __forceinline__ __device__ void reduce_max_4(nv_bfloat16* dst, const nv_bfloat16* smem_src) {
-    if (threadIdx.x < 2) {
-        nv_bfloat162 vals = reinterpret_cast<const nv_bfloat162*>(smem_src)[threadIdx.x];
-        nv_bfloat16 val = dispatch_max(vals.x, vals.y);
-        val = dispatch_max(val, __shfl_xor_sync(0x00000003u, val, 1));
-        if(threadIdx.x == 0) {
-            *dst = val;
-        }
+    if(threadIdx.x == 0) {
+        using vec_t = GenericVector<nv_bfloat16, 4>;
+        vec_t val = vec_t::load(smem_src);
+        nv_bfloat162 m = __hmax2(make_bfloat162(val[0], val[1]), make_bfloat162(val[2], val[3]));
+        *dst = __hmax(m.x, m.y);
     }
+}
+
+template<class Float>
+__device__ Float warpReduceMax8(Float val) {
+    for (int offset = 4; offset > 0; offset /= 2) {
+        val = dispatch_max(val, __shfl_xor_sync(0xFFFFFFFFu, val, offset));
+    }
+    return val;
 }
 
 // ----------------------------------------------------------------------------
@@ -112,10 +118,8 @@ __global__ void __cluster_dims__(8, 1, 1) __launch_bounds__(128, 2)
             x128 v1 = x128::load(smem_logits + i);
             x128 v2 = x128::load(smem_logits + i + x128::size * BLOCK_SIZE);
             floatX old_maxval = thread_max;
-            for(int k = 0; k < x128::size; ++k) {
-                floatX m = dispatch_max(v1[k], v2[k]);
-                thread_max = dispatch_max(thread_max, m);
-            }
+            thread_max = dispatch_max(vecReduceMax(v1), vecReduceMax(v2));
+
             // write this as a two-level reduction. this does not require any additional instructions (we change FMUL to
             // FMA, but that costs the same), but could give slightly less rounding error accumulation.
             float vec_sum = 0.f;
@@ -158,8 +162,7 @@ __global__ void __cluster_dims__(8, 1, 1) __launch_bounds__(128, 2)
         max_reduction_buffer[threadIdx.x] = reinterpret_cast<const nv_bfloat16*>(remote_mem_ptr)[0];
     }
     __syncthreads();
-    // TODO faster reduction: we need only 8 values
-    floatX cluster_max = warpReduceMax(max_reduction_buffer[lane_id % 8]);
+    floatX cluster_max = warpReduceMax8(max_reduction_buffer[lane_id % 8]);
 
     thread_sum *= expf(static_cast<float>(thread_max - cluster_max));
     float warp_sum = warpReduceSum(thread_sum);
@@ -182,10 +185,11 @@ __global__ void __cluster_dims__(8, 1, 1) __launch_bounds__(128, 2)
     float lse = logf(cluster_sum) + (float)cluster_max;
 
     // calculate the probability needed for the loss and update (single-threaded)
-    if(threadIdx.x == 0 && block_start_ix < ix && ix < block_end_ix) {
+    // warp 0 gets all the extra work during reductions, so we let this be handled by warp 1
+    if(threadIdx.x == 32 && block_start_ix < ix && ix < block_end_ix) {
         // here, it is important that the subtraction is performed in float precision,
         // otherwise we can't match the test's required accuracy
-        float prob = expf((float)(logits[ix]) - (float)cluster_max) * scale;
+        float prob = expf((float)(smem_logits[ix - block_start_ix]) - (float)cluster_max) * scale;
         losses[idx] -= logf(prob);
         lse_out[idx] = lse;
     }
