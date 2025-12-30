@@ -193,15 +193,40 @@ void fused_classifier_imp(Type* logits, float* losses, float* lse,
     CUDA_CHECK(cudaGetLastError());
 }
 
-void fused_classifier(float* logits, float* losses, float* lse,
-                      const float dloss, const int* targets, const float z_loss,
-                      int BT, int V, int P, bool write_dlogits, cudaStream_t stream) {
-    fused_classifier_imp(logits, losses, lse, dloss, targets, z_loss, BT, V, P, write_dlogits, stream);
+void fused_classifier_tma(float* logits, float* losses, float* lse,
+                          float dloss, const int* targets, float z_reg,
+                          int BT, int V, int P, cudaStream_t stream);
+
+void fused_classifier_tma(nv_bfloat16* logits, float* losses, float* lse,
+                          float dloss, const int* targets, float z_reg,
+                          int BT, int V, int P, cudaStream_t stream);
+
+template <typename Type>
+void fused_classifier_dispatch(Type* logits, float* losses, float* lse,
+                      const float dloss, const int* targets, float z_reg,
+                      int BT, int V, int P, bool write_dlogits, cudaStream_t stream)
+{
+    int device;
+    CUDA_CHECK(cudaGetDevice(&device));
+    int major;
+    CUDA_CHECK(cudaDeviceGetAttribute(&major, cudaDevAttrComputeCapabilityMajor, device));
+    if (major == 9 || major == 10 && write_dlogits == true) {
+        fused_classifier_tma(logits, losses, lse, dloss, targets, z_reg, BT, V, P, stream);
+    } else {
+        fused_classifier_imp(logits, losses, lse, dloss, targets, z_reg, BT, V, P, write_dlogits, stream);
+    }
 }
-void fused_classifier(nv_bfloat16* logits, float* losses, float* lse,
-                      const float dloss, const int* targets, const float z_loss,
+
+void fused_classifier(float* logits, float* losses, float* lse,
+                      const float dloss, const int* targets, const float z_reg,
                       int BT, int V, int P, bool write_dlogits, cudaStream_t stream) {
-    fused_classifier_imp(logits, losses, lse, dloss, targets, z_loss, BT, V, P, write_dlogits, stream);
+    fused_classifier_dispatch(logits, losses, lse, dloss, targets, z_reg, BT, V, P, write_dlogits, stream);
+}
+
+void fused_classifier(nv_bfloat16* logits, float* losses, float* lse,
+                      const float dloss, const int* targets, const float z_reg,
+                      int BT, int V, int P, bool write_dlogits, cudaStream_t stream) {
+    fused_classifier_dispatch(logits, losses, lse, dloss, targets, z_reg, BT, V, P, write_dlogits, stream);
 }
 
 
