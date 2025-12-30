@@ -18,26 +18,6 @@ namespace {
     };
 }
 
-static __forceinline__ __device__ void reduce_max_4(float* dst, const float* smem_src) {
-    if (threadIdx.x < 4) {
-        float val = smem_src[threadIdx.x];
-        val = dispatch_max(val, __shfl_xor_sync(0x0000000Fu, val, 2));
-        val = dispatch_max(val, __shfl_xor_sync(0x0000000Fu, val, 1));
-        if (threadIdx.x == 0) {
-            *dst = val;
-        }
-    }
-}
-
-static __forceinline__ __device__ void reduce_max_4(nv_bfloat16* dst, const nv_bfloat16* smem_src) {
-    if(threadIdx.x == 0) {
-        using vec_t = GenericVector<nv_bfloat16, 4>;
-        vec_t val = vec_t::load(smem_src);
-        nv_bfloat162 m = __hmax2(make_bfloat162(val[0], val[1]), make_bfloat162(val[2], val[3]));
-        *dst = __hmax(m.x, m.y);
-    }
-}
-
 template<int Size, class Float>
 __device__ Float subWarpReduceMax(Float val) {
     for (int offset = Size/2; offset > 0; offset /= 2) {
@@ -88,7 +68,7 @@ __global__ void __cluster_dims__(8, 1, 1) __launch_bounds__(128, 2)
         return;     // mask
     }
     // adjust pointers to point to current token
-    const int logits_per_block = P / 8;
+    const int logits_per_block = V / 8;
     assert(0 <= ix && ix < V);
     __syncthreads();
     int block_start_ix = cluster.block_rank() * logits_per_block;
