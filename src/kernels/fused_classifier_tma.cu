@@ -38,9 +38,9 @@ static __forceinline__ __device__ void reduce_max_4(nv_bfloat16* dst, const nv_b
     }
 }
 
-template<class Float>
-__device__ Float warpReduceMax8(Float val) {
-    for (int offset = 4; offset > 0; offset /= 2) {
+template<int Size, class Float>
+__device__ Float subWarpReduceMax(Float val) {
+    for (int offset = Size/2; offset > 0; offset /= 2) {
         val = dispatch_max(val, __shfl_xor_sync(0xFFFFFFFFu, val, offset));
     }
     return val;
@@ -65,8 +65,8 @@ __global__ void __cluster_dims__(8, 1, 1) __launch_bounds__(128, 2)
 
     // 1. Initialize shared memory barrier with the number of threads participating in the barrier.
     __shared__ barrier bar;
-    __shared__ floatX max_reduction_buffer[4];
-    __shared__ float sum_reduction_buffer[4];
+    __shared__ floatX max_reduction_buffer[8];
+    __shared__ float sum_reduction_buffer[8];
     extern __shared__ AlignedSmem smem[];
     cg::cluster_group cluster = cg::this_cluster();
 
@@ -152,35 +152,35 @@ __global__ void __cluster_dims__(8, 1, 1) __launch_bounds__(128, 2)
         max_reduction_buffer[threadIdx.x / 32] = warp_max;
     }
     __syncthreads();
-    reduce_max_4(reinterpret_cast<floatX*>(smem), max_reduction_buffer);
-
-    // cluster data exchange for max
-    cluster.sync();
-    const std::byte* remote_mem_ptr;
-    if (threadIdx.x < 8) {
-        remote_mem_ptr = cluster.map_shared_rank(reinterpret_cast<const std::byte*>(smem), threadIdx.x);
-        max_reduction_buffer[threadIdx.x] = reinterpret_cast<const nv_bfloat16*>(remote_mem_ptr)[0];
-    }
-    __syncthreads();
-    floatX cluster_max = warpReduceMax8(max_reduction_buffer[lane_id % 8]);
-
-    thread_sum *= expf(static_cast<float>(thread_max - cluster_max));
+    floatX block_max = subWarpReduceMax<4>(max_reduction_buffer[lane_id % 4]);
+    thread_sum *= expf(static_cast<float>(thread_max - block_max));
     float warp_sum = warpReduceSum(thread_sum);
     if(lane_id == 0) {
         sum_reduction_buffer[threadIdx.x / 32] = warp_sum;
     }
     __syncthreads();
     float block_sum = warpReduceSum(lane_id < 4 ? sum_reduction_buffer[lane_id] : 0.f);
-    if(lane_id == 0) {
+
+    if (threadIdx.x == 0) {
+        reinterpret_cast<floatX*>(smem)[0] = block_max;
         reinterpret_cast<float*>(smem)[1] = block_sum;
     }
+
+    // cluster data exchange
     cluster.sync();
     if (threadIdx.x < 8) {
+        const std::byte* remote_mem_ptr = cluster.map_shared_rank(reinterpret_cast<const std::byte*>(smem), threadIdx.x);
+        max_reduction_buffer[threadIdx.x] = reinterpret_cast<const nv_bfloat16*>(remote_mem_ptr)[0];
         sum_reduction_buffer[threadIdx.x] = reinterpret_cast<const float*>(remote_mem_ptr)[1];
     }
-    cg::cluster_group::arrival_token dsmem_done_token = cluster.barrier_arrive();
     __syncthreads();
-    float cluster_sum = warpReduceSum(lane_id < 8 ? sum_reduction_buffer[lane_id % 8] : 0.f);
+    floatX other_block_max = max_reduction_buffer[lane_id % 8];
+    float other_block_sum = sum_reduction_buffer[lane_id % 8];
+    floatX cluster_max = subWarpReduceMax<8>(other_block_max);
+    other_block_sum *= expf(static_cast<float>(other_block_max - cluster_max));
+    cg::cluster_group::arrival_token dsmem_done_token = cluster.barrier_arrive();
+
+    float cluster_sum = warpReduceSum(lane_id < 8 ? other_block_sum : 0.f);
     float scale = 1.f / cluster_sum;
     float lse = logf(cluster_sum) + (float)cluster_max;
 
