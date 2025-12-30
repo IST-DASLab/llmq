@@ -41,6 +41,11 @@ constexpr T HOST_DEVICE div_ceil(T dividend, T divisor) {
     return (dividend + divisor - 1) / divisor;
 }
 
+template<std::integral T>
+constexpr T HOST_DEVICE round_down(T dividend, T divisor) {
+    return (dividend / divisor) * divisor;
+}
+
 [[noreturn]] void throw_not_divisible(long long dividend, long long divisor);
 
 template<std::integral T>
