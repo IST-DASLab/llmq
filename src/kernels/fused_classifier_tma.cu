@@ -92,28 +92,57 @@ __global__ void __cluster_dims__(8, 1, 1) __launch_bounds__(128, 2)
     assert(0 <= ix && ix < V);
     __syncthreads();
     int block_start_ix = cluster.block_rank() * logits_per_block;
+    int block_middle_idx = round_down(block_start_ix + logits_per_block / 2, 2 * x128::size * BLOCK_SIZE);
     int block_end_ix = block_start_ix + logits_per_block;
     logits += idx * P;
 
     if (threadIdx.x == 0) {
-        const int bytes = (block_end_ix - block_start_ix) * sizeof(floatX);
+        const int bytes = (block_middle_idx - block_start_ix) * sizeof(floatX);
         cuda::device::memcpy_async_tx(smem_logits, logits + block_start_ix, cuda::aligned_size_t<16>(bytes), bar);
         cuda::device::barrier_expect_tx(bar, bytes);
     }
 
     // 3a. All threads arrive on the barrier.
-    barrier::arrival_token token = bar.arrive();
+    barrier::arrival_token token_a = bar.arrive();
 
     floatX thread_max = -INFINITY;
     float thread_sum = 0.0f;
     int lane_id = threadIdx.x % 32;
 
     // 3b. Wait for the data to have arrived.
-    bar.wait(std::move(token));
+    bar.wait(std::move(token_a));
 
-    // OK, all logits for _this_ block are ready here. Calculate logsumexp
+    // start the rest of the transfer
+    if (threadIdx.x == 0) {
+        const int bytes = (block_end_ix - block_middle_idx) * sizeof(floatX);
+        cuda::device::memcpy_async_tx(smem_logits + (block_middle_idx - block_start_ix), logits + block_middle_idx, cuda::aligned_size_t<16>(bytes), bar);
+        cuda::device::barrier_expect_tx(bar, bytes);
+    }
+    barrier::arrival_token token_b = bar.arrive();
+
+    // hande the first part of the block. By construction, this is a multiple of 2 x128 * block
+    for (int i = threadIdx.x * x128::size; i < (block_middle_idx - block_start_ix); i += 2 * x128::size * BLOCK_SIZE) {
+        x128 v1 = x128::load(smem_logits + i);
+        x128 v2 = x128::load(smem_logits + i + x128::size * BLOCK_SIZE);
+        floatX old_maxval = thread_max;
+        thread_max = dispatch_max(vecReduceMax(v1), vecReduceMax(v2));
+
+        // write this as a two-level reduction. this does not require any additional instructions (we change FMUL to
+        // FMA, but that costs the same), but could give slightly less rounding error accumulation.
+        float vec_sum = 0.f;
+        for(int k = 0; k < x128::size; ++k) {
+            vec_sum += expf(static_cast<float>(v1[k] - thread_max));
+            vec_sum += expf(static_cast<float>(v2[k] - thread_max));
+        }
+        thread_sum = thread_sum * expf(static_cast<float>(old_maxval - thread_max)) + vec_sum;
+    }
+
+    // now wait for the second half of the data
+    bar.wait(std::move(token_b));
+
+    // Now handle the rest. This might be not a multiple of block_size * 2 * x128, so we have an epilogue
     {
-        int i = threadIdx.x * x128::size;
+        int i = (block_middle_idx - block_start_ix) + threadIdx.x * x128::size;
         for (; i + x128::size * BLOCK_SIZE < logits_per_block; i += 2 * x128::size * BLOCK_SIZE) {
             x128 v1 = x128::load(smem_logits + i);
             x128 v2 = x128::load(smem_logits + i + x128::size * BLOCK_SIZE);
@@ -131,7 +160,7 @@ __global__ void __cluster_dims__(8, 1, 1) __launch_bounds__(128, 2)
         }
 
         // epilogue
-        if (i  < logits_per_block) {
+        if (i < logits_per_block) {
             x128 v = x128::load(smem_logits + i);
             floatX old_maxval = thread_max;
             for(int k = 0; k < x128::size; ++k) {
