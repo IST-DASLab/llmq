@@ -18,24 +18,22 @@ namespace {
     };
 }
 
-static __forceinline__ __device__ void reduce_max_8(float* dst, const float* smem_src) {
-    if (threadIdx.x < 8) {
+static __forceinline__ __device__ void reduce_max_4(float* dst, const float* smem_src) {
+    if (threadIdx.x < 4) {
         float val = smem_src[threadIdx.x];
-        val = dispatch_max(val, __shfl_xor_sync(0x000000FFu, val, 4));
-        val = dispatch_max(val, __shfl_xor_sync(0x000000FFu, val, 2));
-        val = dispatch_max(val, __shfl_xor_sync(0x000000FFu, val, 1));
+        val = dispatch_max(val, __shfl_xor_sync(0x0000000Fu, val, 2));
+        val = dispatch_max(val, __shfl_xor_sync(0x0000000Fu, val, 1));
         if (threadIdx.x == 0) {
             *dst = val;
         }
     }
 }
 
-static __forceinline__ __device__ void reduce_max_8(nv_bfloat16* dst, const nv_bfloat16* smem_src) {
-    if (threadIdx.x < 4) {
+static __forceinline__ __device__ void reduce_max_4(nv_bfloat16* dst, const nv_bfloat16* smem_src) {
+    if (threadIdx.x < 2) {
         nv_bfloat162 vals = reinterpret_cast<const nv_bfloat162*>(smem_src)[threadIdx.x];
         nv_bfloat16 val = dispatch_max(vals.x, vals.y);
-        val = dispatch_max(val, __shfl_xor_sync(0x0000000Fu, val, 2));
-        val = dispatch_max(val, __shfl_xor_sync(0x0000000Fu, val, 1));
+        val = dispatch_max(val, __shfl_xor_sync(0x00000003u, val, 1));
         if(threadIdx.x == 0) {
             *dst = val;
         }
@@ -50,19 +48,19 @@ static __forceinline__ __device__ void reduce_max_8(nv_bfloat16* dst, const nv_b
 // split both loops in "multiple-of-x128-size" and "bounds-checked remainder" parts
 template <class floatX>
 //__global__ void __block_size__((1024, 1, 1), (8, 1, 1))
-__global__ void __cluster_dims__(8, 1, 1) __launch_bounds__(256, 2)
+__global__ void __cluster_dims__(8, 1, 1) __launch_bounds__(128, 2)
     fused_classifier_tma_kernel(floatX* logits, float* losses, float* lse_out,
                              const float dloss, const int* targets, float z_reg,
                              int V, int P) {
     #if __CUDA_ARCH__ >= 900
-    constexpr int BLOCK_SIZE = 256;
+    constexpr int BLOCK_SIZE = 128;
     using x128 = GenericVector<floatX, 16/sizeof(floatX)>;
     using barrier = cuda::barrier<cuda::thread_scope_block>;
 
     // 1. Initialize shared memory barrier with the number of threads participating in the barrier.
     __shared__ barrier bar;
-    __shared__ floatX max_reduction_buffer[8];
-    __shared__ float sum_reduction_buffer[8];
+    __shared__ floatX max_reduction_buffer[4];
+    __shared__ float sum_reduction_buffer[4];
     extern __shared__ AlignedSmem smem[];
     cg::cluster_group cluster = cg::this_cluster();
 
@@ -150,13 +148,14 @@ __global__ void __cluster_dims__(8, 1, 1) __launch_bounds__(256, 2)
         max_reduction_buffer[threadIdx.x / 32] = warp_max;
     }
     __syncthreads();
-    reduce_max_8(reinterpret_cast<floatX*>(smem), max_reduction_buffer);
+    reduce_max_4(reinterpret_cast<floatX*>(smem), max_reduction_buffer);
 
     // cluster data exchange for max
     cluster.sync();
+    const std::byte* remote_mem_ptr;
     if (threadIdx.x < 8) {
-        const floatX* remote_max = cluster.map_shared_rank(reinterpret_cast<const floatX*>(smem), threadIdx.x);
-        max_reduction_buffer[threadIdx.x] = *remote_max;
+        remote_mem_ptr = cluster.map_shared_rank(reinterpret_cast<const std::byte*>(smem), threadIdx.x);
+        max_reduction_buffer[threadIdx.x] = reinterpret_cast<const nv_bfloat16*>(remote_mem_ptr)[0];
     }
     __syncthreads();
     // TODO faster reduction: we need only 8 values
@@ -168,14 +167,13 @@ __global__ void __cluster_dims__(8, 1, 1) __launch_bounds__(256, 2)
         sum_reduction_buffer[threadIdx.x / 32] = warp_sum;
     }
     __syncthreads();
-    float block_sum = warpReduceSum(lane_id < 8 ? sum_reduction_buffer[lane_id] : 0.f);
+    float block_sum = warpReduceSum(lane_id < 4 ? sum_reduction_buffer[lane_id] : 0.f);
     if(lane_id == 0) {
         reinterpret_cast<float*>(smem)[1] = block_sum;
     }
     cluster.sync();
     if (threadIdx.x < 8) {
-        const float* remote_sum = cluster.map_shared_rank(reinterpret_cast<const float*>(smem) + 1, threadIdx.x);
-        sum_reduction_buffer[threadIdx.x] = *remote_sum;
+        sum_reduction_buffer[threadIdx.x] = reinterpret_cast<const float*>(remote_mem_ptr)[1];
     }
     cg::cluster_group::arrival_token dsmem_done_token = cluster.barrier_arrive();
     __syncthreads();
@@ -230,7 +228,7 @@ template <typename Type>
 void fused_classifier_tma_imp(Type* logits, float* losses, float* lse,
                              const float dloss, const int* targets, float z_reg,
                              int BT, int V, int P, cudaStream_t stream) {
-    const int block_size = 256;
+    const int block_size = 128;
     const int grid_size = BT * 8;
     const int smem = 128 + P * sizeof(Type) / 8;
     CUDA_CHECK(cudaFuncSetAttribute(fused_classifier_tma_kernel<Type>, cudaFuncAttributeMaxDynamicSharedMemorySize, smem));
