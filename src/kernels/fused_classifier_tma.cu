@@ -223,29 +223,30 @@ __global__ void __cluster_dims__(8, 1, 1) __launch_bounds__(128, 2)
         lse_out[idx] = lse;
     }
 
-    int ix_by_v = (ix / x128::size) * x128::size;
+    // figure out which warp will encounter the groud-truth token
     float loss_scale = dloss * scale + z_reg * lse * scale;
 
-    // calculate the gradients directly, saves bandwidth from probs during training
-    // but also supports writing probs for inference-only and debugging
+    // treat all classes as if they are negative. This allows us to avoid any conditionals inside this loop.
     for (int i = block_start_ix + threadIdx.x * x128::size; i < block_end_ix; i += x128::size * BLOCK_SIZE) {
         x128 v = x128::load(smem_logits + i - block_start_ix);
-        if ( i != ix_by_v ) {
-            for(int k = 0; k < x128::size; ++k) {
-                float d_logit = expf((float)(v[k] - cluster_max)) * loss_scale;
-                v[k] = (floatX)d_logit;
-            }
-        } else {
-            for(int k = 0; k < x128::size; ++k) {
-                int element = i + k;
-                float loss_neg = expf((float)(v[k] - cluster_max)) * loss_scale;
-                float indicator = (element == ix) ? 1.0f : 0.0f;
-                v[k] = (floatX)(loss_neg - indicator * dloss);
-            }
+        for(int k = 0; k < x128::size; ++k) {
+            float d_logit = expf((float)(v[k] - cluster_max)) * loss_scale;
+            v[k] = (floatX)d_logit;
         }
-        // reduce cache persistence for the overwritten logits
-        // to maximise the probability that logits remain in cache between prepare_softmax and here
-        v.store_cs(logits + i);
+        v.store_cg(logits + i);
+    }
+
+    // write the correct dlogit for the true class
+    // is this block responsible for the ground-truth index
+    bool block_has_ix = block_start_ix < ix && ix < block_end_ix;
+    int thread_with_ix = -1;
+    if (block_has_ix) {
+        thread_with_ix = ((ix - block_start_ix) / x128::size) % BLOCK_SIZE;
+    }
+    if (threadIdx.x == thread_with_ix) {
+        floatX logit = smem_logits[ix - block_start_ix];
+        float loss_neg = expf((float)(logit - cluster_max)) * loss_scale;
+        logits[ix] = (floatX)(loss_neg - dloss);
     }
 
     // ensure that no block exits until dsmem communication is done
