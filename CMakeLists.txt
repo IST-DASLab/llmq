@@ -172,6 +172,7 @@ add_library(llmq-common SHARED
         src/kernels/adamw.cu
         src/kernels/attention.cu
         src/kernels/fused_classifier.cu
+        src/kernels/fused_classifier_tma.cu
         src/kernels/transpose.cu
         src/kernels/vector_add.cu
         src/kernels/random.cu
