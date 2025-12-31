@@ -177,17 +177,13 @@ sLLamaWeights allocate_scales(TransformerConfig config, int shard_idx, int num_s
         block.LN2_w = alloc.allocate_shard(ETensorDType::FP32, shard_idx, num_shards, "ln2_w", {div_exact(C, 128l)}, EAllocationType::ON_DEVICE);
         if(config.UseQKVBias) {
             block.Attn_QKV_b = alloc.allocate_shard(ETensorDType::FP32, shard_idx, num_shards, "att_qkv_b", {div_exact(attn_intermediate_size, 128l)}, EAllocationType::ON_DEVICE);
-            fill_constant(block.Attn_QKV_b, 1.f, block.Attn_QKV_b.nelem(), nullptr);
         } else {
             block.Attn_QKV_b = Tensor{};
         }
 
-        fill_constant(block.Attn_QKV_w, 1.f, block.Attn_QKV_w.nelem(), nullptr);
-        fill_constant(block.Attn_Out_w, 1.f, block.Attn_Out_w.nelem(), nullptr);
-        fill_constant(block.MLP_Up_w, 1.f, block.MLP_Up_w.nelem(), nullptr);
-        fill_constant(block.MLP_Down_w, 1.f, block.MLP_Down_w.nelem(), nullptr);
-        fill_constant(block.LN1_w, 1.f, block.LN1_w.nelem(), nullptr);
-        fill_constant(block.LN2_w, 1.f, block.LN2_w.nelem(), nullptr);
+        visit([](Tensor& t){
+            fill_constant(t, 1.f, t.nelem(), nullptr);
+        }, block);
     }
     result.NonBlocks.Embeddings = alloc.allocate_shard(ETensorDType::FP32, shard_idx, num_shards, "embeddings", {div_exact(V * C, 128l)}, EAllocationType::ON_DEVICE);
     result.NonBlocks.LNF_w      = alloc.allocate_shard(ETensorDType::FP32, shard_idx, num_shards,"lnf_w", {div_exact(C, 128l)}, EAllocationType::ON_DEVICE);

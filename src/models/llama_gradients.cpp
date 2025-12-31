@@ -18,15 +18,9 @@ void LLamaGradsManager::scatter_reduce(Tensor& tensor, cudaStream_t stream, cuda
     comm.execute_transaction(signal);
 }
 
-void LLamaGradsManager::scatter_reduce(int layer_idx, sLLamaBlockWeights<Tensor>& block, cudaStream_t stream, cudaEvent_t signal, NCCLCommunicator& comm) {
+void LLamaGradsManager::scatter_reduce(int layer_idx, SimpleTensorContainer& block, cudaStream_t stream, cudaEvent_t signal, NCCLCommunicator& comm) {
     comm.begin_transaction(stream);
-    comm.schedule_reduce_scatter(block.LN1_w);
-    comm.schedule_reduce_scatter(block.Attn_QKV_w);
-    comm.schedule_reduce_scatter(block.Attn_Out_w);
-    comm.schedule_reduce_scatter(block.LN2_w);
-    comm.schedule_reduce_scatter(block.MLP_Up_w);
-    comm.schedule_reduce_scatter(block.MLP_Down_w);
-    comm.schedule_reduce_scatter(block.Attn_QKV_b);
+    visit([&](Tensor& t){ comm.schedule_reduce_scatter(t); }, block);
     comm.execute_transaction(signal);
 }
 
@@ -192,8 +186,8 @@ public:
     sLLamaBlockWeights<TensorShard>& get_block_shard(int layer_idx, cudaStream_t stream) override;
 private:
     virtual void sr_accumulate_layer(int layer_idx,
-                                     sLLamaBlockWeights<Tensor>& dw,
-                                     sLLamaBlockWeights<TensorShard> sw,
+                                     SimpleTensorContainer& dw,
+                                     SimpleTensorContainer& sw,
                                      cudaStream_t stream,
                                      NCCLCommunicator& comm) = 0;
 
@@ -341,41 +335,35 @@ class LLamaGradientsBlockSharded_ScatterReduce : public LLamaGradientsBlockShard
 public:
     using LLamaGradientsBlockShardedBase::LLamaGradientsBlockShardedBase;
 private:
-    void sr_accumulate_tensor(TensorShard& dst, Tensor& src, cudaStream_t stream, unsigned seed);
     void sr_accumulate_layer(int layer_idx,
-                             sLLamaBlockWeights<Tensor>& dw,
-                             sLLamaBlockWeights<TensorShard> sw,
+                             SimpleTensorContainer& dw,
+                             SimpleTensorContainer& sw,
                              cudaStream_t stream,
                              NCCLCommunicator& comm) override;
 };
 
-void LLamaGradientsBlockSharded_ScatterReduce::sr_accumulate_tensor(TensorShard& dst, Tensor& src, cudaStream_t stream, unsigned seed) {
-    Tensor local_slice = shard_view(src, dst.ShardIndex, dst.NumShards);
-    if(mIsFirstMicroStep) {
-        CUDA_CHECK(cudaMemcpyAsync(dst.Data, local_slice.Data, local_slice.bytes(), cudaMemcpyDeviceToDevice, stream));
-    } else {
-        vector_add_sr(dst, dst, local_slice, 1.f, local_slice.nelem(), seed, stream);
-    }
-}
-
 void LLamaGradientsBlockSharded_ScatterReduce::sr_accumulate_layer(int layer_idx,
-                                                                   sLLamaBlockWeights<Tensor>& dw,
-                                                                   sLLamaBlockWeights<TensorShard> sw,
+                                                                   SimpleTensorContainer& dw,
+                                                                   SimpleTensorContainer& sw,
                                                                    cudaStream_t stream,
                                                                    NCCLCommunicator& comm) {
     NvtxRange range("accumulate_layer", layer_idx);
     std::array<std::uint32_t, 8> rng;
     mRng.generate(std::span(rng), 2*mStepCounter, layer_idx);
 
-    sr_accumulate_tensor(sw.LN1_w, dw.LN1_w, stream, rng[0]);
-    sr_accumulate_tensor(sw.LN2_w, dw.LN2_w, stream, rng[1]);
-    sr_accumulate_tensor(sw.MLP_Up_w, dw.MLP_Up_w, stream, rng[2]);
-    sr_accumulate_tensor(sw.MLP_Down_w, dw.MLP_Down_w, stream, rng[3]);
-    sr_accumulate_tensor(sw.Attn_QKV_w, dw.Attn_QKV_w, stream, rng[4]);
-    sr_accumulate_tensor(sw.Attn_Out_w, dw.Attn_Out_w, stream, rng[5]);
-    if(sw.Attn_QKV_b) {
-        sr_accumulate_tensor(sw.Attn_QKV_b, dw.Attn_QKV_b, stream, rng[6]);
-    }
+    int rank = comm.rank();
+    int world = comm.world_size();
+
+    int i = 0;
+    visit([&](Tensor& dst, Tensor& src){
+        Tensor local_slice = shard_view(src, rank, world);
+        if(mIsFirstMicroStep) {
+            CUDA_CHECK(cudaMemcpyAsync(dst.Data, local_slice.Data, local_slice.bytes(), cudaMemcpyDeviceToDevice, stream));
+        } else {
+            vector_add_sr(dst, dst, local_slice, 1.f, local_slice.nelem(), rng[i], stream);
+        }
+        ++i;
+    }, sw, dw);
 }
 
 // ---------------------------------------------------------------------------------------------------------------------
@@ -384,33 +372,34 @@ class LLamaGradientsBlockSharded_AllToAll : public LLamaGradientsBlockShardedBas
 public:
     using LLamaGradientsBlockShardedBase::LLamaGradientsBlockShardedBase;
 private:
-    void scatter_reduce(int layer_idx, sLLamaBlockWeights<Tensor>& block, cudaStream_t stream, cudaEvent_t signal, NCCLCommunicator& comm) override;
-    void sr_accumulate_tensor(TensorShard& dst, Tensor& src, cudaStream_t stream, bool first, float scale, int shard, unsigned seed);
+    void scatter_reduce(int layer_idx, SimpleTensorContainer& block, cudaStream_t stream, cudaEvent_t signal, NCCLCommunicator& comm) override;
     void sr_accumulate_layer(int layer_idx,
-                             sLLamaBlockWeights<Tensor>& dw,
-                             sLLamaBlockWeights<TensorShard> sw,
+                             SimpleTensorContainer& dw,
+                             SimpleTensorContainer& sw,
                              cudaStream_t stream,
                              NCCLCommunicator& comm) override;
 };
 
-void LLamaGradientsBlockSharded_AllToAll::scatter_reduce(int layer_idx, sLLamaBlockWeights<Tensor>& dw, cudaStream_t stream, cudaEvent_t signal, NCCLCommunicator& comm) {
+void LLamaGradientsBlockSharded_AllToAll::scatter_reduce(int layer_idx, SimpleTensorContainer& dw, cudaStream_t stream, cudaEvent_t signal, NCCLCommunicator& comm) {
     auto& sw = get_block_shard(layer_idx, stream);
     int rank = sw.LN1_w.ShardIndex;
+    int world = sw.LN1_w.NumShards;
 
     // accumulate local slice of block to local gradient
     {
         NvtxRange range("accumulate-own-shard", layer_idx);
         std::array<std::uint32_t, 8> rng;
         mRng.generate(std::span(rng), 2*mStepCounter, layer_idx);
-        sr_accumulate_tensor(sw.LN1_w, dw.LN1_w, stream, mIsFirstMicroStep, 1.f, rank, rng[0]);
-        sr_accumulate_tensor(sw.LN2_w, dw.LN2_w, stream, mIsFirstMicroStep, 1.f, rank, rng[1]);
-        sr_accumulate_tensor(sw.Attn_QKV_w, dw.Attn_QKV_w, stream, mIsFirstMicroStep, 1.f, rank, rng[2]);
-        sr_accumulate_tensor(sw.Attn_Out_w, dw.Attn_Out_w, stream, mIsFirstMicroStep, 1.f, rank, rng[3]);
-        sr_accumulate_tensor(sw.MLP_Up_w, dw.MLP_Up_w, stream, mIsFirstMicroStep, 1.f, rank, rng[4]);
-        sr_accumulate_tensor(sw.MLP_Down_w, dw.MLP_Down_w, stream, mIsFirstMicroStep, 1.f, rank, rng[5]);
-        if (sw.Attn_QKV_b) {
-            sr_accumulate_tensor(sw.Attn_QKV_b, dw.Attn_QKV_b, stream, mIsFirstMicroStep, 1.f, rank, rng[6]);
-        }
+        int i = 0;
+        visit([&](Tensor& dst, Tensor& src){
+            Tensor local_slice = shard_view(src, rank, world);
+            if(mIsFirstMicroStep) {
+                CUDA_CHECK(cudaMemcpyAsync(dst.Data, local_slice.Data, local_slice.bytes(), cudaMemcpyDeviceToDevice, stream));
+            } else {
+                vector_add_sr(dst, dst, local_slice, 1.f, local_slice.nelem(), rng[i], stream);
+            }
+            ++i;
+        }, sw, dw);
     }
 
     // make sure we've done the local accumulation before we allow communication to begin.
@@ -419,30 +408,15 @@ void LLamaGradientsBlockSharded_AllToAll::scatter_reduce(int layer_idx, sLLamaBl
     NvtxRange range("all-to-all-gradients", layer_idx);
 
     comm.begin_transaction(signal);
-    comm.schedule_destructive_all_to_all(dw.LN1_w);
-    comm.schedule_destructive_all_to_all(dw.Attn_QKV_w);
-    comm.schedule_destructive_all_to_all(dw.Attn_Out_w);
-    comm.schedule_destructive_all_to_all(dw.LN2_w);
-    comm.schedule_destructive_all_to_all(dw.MLP_Up_w);
-    comm.schedule_destructive_all_to_all(dw.MLP_Down_w);
-    comm.schedule_destructive_all_to_all(dw.Attn_QKV_b);
+    visit([&](Tensor& t){ comm.schedule_reduce_scatter(t); }, dw);
     comm.execute_transaction(signal);
 }
 
-void LLamaGradientsBlockSharded_AllToAll::sr_accumulate_tensor(TensorShard& dst, Tensor& src, cudaStream_t stream, bool first, float scale, int shard, unsigned seed) {
-    Tensor local_slice = shard_view(src, shard, dst.NumShards);
-    if(first) {
-        CUDA_CHECK(cudaMemcpyAsync(dst.Data, local_slice.Data, local_slice.bytes(), cudaMemcpyDeviceToDevice, stream));
-    } else {
-        vector_add_sr(dst, dst, local_slice, scale, local_slice.nelem(), seed, stream);
-    }
-}
-
 void LLamaGradientsBlockSharded_AllToAll::sr_accumulate_layer(int layer_idx,
-                                                 sLLamaBlockWeights<Tensor>& dw,
-                                                 sLLamaBlockWeights<TensorShard> sw,
-                                                 cudaStream_t stream,
-                                                 NCCLCommunicator& comm) {
+                                                              SimpleTensorContainer& dw,
+                                                              SimpleTensorContainer& sw,
+                                                              cudaStream_t stream,
+                                                              NCCLCommunicator& comm) {
     NvtxRange range("accumulate_layer", layer_idx);
 
     int rank = comm.rank();
@@ -455,15 +429,11 @@ void LLamaGradientsBlockSharded_AllToAll::sr_accumulate_layer(int layer_idx,
     std::array<std::uint32_t, 8> rng;
     mRng.generate(std::span(rng), 2*mStepCounter, layer_idx);
 
-    vector_reduce_sr(sw.LN1_w, dw.LN1_w, scale, world, (rank + world - 1) % world, sw.LN1_w.nelem(), true, rng[0], stream);
-    vector_reduce_sr(sw.LN2_w, dw.LN2_w, scale, world, (rank + world - 1) % world, sw.LN2_w.nelem(), true, rng[1], stream);
-    vector_reduce_sr(sw.MLP_Up_w, dw.MLP_Up_w, scale, world, (rank + world - 1) % world, sw.MLP_Up_w.nelem(), true, rng[2], stream);
-    vector_reduce_sr(sw.MLP_Down_w, dw.MLP_Down_w, scale, world, (rank + world - 1) % world, sw.MLP_Down_w.nelem(), true, rng[3], stream);
-    vector_reduce_sr(sw.Attn_QKV_w, dw.Attn_QKV_w, scale, world, (rank + world - 1) % world, sw.Attn_QKV_w.nelem(), true, rng[4], stream);
-    vector_reduce_sr(sw.Attn_Out_w, dw.Attn_Out_w, scale, world, (rank + world - 1) % world, sw.Attn_Out_w.nelem(), true, rng[5], stream);
-    if(sw.Attn_QKV_b) {
-        vector_reduce_sr(sw.Attn_QKV_b, dw.Attn_QKV_b, scale, world, (rank + world - 1) % world, sw.Attn_QKV_b.nelem(), true, rng[6], stream);
-    }
+    int i = 0;
+    visit([&](Tensor& s, Tensor& d){
+        vector_reduce_sr(s, d, scale, world, (rank + world - 1) % world, s.nelem(), true, rng[i], stream);
+        ++i;
+    }, sw, dw);
 }
 
 std::unique_ptr<LLamaGradsManager> LLamaGradsManager::create(std::uint64_t seed, int step, const TransformerConfig& config, const LLamaOptions& options, int rank, int world, const std::shared_ptr<TensorAllocator>& alloc) {

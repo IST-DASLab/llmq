@@ -203,6 +203,31 @@ sLLamaWeights allocate_weights(const TransformerConfig& config, EAllocationType 
     return result;
 }
 
+void convert_dtype_for_gather(Tensor& src, Tensor& qnt, bool& convert, bool src_is_persistent, LLamaRunState& run_state) {
+    qnt.Stats = src.Stats;
+    if (qnt.DType == src.DType) {
+        // Identical tensors
+        if(qnt.Device == src.Device && src_is_persistent) {
+            qnt.Data = src.Data;
+            return;
+        } else {    // transfer to other device? (should just be GPU -> CPU)
+            CUDA_CHECK(cudaMemcpyAsync(qnt.Data, src.Data, qnt.bytes(), cudaMemcpyDefault, run_state.MainStream));
+            convert = true;
+            return;
+        }
+    }
+
+    quantize_with_abs_max(qnt, src.scale(), src, src.abs_max(), qnt.nelem(), run_state.DeviceProp, run_state.MainStream);
+    convert = true;
+}
+
+void convert_dtype_for_gather(SimpleTensorContainer& src, SimpleTensorContainer& qnt, bool& convert, bool src_is_persistent, LLamaRunState& run_state) {
+    visit([&](Tensor& s, Tensor& q) {
+        convert_dtype_for_gather(s, q, convert, src_is_persistent, run_state);
+    }, src, qnt);
+}
+
+
 LLamaWeightsManager::LLamaWeightsManager(const TransformerConfig& config, const LLamaOptions& options, int rank, int world) :
     mMasterDType(options.MasterDType.value_or(config.DType)), mWorkMatDType(options.matmul_dtype()),
     mShardIdx(rank), mNumShards(world), mConfig(config)
@@ -337,7 +362,8 @@ void LLamaWeightsManager::fetch_master_block(int layer_idx, cudaStream_t fetch_s
     CUDA_CHECK(cudaStreamWaitEvent(fetch_stream, stat.DoneEvent, 0));
     stat.LayerIdx = layer_idx;
     stat.Fetch = false;
-    auto fetch = [fetch_stream, &stat](TensorShard& dst, TensorShard& src) {
+
+    visit([fetch_stream, &stat](Tensor& dst, Tensor& src){
         // tensors on the same device are handled by pointer assignment
         if(dst.Device == src.Device) {
             dst.Data = src.Data;
@@ -347,17 +373,7 @@ void LLamaWeightsManager::fetch_master_block(int layer_idx, cudaStream_t fetch_s
             dst.Stats = src.Stats;
             stat.Fetch = true;
         }
-    };
-
-    fetch(buf.LN1_w, ref.LN1_w);
-    fetch(buf.LN2_w, ref.LN2_w);
-    fetch(buf.Attn_QKV_w, ref.Attn_QKV_w);
-    fetch(buf.Attn_Out_w, ref.Attn_Out_w);
-    fetch(buf.MLP_Up_w, ref.MLP_Up_w);
-    fetch(buf.MLP_Down_w, ref.MLP_Down_w);
-    if (ref.Attn_QKV_b) {
-        fetch(buf.Attn_QKV_b, ref.Attn_QKV_b);
-    }
+        }, buf, ref);
 
     if(stat.Fetch) {
         CUDA_CHECK(cudaEventRecord(stat.DoneEvent, fetch_stream));
@@ -383,13 +399,6 @@ void LLamaWeightsManager::release_master_block(int layer_idx, cudaStream_t strea
     auto& stat = mMasterDeviceBufferStatus.at(buffer);
     auto& ref = mMaster.Blocks[layer_idx];
 
-    auto send = [put_stream](TensorShard& dst, TensorShard& src) {
-        // tensors on the same device are handled by pointer assignment
-        if(dst.Device != src.Device) {
-            CUDA_CHECK(cudaMemcpyAsync(dst.Data, src.Data, dst.bytes(), cudaMemcpyDeviceToHost, put_stream));
-        }
-    };
-
     auto& src = mMasterDeviceDoubleBuffer.at(buffer);
     auto& qnt = lookup_block_quants(layer_idx);
 
@@ -400,29 +409,18 @@ void LLamaWeightsManager::release_master_block(int layer_idx, cudaStream_t strea
     bool convert_any = false;
     if (qnt.LayerIdx == layer_idx) {
         NvtxRange q_rng("quantize");
-        convert_dtype_for_gather(src.LN1_w, qnt.Block.LN1_w, convert_any, !mOffloadMaster, run_state);
-        convert_dtype_for_gather(src.LN2_w, qnt.Block.LN2_w, convert_any, !mOffloadMaster, run_state);
-        convert_dtype_for_gather(src.Attn_QKV_w, qnt.Block.Attn_QKV_w, convert_any, !mOffloadMaster, run_state);
-        convert_dtype_for_gather(src.Attn_Out_w, qnt.Block.Attn_Out_w, convert_any, !mOffloadMaster, run_state);
-        convert_dtype_for_gather(src.MLP_Up_w, qnt.Block.MLP_Up_w, convert_any, !mOffloadMaster, run_state);
-        convert_dtype_for_gather(src.MLP_Down_w, qnt.Block.MLP_Down_w, convert_any, !mOffloadMaster, run_state);
-        if (src.Attn_QKV_b) {
-            convert_dtype_for_gather(src.Attn_QKV_b, qnt.Block.Attn_QKV_b, convert_any, !mOffloadMaster, run_state);
-        }
+        convert_dtype_for_gather(src, qnt.Block, convert_any, !mOffloadMaster, run_state);
         // indicate that this is already the version for the next step
         qnt.Version = mVersion + 1;
     }
     CUDA_CHECK(cudaEventRecord(stat.DoneEvent, stream));
 
-    send(ref.LN1_w, buf.LN1_w);
-    send(ref.LN2_w, buf.LN2_w);
-    send(ref.Attn_QKV_w, buf.Attn_QKV_w);
-    send(ref.Attn_Out_w, buf.Attn_Out_w);
-    send(ref.MLP_Up_w, buf.MLP_Up_w);
-    send(ref.MLP_Down_w, buf.MLP_Down_w);
-    if (ref.Attn_QKV_b) {
-        send(ref.Attn_QKV_b, buf.Attn_QKV_b);
-    }
+    visit([put_stream](Tensor& dst, Tensor& src){
+        // tensors on the same device are handled by pointer assignment
+        if(dst.Device != src.Device) {
+            CUDA_CHECK(cudaMemcpyAsync(dst.Data, src.Data, dst.bytes(), cudaMemcpyDeviceToHost, put_stream));
+        }
+    }, ref, buf);
 
     // put is only considered complete once *both* master weights *and* quants
     // are finished.
@@ -468,24 +466,6 @@ void LLamaWeightsManager::release_status(sGatherData& data, int expected, cudaSt
     data.Done = true;
 }
 
-void LLamaWeightsManager::convert_dtype_for_gather(TensorShard& src, TensorShard& qnt, bool& convert, bool src_is_persistent, LLamaRunState& run_state) {
-    qnt.Stats = src.Stats;
-    if (qnt.DType == src.DType) {
-        // Identical tensors
-        if(qnt.Device == src.Device && src_is_persistent) {
-            qnt.Data = src.Data;
-            return;
-        } else {    // transfer to other device? (should just be GPU -> CPU)
-            CUDA_CHECK(cudaMemcpyAsync(qnt.Data, src.Data, qnt.bytes(), cudaMemcpyDefault, run_state.MainStream));
-            convert = true;
-            return;
-        }
-    }
-
-    quantize_with_abs_max(qnt, src.scale(), src, src.abs_max(), qnt.nelem(), run_state.DeviceProp, run_state.MainStream);
-    convert = true;
-}
-
 void LLamaWeightsManager::gather_block(int layer_idx, NCCLCommunicator& comm, LLamaRunState& run_state) {
     auto& src = mMaster.Blocks[layer_idx];
     auto& qnt = lookup_block_quants(layer_idx);
@@ -502,43 +482,21 @@ void LLamaWeightsManager::gather_block(int layer_idx, NCCLCommunicator& comm, LL
     bool convert_any = false;
     if (qnt.Version != mVersion || qnt.LayerIdx != layer_idx) {
         NvtxRange q_rng("quantize");
-        convert_dtype_for_gather(src.LN1_w, qnt.Block.LN1_w, convert_any, true, run_state);
-        convert_dtype_for_gather(src.LN2_w, qnt.Block.LN2_w, convert_any, true, run_state);
-        convert_dtype_for_gather(src.Attn_QKV_w, qnt.Block.Attn_QKV_w, convert_any, true, run_state);
-        convert_dtype_for_gather(src.Attn_Out_w, qnt.Block.Attn_Out_w, convert_any, true, run_state);
-        convert_dtype_for_gather(src.MLP_Up_w, qnt.Block.MLP_Up_w, convert_any, true, run_state);
-        convert_dtype_for_gather(src.MLP_Down_w, qnt.Block.MLP_Down_w, convert_any, true, run_state);
-        if (src.Attn_QKV_b) {
-            convert_dtype_for_gather(src.Attn_QKV_b, qnt.Block.Attn_QKV_b, convert_any, true, run_state);
-        }
-
+        convert_dtype_for_gather(src, qnt.Block, convert_any, true, run_state);
         qnt.Version = mVersion;
         qnt.LayerIdx = layer_idx;
     }
-
-    // make sure the target scales are set up correctly
-    dst.LN1_w.Stats = qnt.Block.LN1_w.Stats;
-    dst.LN2_w.Stats = qnt.Block.LN2_w.Stats;
-    dst.Attn_QKV_w.Stats = qnt.Block.Attn_QKV_w.Stats;
-    dst.Attn_QKV_b.Stats = qnt.Block.Attn_QKV_b.Stats;
-    dst.Attn_Out_w.Stats = qnt.Block.Attn_Out_w.Stats;
-    dst.MLP_Up_w.Stats = qnt.Block.MLP_Up_w.Stats;
-    dst.MLP_Down_w.Stats = qnt.Block.MLP_Down_w.Stats;
 
     if (convert_any) {
         CUDA_CHECK(cudaEventRecord(gather_data.DoneEvent, run_state.MainStream));
     }
 
     comm.begin_transaction(gather_data.DoneEvent);
-    comm.schedule_all_gather(qnt.Block.LN1_w, dst.LN1_w);
-    comm.schedule_all_gather(qnt.Block.LN2_w, dst.LN2_w);
-    comm.schedule_all_gather(qnt.Block.Attn_QKV_w, dst.Attn_QKV_w);
-    if (src.Attn_QKV_b) {
-        comm.schedule_all_gather(qnt.Block.Attn_QKV_b, dst.Attn_QKV_b);
-    }
-    comm.schedule_all_gather(qnt.Block.Attn_Out_w, dst.Attn_Out_w);
-    comm.schedule_all_gather(qnt.Block.MLP_Up_w, dst.MLP_Up_w);
-    comm.schedule_all_gather(qnt.Block.MLP_Down_w, dst.MLP_Down_w);
+    visit([&](Tensor& q, Tensor& d) {
+        // make sure the target scales are set up correctly, in addition to copying the data
+        d.Stats = q.Stats;
+        comm.schedule_all_gather(q, d);
+    }, qnt.Block, dst);
     comm.execute_transaction(gather_data.DoneEvent);
 }
 
@@ -861,24 +819,10 @@ void LLamaWeightsManager::synchronize_absmax(NCCLCommunicator& comm) {
 
     // in order to reach a consistent state, like after an optimizer step, we need to calculate the abs-maxes
     for (auto& layer : mMaster.Blocks) {
-        abs_max(layer.LN1_w.abs_max(), layer.LN1_w, layer.LN1_w.nelem(), dp, nullptr);
-        abs_max(layer.LN2_w.abs_max(), layer.LN2_w, layer.LN2_w.nelem(), dp, nullptr);
-        abs_max(layer.Attn_QKV_w.abs_max(), layer.Attn_QKV_w, layer.Attn_QKV_w.nelem(), dp, nullptr);
-        abs_max(layer.Attn_Out_w.abs_max(), layer.Attn_Out_w, layer.Attn_Out_w.nelem(), dp, nullptr);
-        abs_max(layer.MLP_Up_w.abs_max(), layer.MLP_Up_w, layer.MLP_Up_w.nelem(), dp, nullptr);
-        abs_max(layer.MLP_Down_w.abs_max(), layer.MLP_Down_w, layer.MLP_Down_w.nelem(), dp, nullptr);
-        if (layer.Attn_QKV_b) {
-            abs_max(layer.Attn_QKV_b.abs_max(), layer.Attn_QKV_b, layer.Attn_QKV_b.nelem(), dp, nullptr);
-        }
-        comm.reduce_max(layer.LN1_w.abs_max());
-        comm.reduce_max(layer.LN2_w.abs_max());
-        comm.reduce_max(layer.Attn_QKV_w.abs_max());
-        comm.reduce_max(layer.Attn_Out_w.abs_max());
-        comm.reduce_max(layer.MLP_Up_w.abs_max());
-        comm.reduce_max(layer.MLP_Down_w.abs_max());
-        if (layer.Attn_QKV_b) {
-            comm.reduce_max(layer.Attn_QKV_b.abs_max());
-        }
+        visit([&](Tensor& w){
+            abs_max(w.abs_max(), w, w.nelem(), dp, nullptr);
+            comm.reduce_max(w.abs_max());
+        }, layer);
         comm.wait_on_comms(nullptr);
     }
     comm.barrier();     // make sure all import is done before any process proceeds.
