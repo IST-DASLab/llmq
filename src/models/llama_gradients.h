@@ -42,7 +42,7 @@ protected:
     virtual void on_first_micro_step(cudaStream_t stream) = 0;
 
     void scatter_reduce(Tensor& tensor, cudaStream_t stream, cudaEvent_t signal, NCCLCommunicator& comm);
-    virtual void scatter_reduce(int layer_idx, sLLamaBlockWeights<Tensor>& block, cudaStream_t stream, cudaEvent_t signal, NCCLCommunicator& comm);
+    virtual void scatter_reduce(int layer_idx, SimpleTensorContainer& block, cudaStream_t stream, cudaEvent_t signal, NCCLCommunicator& comm);
 
     Philox4x32 mRng;
     int mStepCounter = -1;

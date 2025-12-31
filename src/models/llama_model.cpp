@@ -708,15 +708,9 @@ void LLamaModel::_calculate_gradient_norm(NCCLCommunicator& comm, float grad_cli
 
     for(int i = 0; i < Config.NumLayers; i++) {
         auto& block = Grads->get_block_shard(i, stream);
-        norm_squared(block.LN1_w);
-        norm_squared(block.LN2_w);
-        norm_squared(block.Attn_QKV_w);
-        if(block.Attn_QKV_b) {
-            norm_squared(block.Attn_QKV_b);
-        }
-        norm_squared(block.Attn_Out_w);
-        norm_squared(block.MLP_Up_w);
-        norm_squared(block.MLP_Down_w);
+        visit([&](Tensor& t){
+            norm_squared(t);
+        }, block);
     }
 
     // final reduction to a single norm-squared element

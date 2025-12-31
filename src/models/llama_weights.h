@@ -23,7 +23,7 @@ enum class EAllocationType : int;
 typedef struct CUevent_st* cudaEvent_t;
 
 template<class TTensor>
-struct sLLamaBlockWeights {
+struct sLLamaBlockWeights : public SimpleTensorContainer {
     TTensor LN1_w;           // C
     TTensor LN2_w;           // C
     TTensor Attn_QKV_w;      // ((Hq + 2Hkv)Hd, C)
@@ -31,6 +31,21 @@ struct sLLamaBlockWeights {
     TTensor Attn_Out_w;      //
     TTensor MLP_Up_w;
     TTensor MLP_Down_w;
+
+    std::size_t num_tensors() const noexcept override { return 7; }
+    const Tensor& get_tensor(unsigned idx) const override {
+        switch (idx) {
+            case 0: return LN1_w;
+            case 1: return LN2_w;
+            case 2: return Attn_QKV_w;
+            case 3: return Attn_QKV_b;
+            case 4: return Attn_Out_w;
+            case 5: return MLP_Up_w;
+            case 6: return MLP_Down_w;
+            default:
+                throw std::out_of_range("Invalid tensor index");
+        }
+    }
 };
 
 template<class TTensor>
@@ -161,8 +176,6 @@ protected:
     bool is_in_cache(sGatherData& data, int expected) const;
     void update_get_status(sGatherData& data, int expected, cudaStream_t stream) const;
     void release_status(sGatherData& data, int expected, cudaStream_t stream);
-
-    void convert_dtype_for_gather(TensorShard& src, TensorShard& qnt, bool& convert, bool src_is_persistent, LLamaRunState& run_state);
 
     TransformerConfig mConfig;
     long HQ;    // number of query heads
