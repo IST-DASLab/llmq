@@ -47,7 +47,7 @@ public:
     void schedule_reduce_scatter(Tensor& tensor);
     void schedule_all_gather(const TensorShard& src, Tensor& tgt);
     // like all-to-all, except the local shard will *not* be preserved, and results will be shifted cyclically
-    void schedule_destructive_all_to_all(const Tensor& tensor);
+    void schedule_destructive_all_to_all(Tensor& tensor);
     void execute_transaction(cudaEvent_t signal);
 
     void reduce_loss(float* loss, cudaStream_t stream);

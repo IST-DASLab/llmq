@@ -103,10 +103,10 @@ LLamaRunState::LayerActivations RunStateBuilder::allocate_basic_fwd_tensors(Tens
     if(!Options.RecomputeFFN)
         mlp_up = allocate_or_reuse(Options.RecomputeFFN, tMlpUpBuffer, Config.DType, "mlp_up", B, T, 2 * H);
 
-    QuantizableTensor ln1 = {ln1_v, std::nullopt};
-    QuantizableTensor ln2 = {ln2_v, std::nullopt};
-    QuantizableTensor att = {att_v, std::nullopt};
-    QuantizableTensor swiglu = {swiglu_v, std::nullopt};
+    QuantizableTensor ln1 = {ln1_v, {}};
+    QuantizableTensor ln2 = {ln2_v, {}};
+    QuantizableTensor att = {att_v, {}};
+    QuantizableTensor swiglu = {swiglu_v, {}};
 
     Tensor mlp_down = allocate_or_reuse(true, lnf, Config.DType, "mlp_down", B, T, C);
 
@@ -334,24 +334,24 @@ LLamaRunState::LLamaRunState(TransformerConfig config, LLamaOptions options, lon
         for(int i = 0; i < Config.NumLayers; ++i) {
             float* layer_abs_maxes = abs_max_ptr + 8 * QWEN2_NUM_LINEAR_OPS * i;
 
-            Acts[i].LN1.Quant->Stats = layer_abs_maxes + 0;
+            Acts[i].LN1.Quant.Stats = layer_abs_maxes + 0;
             Acts[i].QKV.Stats = layer_abs_maxes + 2;
-            DActs.at(i).DQKV.Quant->Stats = layer_abs_maxes + 4;
+            DActs.at(i).DQKV.Quant.Stats = layer_abs_maxes + 4;
             DActs.at(i).DLN1.Stats = layer_abs_maxes + 6;
 
-            Acts[i].Att.Quant->Stats = layer_abs_maxes + 8;
+            Acts[i].Att.Quant.Stats = layer_abs_maxes + 8;
             Acts[i].AttO.Stats = layer_abs_maxes + 10;
-            DActs.at(i).DResAtt.Quant->Stats = layer_abs_maxes + 12;
+            DActs.at(i).DResAtt.Quant.Stats = layer_abs_maxes + 12;
             DActs.at(i).DAttY.Stats = layer_abs_maxes + 14;
 
-            Acts[i].LN2.Quant->Stats = layer_abs_maxes + 16;
+            Acts[i].LN2.Quant.Stats = layer_abs_maxes + 16;
             Acts[i].MlpUp.Stats = layer_abs_maxes + 18;
-            DActs.at(i).DMlpUp.Quant->Stats = layer_abs_maxes + 20;
+            DActs.at(i).DMlpUp.Quant.Stats = layer_abs_maxes + 20;
             DActs.at(i).DLN2.Stats = layer_abs_maxes + 22;
 
-            Acts[i].SwiGLu.Quant->Stats = layer_abs_maxes + 24;
+            Acts[i].SwiGLu.Quant.Stats = layer_abs_maxes + 24;
             Acts[i].MlpDown.Stats = layer_abs_maxes + 26;
-            DActs.at(i).DResFFN.Quant->Stats = layer_abs_maxes + 28;
+            DActs.at(i).DResFFN.Quant.Stats = layer_abs_maxes + 28;
             DActs.at(i).DSwiGLU.Stats = layer_abs_maxes + 30;
         }
     }
@@ -379,7 +379,7 @@ LLamaRunState::LLamaRunState(TransformerConfig config, LLamaOptions options, lon
     stack.free(dswi);
 
     if(use_fp8) {
-        auto dupq = stack.allocate(DActs[0].DMlpUp.Quant->bytes(), "dup.q");
+        auto dupq = stack.allocate(DActs[0].DMlpUp.Quant.bytes(), "dup.q");
         bw_qmm(B, T, C, 2 * H);     // backward qmm up
         stack.free(dupq);
     }

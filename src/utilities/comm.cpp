@@ -165,10 +165,7 @@ void NCCLCommunicator::execute_transaction(cudaEvent_t signal) {
 }
 
 void NCCLCommunicator::schedule_reduce_scatter(Tensor& tensor) {
-    if (tensor.Data == nullptr) {
-        throw std::runtime_error("scatter: Source tensor is null");
-    }
-
+    if(tensor.empty()) return;
     mCmdBuf->Commands.emplace_back(CommandBuffer::ScatterReduce{.DType = tensor.DType, .Tensor = tensor.Data, .Elements = tensor.nelem()});
 }
 
@@ -487,7 +484,8 @@ std::unique_ptr<CommunicatorThreadsPack> NCCLCommunicator::launch_threads_commun
     return std::make_unique<ThreadsPackImp>(std::move(threads), std::move(bar));
 }
 
-void NCCLCommunicator::schedule_destructive_all_to_all(const Tensor& tensor) {
+void NCCLCommunicator::schedule_destructive_all_to_all(Tensor& tensor) {
+    if(tensor.empty()) return;
     std::size_t shard_size = (ptrdiff_t)tensor.bytes() / world_size();
     for(int n = 1; n < world_size(); ++n) {
         int dst = (n + rank()) % world_size();

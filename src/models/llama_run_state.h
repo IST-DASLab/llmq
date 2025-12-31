@@ -20,7 +20,7 @@ struct QuantizableTensor {
     /// original, high-precision value
     Tensor Value;
     /// Quantized value
-    std::optional<Tensor> Quant = std::nullopt;
+    Tensor Quant = Tensor{};
 };
 
 

@@ -103,11 +103,11 @@ void fused_classifier(Tensor& logits, Tensor& losses,
     }
 }
 
-void encoder_forward(Tensor& out, const Tensor& inp, const Tensor& wte, std::optional<Tensor> wpe, int B, int T, int C, int V, cudaStream_t stream) {
+void encoder_forward(Tensor& out, const Tensor& inp, const Tensor& wte, const Tensor& wpe, int B, int T, int C, int V, cudaStream_t stream) {
     if(out.DType == ETensorDType::FP32) {
-        encoder_forward(out.get<float>(), inp.get<std::int32_t>(), wte.get<float>(), wpe.has_value() ? wpe->get<float>() : nullptr, B, T, C, V, stream);
+        encoder_forward(out.get<float>(), inp.get<std::int32_t>(), wte.get<float>(), wpe.get_optional<float>(), B, T, C, V, stream);
     } else if(out.DType == ETensorDType::BF16) {
-        encoder_forward(out.get<nv_bfloat16>(), inp.get<std::int32_t>(), wte.get<nv_bfloat16>(),  wpe.has_value() ? wpe->get<nv_bfloat16>() : nullptr, B, T, C, V, stream);
+        encoder_forward(out.get<nv_bfloat16>(), inp.get<std::int32_t>(), wte.get<nv_bfloat16>(),  wpe.get_optional<nv_bfloat16>(), B, T, C, V, stream);
     } else {
         throw std::runtime_error("encoder_forward: unsupported dtype");
     }
@@ -270,36 +270,36 @@ void fill_constant(Tensor& dest, float value, std::size_t count, cudaStream_t st
     }
 }
 
-void matmul(Tensor& c, const Tensor& a, const Tensor& b, std::optional<Tensor> bias,
+void matmul(Tensor& c, const Tensor& a, const Tensor& b, const Tensor& bias,
             const float* scale_a, const float* scale_b,
             cublasLtHandle_t handle, Tensor& workspace,
             int M, int N, int K, EMMTranspose mode, bool accumulate, cudaStream_t stream) {
     std::byte* ws = workspace.get<std::byte>();
     std::size_t ws_size = workspace.bytes();
     if(c.DType == ETensorDType::FP32 && a.DType == ETensorDType::FP32) {
-        float* bias_ptr = bias.has_value() ? bias.value().get<float>() : nullptr;
+        const float* bias_ptr = bias.get_optional<float>();
         matmul(c.get<float>(), a.get<float>(), b.get<float>(), bias_ptr, scale_a, scale_b, handle, ws, ws_size, M, N, K, mode, accumulate, stream);
     } else if(c.DType == ETensorDType::FP32 && a.DType == ETensorDType::BF16) {
-        float* bias_ptr = bias.has_value() ? bias.value().get<float>() : nullptr;
+        const float* bias_ptr = bias.get_optional<float>();
         matmul(c.get<float>(), a.get<nv_bfloat16>(), b.get<nv_bfloat16>(), bias_ptr, scale_a, scale_b, handle, ws, ws_size, M, N, K, mode, accumulate, stream);
     } else if(c.DType == ETensorDType::FP32 && a.DType == ETensorDType::FP8_E4M3) {
-        if(bias.has_value()) {
-            if(bias.value().DType == ETensorDType::BF16) {
-                matmul(c.get<float>(), a.get<__nv_fp8_e4m3>(), b.get<__nv_fp8_e4m3>(), bias->get<nv_bfloat16>(), scale_a, scale_b, handle, ws, ws_size, M, N, K, mode, accumulate, stream);
+        if(!bias.empty()) {
+            if(bias.DType == ETensorDType::BF16) {
+                matmul(c.get<float>(), a.get<__nv_fp8_e4m3>(), b.get<__nv_fp8_e4m3>(), bias.get<nv_bfloat16>(), scale_a, scale_b, handle, ws, ws_size, M, N, K, mode, accumulate, stream);
             } else {
-                matmul(c.get<float>(), a.get<__nv_fp8_e4m3>(), b.get<__nv_fp8_e4m3>(), bias->get<float>(), scale_a, scale_b, handle, ws, ws_size, M, N, K, mode, accumulate, stream);
+                matmul(c.get<float>(), a.get<__nv_fp8_e4m3>(), b.get<__nv_fp8_e4m3>(), bias.get<float>(), scale_a, scale_b, handle, ws, ws_size, M, N, K, mode, accumulate, stream);
             }
         } else {
             matmul(c.get<float>(), a.get<__nv_fp8_e4m3>(), b.get<__nv_fp8_e4m3>(), (nv_bfloat16*)nullptr, scale_a, scale_b, handle, ws, ws_size, M, N, K, mode, accumulate, stream);
         }
     } else if(c.DType == ETensorDType::BF16 && a.DType == ETensorDType::FP8_E4M3 && b.DType == ETensorDType::FP8_E4M3) {
-        nv_bfloat16* bias_ptr = bias.has_value() ? bias.value().get<nv_bfloat16>() : nullptr;
+        const nv_bfloat16* bias_ptr = bias.get_optional<nv_bfloat16>();
         matmul(c.get<nv_bfloat16>(), a.get<__nv_fp8_e4m3>(), b.get<__nv_fp8_e4m3>(), bias_ptr, scale_a, scale_b, handle, ws, ws_size, M, N, K, mode, accumulate, stream);
     } else if(c.DType == ETensorDType::BF16 && a.DType == ETensorDType::FP8_E4M3 && b.DType == ETensorDType::FP8_E5M2) {
-        nv_bfloat16* bias_ptr = bias.has_value() ? bias.value().get<nv_bfloat16>() : nullptr;
+        const nv_bfloat16* bias_ptr = bias.get_optional<nv_bfloat16>();
         matmul(c.get<nv_bfloat16>(), a.get<__nv_fp8_e4m3>(), b.get<__nv_fp8_e5m2>(), bias_ptr, scale_a, scale_b, handle, ws, ws_size, M, N, K, mode, accumulate, stream);
     } else if(c.DType == ETensorDType::BF16) {
-        nv_bfloat16* bias_ptr = bias.has_value() ? bias.value().get<nv_bfloat16>() : nullptr;
+        const nv_bfloat16* bias_ptr = bias.get_optional<nv_bfloat16>();
         matmul(c.get<nv_bfloat16>(), a.get<nv_bfloat16>(), b.get<nv_bfloat16>(), bias_ptr, scale_a, scale_b, handle, ws, ws_size, M, N, K, mode, accumulate, stream);
     } else {
         throw std::logic_error("matmul_forward: invalid DType combination");

@@ -33,6 +33,7 @@ Tensor slice(const Tensor& src, int dim, long start, long end) {
 }
 
 void fill_zero(Tensor& dst, cudaStream_t stream) {
+    if(dst.empty()) return;
     CUDA_CHECK(cudaMemsetAsync(dst.Data, 0, dst.bytes(), stream));
 }
 
@@ -104,6 +105,7 @@ std::ptrdiff_t TensorShard::shard_offset() const {
 }
 
 TensorShard shard_view(const Tensor& src, int idx, int num) {
+    if(src.empty()) return TensorShard{};
     Tensor shard{src};
     shard.Sizes[0] = div_exact(src.Sizes[0], static_cast<long>(num));
     shard.Data = src.Data + div_exact(src.bytes(), static_cast<std::size_t>(num)) * idx;

@@ -23,11 +23,10 @@ typedef struct CUevent_st* cudaEvent_t;
 
 template<class TTensor>
 struct sLLamaBlockWeights {
-    using OTensor = std::optional<TTensor>;
     TTensor LN1_w;           // C
     TTensor LN2_w;           // C
     TTensor Attn_QKV_w;      // ((Hq + 2Hkv)Hd, C)
-    OTensor Attn_QKV_b;          // (Hq + 2Hkv)Hd
+    TTensor Attn_QKV_b;      // (Hq + 2Hkv)Hd; optional
     TTensor Attn_Out_w;      //
     TTensor MLP_Up_w;
     TTensor MLP_Down_w;
