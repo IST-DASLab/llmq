@@ -92,6 +92,7 @@ void IRunState::temp_acquire(Tensor& target) {
     }
 
     target.Data = Stack.allocate(target.bytes());
+    assert(target.Data != nullptr);
 }
 
 void IRunState::temp_free(Tensor& tensor) {

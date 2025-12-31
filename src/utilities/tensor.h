@@ -61,6 +61,10 @@ struct Tensor {
             throw std::logic_error("DType mismatch");
         }
 
+        if(Data == nullptr) {
+            throw std::logic_error("Tensor is null");
+        }
+
         return reinterpret_cast<const TargetType*>(Data);
     }
 

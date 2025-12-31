@@ -9,8 +9,6 @@
 #include <functional>
 #include <string>
 
-#include <nlohmann/json_fwd.hpp>
-
 class TensorShard;
 
 class ITensorContainer {
