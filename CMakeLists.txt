@@ -146,6 +146,7 @@ add_library(llmq-common SHARED
         src/utilities/dtype.cpp
         src/utilities/stack.cpp
 
+        src/training/adamw_optimizer.cpp
         src/training/dataloader.cpp
         src/training/logging.cpp
         src/training/checkpoint.cpp

@@ -8,6 +8,7 @@
 
 #include "transformer_config.h"
 #include "utilities/tensor_container.h"
+#include "utilities/tensor.h"
 
 typedef struct CUstream_st *cudaStream_t;
 
@@ -19,15 +20,17 @@ public:
         mConfig(cfg), mOffloadM(offload_m), mOffloadV(offload_v), mUseZeroCopy(zero_copy), mRank(rank), mWorld(world) {}
     virtual ~AdamWStateManager() = default;
     virtual void begin_optimizer(DeviceMemoryStack& memory, cudaStream_t main_stream) = 0;
-    virtual void end_optimizer(DeviceMemoryStack& memory) = 0;
+    virtual void end_optimizer(DeviceMemoryStack& memory);
 
-    virtual void fetch_block(int layer_idx, cudaStream_t fetch_stream) = 0;
+    void fetch_block(int layer_idx, cudaStream_t fetch_stream);
     virtual SimpleTensorContainer& get_block_m(int layer_idx, cudaStream_t stream) = 0;
     virtual SimpleTensorContainer& get_block_v(int layer_idx, cudaStream_t stream) = 0;
     virtual SimpleTensorContainer& get_block_scales_m(int layer_idx) = 0;
-    virtual void store_block(int layer_idx, cudaStream_t stream, cudaStream_t put_stream) = 0;
+    virtual void store_block(int layer_idx, cudaStream_t stream, cudaStream_t put_stream);
 
 protected:
+    SimpleTensorContainer& get_block_from(int layer_idx, cudaStream_t stream, SimpleTensorContainer& buf);
+
     TransformerConfig mConfig;
 
     bool mOffloadM;
@@ -36,6 +39,20 @@ protected:
 
     int mRank;
     int mWorld;
+
+    struct sBufferStatus {
+        int LayerIdx = -1;
+        cudaEvent_t DoneEvent = nullptr;
+        bool Fetch = false;
+        bool Done = true;
+    };
+
+    std::vector<Tensor> mMBlockStorage;
+    std::vector<Tensor> mVBlockStorage;
+
+    std::array<Tensor, 2> mMBufferStorage;
+    std::array<Tensor, 2> mVBufferStorage;
+    std::array<sBufferStatus, 2> mStatus;
 };
 
 #endif //LLMQ_ADAMW_OPTIMIZER_H
