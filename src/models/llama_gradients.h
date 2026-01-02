@@ -25,7 +25,7 @@ public:
     virtual TensorShard& get_embeddings_shard(cudaStream_t stream) = 0;
     virtual TensorShard& get_lmhead_shard(cudaStream_t stream) = 0;
     virtual TensorShard& get_lnf_w_shard(cudaStream_t stream) = 0;
-    virtual sLLamaBlockWeights<TensorShard>& get_block_shard(int layer_idx, cudaStream_t stream) = 0;
+    virtual SimpleTensorContainer& get_block_shard(int layer_idx, cudaStream_t stream) = 0;
 
     // notify that gradient calculations have been completed
     virtual void notify_embeddings(cudaStream_t stream, NCCLCommunicator& comm) = 0;

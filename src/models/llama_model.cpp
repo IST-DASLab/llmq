@@ -761,6 +761,7 @@ void LLamaModel::update(NCCLCommunicator& comm, float learning_rate, float beta_
     CUDA_CHECK(cudaEventRecord(rs->OptEmbeddingsDone, main_stream));
 
     for(int i = 0; i < Config.NumLayers; i++) {
+        using namespace LLamaWeightID;
         NvtxRange layer_range("Layer", i);
         Parameters->fetch_master_block(i, comm.stream());
         OptimizerState->fetch_block(i, comm.stream());
@@ -768,19 +769,19 @@ void LLamaModel::update(NCCLCommunicator& comm, float learning_rate, float beta_
         auto& bg = Grads->get_block_shard(i, main_stream);
         auto& bm = OptimizerState->get_block_m(i, main_stream);
         auto& bv = OptimizerState->get_block_v(i, main_stream);
-        auto& sm = m_scales.Blocks[i];
-        run_update(bw.LN1_w, bg.LN1_w, bm.LN1_w, bv.LN1_w, sm.LN1_w, 0.f);
-        run_update(bw.LN2_w, bg.LN2_w, bm.LN2_w, bv.LN2_w, sm.LN2_w, 0.f);
+        auto& sm = OptimizerState->get_block_scales_m(i);
+        run_update(bw.get_tensor(LN1_W), bg.get_tensor(LN1_W), bm.get_tensor(LN1_W), bv.get_tensor(LN1_W), sm.get_tensor(LN1_W), 0.f);
+        run_update(bw.get_tensor(LN2_W), bg.get_tensor(LN2_W), bm.get_tensor(LN2_W), bv.get_tensor(LN2_W), sm.get_tensor(LN2_W), 0.f);
 
-        run_update(bw.Attn_QKV_w, bg.Attn_QKV_w, bm.Attn_QKV_w, bv.Attn_QKV_w,
-                   sm.Attn_QKV_w, weight_decay);
-        if(bm.Attn_QKV_b) {
-            run_update(bw.Attn_QKV_b, bg.Attn_QKV_b, bm.Attn_QKV_b, bv.Attn_QKV_b, sm.Attn_QKV_b, 0.f);
+        run_update(bw.get_tensor(QKV_W), bg.get_tensor(QKV_W), bm.get_tensor(QKV_W), bv.get_tensor(QKV_W),
+                   sm.get_tensor(QKV_W), weight_decay);
+        if(Config.UseQKVBias) {
+            run_update(bw.get_tensor(QKV_B), bg.get_tensor(QKV_B), bm.get_tensor(QKV_B), bv.get_tensor(QKV_B), sm.get_tensor(QKV_B), 0.f);
         }
-        run_update(bw.Attn_Out_w, bg.Attn_Out_w, bm.Attn_Out_w, bv.Attn_Out_w, sm.Attn_Out_w, weight_decay);
+        run_update(bw.get_tensor(ATTO_W), bg.get_tensor(ATTO_W), bm.get_tensor(ATTO_W), bv.get_tensor(ATTO_W), sm.get_tensor(ATTO_W), weight_decay);
 
-        run_update(bw.MLP_Up_w, bg.MLP_Up_w, bm.MLP_Up_w, bv.MLP_Up_w, sm.MLP_Up_w, weight_decay);
-        run_update(bw.MLP_Down_w, bg.MLP_Down_w, bm.MLP_Down_w, bv.MLP_Down_w, sm.MLP_Down_w, weight_decay);
+        run_update(bw.get_tensor(UP_W), bg.get_tensor(UP_W), bm.get_tensor(UP_W), bv.get_tensor(UP_W), sm.get_tensor(UP_W), weight_decay);
+        run_update(bw.get_tensor(DOWN_W), bg.get_tensor(DOWN_W), bm.get_tensor(DOWN_W), bv.get_tensor(DOWN_W), sm.get_tensor(DOWN_W), weight_decay);
         auto scales = Parameters->get_scales_for_block(i);
         // yes, we run this on main stream. Yes, this isn't nice because it prevents kernels from running in parallel.
         // the communication is tiny, though, so it doesn't matter, and this setup guarantees that the abs-maxes are

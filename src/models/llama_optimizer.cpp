@@ -85,12 +85,12 @@ void LLamaOptimizerStateManager::end_optimizer(DeviceMemoryStack& memory) {
     }
 }
 
-sLLamaBlockWeights<TensorShard>& LLamaOptimizerStateManager::get_block_m(int layer_idx, cudaStream_t stream) {
+SimpleTensorContainer& LLamaOptimizerStateManager::get_block_m(int layer_idx, cudaStream_t stream) {
     if(!mOffloadM || mUseZeroCopy) return mOptM.Blocks[layer_idx];
     return get_block_from(layer_idx, stream, mOptMBuffer.at(layer_idx % 2));
 }
 
-sLLamaBlockWeights<TensorShard>& LLamaOptimizerStateManager::get_block_v(int layer_idx, cudaStream_t stream) {
+SimpleTensorContainer& LLamaOptimizerStateManager::get_block_v(int layer_idx, cudaStream_t stream) {
     if(!mOffloadV || mUseZeroCopy) return mOptV.Blocks[layer_idx];
     return get_block_from(layer_idx, stream, mOptVBuffer.at(layer_idx % 2));
 }
@@ -213,7 +213,7 @@ std::vector<Tensor> allocate_weights_opt(sLLamaWeights& weights, const Transform
 
 
 LLamaOptimizerStateManager::LLamaOptimizerStateManager(TransformerConfig cfg, LLamaOptions options, cudaStream_t stream, NCCLCommunicator& comm, TensorAllocator& alloc):
-    mOffloadM(options.OffloadOptM), mOffloadV(options.OffloadOptV), mUseZeroCopy(options.UseZeroCopy), mConfig(cfg), mRank(comm.rank()), mWorld(comm.world_size())
+        AdamWStateManager(cfg, options.OffloadOptM, options.OffloadOptV, options.UseZeroCopy, comm.rank(), comm.world_size())
 {
     {
         auto ctx = alloc.with_context("Adam M");
@@ -245,4 +245,8 @@ LLamaOptimizerStateManager::LLamaOptimizerStateManager(TransformerConfig cfg, LL
         mStatus[0] = sBufferStatus{-1, create_named_event("opt_fetch_0"), false, true};
         mStatus[1] = sBufferStatus{-1, create_named_event("opt_fetch_1"), false, true};
     }
+}
+
+SimpleTensorContainer &LLamaOptimizerStateManager::get_block_scales_m(int layer_idx) {
+    return mOptMScales.Blocks.at(layer_idx);
 }
