@@ -4,45 +4,12 @@
 
 
 #include "llama_optimizer.h"
-#include "../training/transformer_config.h"
+#include "training/transformer_config.h"
 #include "llama_model.h"
 #include "utilities/comm.h"
 #include "kernels/kernels.h"
 #include "utilities/stack.h"
 #include "utilities/lazy_allocator.h"
-
-void LLamaOptimizerStateManager::fetch_block(int layer_idx, cudaStream_t fetch_stream) {
-    if((!mOffloadM && !mOffloadV) || mUseZeroCopy) return;
-
-    NvtxRange range("fetch_opt_block", layer_idx);
-    int buffer = layer_idx % 2;
-    auto& stat = mStatus.at(buffer);
-    stat.LayerIdx = layer_idx;
-    stat.Fetch = true;
-
-    CUDA_CHECK(cudaStreamWaitEvent(fetch_stream, stat.DoneEvent, 0));
-
-    auto fetch = [fetch_stream, &stat](Tensor& dst, Tensor& src) {
-        CUDA_CHECK(cudaMemcpyAsync(dst.Data, src.Data, dst.bytes(), cudaMemcpyHostToDevice, fetch_stream));
-        dst.Stats = src.Stats;
-    };
-
-    if(mOffloadM) {
-        auto& buf = mOptMBufferStorage.at(buffer);
-        auto& ref = mOptMBlockStorage.at(layer_idx);
-
-        fetch(buf, ref);
-    }
-
-    if(mOffloadV) {
-        auto& buf = mOptVBufferStorage.at(buffer);
-        auto& ref = mOptVBlockStorage.at(layer_idx);
-
-        fetch(buf, ref);
-    }
-
-    CUDA_CHECK(cudaEventRecord(stat.DoneEvent, fetch_stream));
-}
 
 void LLamaOptimizerStateManager::begin_optimizer(DeviceMemoryStack& memory, cudaStream_t main_stream) {
     LazyAllocator alloc;
@@ -56,32 +23,21 @@ void LLamaOptimizerStateManager::begin_optimizer(DeviceMemoryStack& memory, cuda
         ETensorDType m_type = mOptM.Blocks[0].LN1_w.DType;
         matrix_params_lazy(mOptMBuffer[0], mConfig, m_type, mRank, mWorld, alloc);
         non_matrix_params_lazy(mOptMBuffer[0], mConfig, m_type, mRank, mWorld, alloc);
-        mOptMBufferStorage[0] = alloc.commit(memory, "opt_m_a");
+        mMBufferStorage[0] = alloc.commit(memory, "opt_m_a");
         matrix_params_lazy(mOptMBuffer[1], mConfig, m_type, mRank, mWorld, alloc);
         non_matrix_params_lazy(mOptMBuffer[1], mConfig, m_type, mRank, mWorld, alloc);
-        mOptMBufferStorage[1] = alloc.commit(memory, "opt_m_b");
+        mMBufferStorage[1] = alloc.commit(memory, "opt_m_b");
     }
 
     if(mOffloadV &&! mUseZeroCopy) {
         ETensorDType v_type = mOptV.Blocks[0].LN1_w.DType;
         matrix_params_lazy(mOptVBuffer[0], mConfig, v_type, mRank, mWorld, alloc);
         non_matrix_params_lazy(mOptVBuffer[0], mConfig, v_type, mRank, mWorld, alloc);
-        mOptVBufferStorage[0] = alloc.commit(memory, "opt_v_a");
+        mVBufferStorage[0] = alloc.commit(memory, "opt_v_a");
         matrix_params_lazy(mOptVBuffer[1], mConfig, v_type, mRank, mWorld, alloc);
         non_matrix_params_lazy(mOptVBuffer[1], mConfig, v_type, mRank, mWorld, alloc);
-        mOptVBufferStorage[1] = alloc.commit(memory, "opt_v_b");
+        mVBufferStorage[1] = alloc.commit(memory, "opt_v_b");
 
-    }
-}
-void LLamaOptimizerStateManager::end_optimizer(DeviceMemoryStack& memory) {
-    if(mOffloadV &&! mUseZeroCopy) {
-        memory.free(mOptVBufferStorage[1]);
-        memory.free(mOptVBufferStorage[0]);
-    }
-
-    if(mOffloadM &&! mUseZeroCopy) {
-        memory.free(mOptMBufferStorage[1]);
-        memory.free(mOptMBufferStorage[0]);
     }
 }
 
@@ -93,52 +49,6 @@ SimpleTensorContainer& LLamaOptimizerStateManager::get_block_m(int layer_idx, cu
 SimpleTensorContainer& LLamaOptimizerStateManager::get_block_v(int layer_idx, cudaStream_t stream) {
     if(!mOffloadV || mUseZeroCopy) return mOptV.Blocks[layer_idx];
     return get_block_from(layer_idx, stream, mOptVBuffer.at(layer_idx % 2));
-}
-
-sLLamaBlockWeights<TensorShard>& LLamaOptimizerStateManager::get_block_from(int layer_idx, cudaStream_t stream, sLLamaBlockWeights<TensorShard>& buf) {
-    int buffer = layer_idx % 2;
-    auto& stat = mStatus.at(buffer);
-
-    if(stat.LayerIdx != layer_idx) {
-        throw std::logic_error("Layer index mismatch in get_block_from");
-    }
-
-    stat.Done = false;
-    // if we needed to fetch, we need to wait
-    if(stat.Fetch) {
-        CUDA_CHECK(cudaStreamWaitEvent(stream, stat.DoneEvent, 0));
-    }
-    stat.Fetch = false;
-
-    return buf;
-}
-
-void LLamaOptimizerStateManager::store_block(int layer_idx, cudaStream_t stream, cudaStream_t put_stream)  {
-    if (mUseZeroCopy) return;
-
-    NvtxRange range("store_opt_block", layer_idx);
-    int buffer = layer_idx % 2;
-    auto& stat = mStatus.at(layer_idx % 2);
-    if(mOffloadM || mOffloadV) {
-        CUDA_CHECK(cudaEventRecord(stat.DoneEvent, stream));
-        CUDA_CHECK(cudaStreamWaitEvent(put_stream, stat.DoneEvent, 0));
-    }
-
-    if(mOffloadM) {
-        CUDA_CHECK(cudaMemcpyAsync(mOptMBlockStorage.at(layer_idx).Data, mOptMBufferStorage.at(buffer).Data, mOptMBlockStorage.at(layer_idx).bytes(), cudaMemcpyDeviceToHost, put_stream));
-    }
-
-    if(mOffloadV) {
-        CUDA_CHECK(cudaMemcpyAsync(mOptVBlockStorage.at(layer_idx).Data, mOptVBufferStorage.at(buffer).Data, mOptVBlockStorage.at(layer_idx).bytes(), cudaMemcpyDeviceToHost, put_stream));
-    }
-
-    if(mOffloadM || mOffloadV) {
-        if(stat.LayerIdx != layer_idx) {
-            throw std::logic_error("layer index mismatch in store_block");
-        }
-        CUDA_CHECK(cudaEventRecord(stat.DoneEvent, put_stream));
-        stat.Done = true;
-    }
 }
 
 sLLamaNonBlockWeights<TensorShard>& LLamaOptimizerStateManager::non_block_m() {
@@ -218,8 +128,8 @@ LLamaOptimizerStateManager::LLamaOptimizerStateManager(TransformerConfig cfg, LL
     {
         auto ctx = alloc.with_context("Adam M");
         EAllocationType alloc_type = options.OffloadOptM ? options.offload_alloc() : EAllocationType::ON_DEVICE;
-        mOptMBlockStorage = allocate_weights_opt(mOptM, cfg, options.OptMomentumType, alloc_type, comm.rank(), comm.world_size(), alloc);
-        for(auto& block : mOptMBlockStorage) {
+        mMBlockStorage = allocate_weights_opt(mOptM, cfg, options.OptMomentumType, alloc_type, comm.rank(), comm.world_size(), alloc);
+        for(auto& block : mMBlockStorage) {
             fill_zero(block, stream);
         }
         zero_opt_non_block(mOptM, stream);
@@ -234,8 +144,8 @@ LLamaOptimizerStateManager::LLamaOptimizerStateManager(TransformerConfig cfg, LL
     {
         auto ctx = alloc.with_context("Adam V");
         EAllocationType alloc_type = options.OffloadOptV ? options.offload_alloc() : EAllocationType::ON_DEVICE;
-        mOptVBlockStorage = allocate_weights_opt(mOptV, cfg, options.OptVarianceType, alloc_type, comm.rank(), comm.world_size(), alloc);
-        for(auto& block : mOptVBlockStorage) {
+        mVBlockStorage = allocate_weights_opt(mOptV, cfg, options.OptVarianceType, alloc_type, comm.rank(), comm.world_size(), alloc);
+        for(auto& block : mVBlockStorage) {
             fill_zero(block, stream);
         }
         zero_opt_non_block(mOptV, stream);
