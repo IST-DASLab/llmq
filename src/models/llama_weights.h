@@ -22,6 +22,16 @@ class LazyAllocator;
 enum class EAllocationType : int;
 typedef struct CUevent_st* cudaEvent_t;
 
+namespace LLamaWeightID {
+    static constexpr unsigned LN1_W = 0;
+    static constexpr unsigned LN2_W = 1;
+    static constexpr unsigned QKV_W = 2;
+    static constexpr unsigned QKV_B = 3;
+    static constexpr unsigned ATTO_W = 4;
+    static constexpr unsigned UP_W = 5;
+    static constexpr unsigned DOWN_W = 6;
+};
+
 template<class TTensor>
 struct sLLamaBlockWeights : public SimpleTensorContainer {
     TTensor LN1_w;           // C
@@ -34,14 +44,15 @@ struct sLLamaBlockWeights : public SimpleTensorContainer {
 
     std::size_t num_tensors() const noexcept override { return 7; }
     const Tensor& get_tensor(unsigned idx) const override {
+        using namespace LLamaWeightID;
         switch (idx) {
-            case 0: return LN1_w;
-            case 1: return LN2_w;
-            case 2: return Attn_QKV_w;
-            case 3: return Attn_QKV_b;
-            case 4: return Attn_Out_w;
-            case 5: return MLP_Up_w;
-            case 6: return MLP_Down_w;
+            case LN1_W: return LN1_w;
+            case LN2_W: return LN2_w;
+            case QKV_W: return Attn_QKV_w;
+            case QKV_B: return Attn_QKV_b;
+            case ATTO_W: return Attn_Out_w;
+            case UP_W: return MLP_Up_w;
+            case DOWN_W: return MLP_Down_w;
             default:
                 throw std::out_of_range("Invalid tensor index");
         }
@@ -105,7 +116,7 @@ public:
     //! they are being fetched from the host.
     //! \param layer_idx The layer for which master weights are requested
     //! \param stream The stream which to block until the preceding gather_master_block has completed.
-    sLLamaBlockWeights<TensorShard>& get_master_block(int layer_idx, cudaStream_t stream);
+    SimpleTensorContainer& get_master_block(int layer_idx, cudaStream_t stream);
 
     //! Indicate that the optimizer has finished updating the master weight.
     //! If they are not offloaded, this function does nothing.

@@ -380,7 +380,7 @@ void LLamaWeightsManager::fetch_master_block(int layer_idx, cudaStream_t fetch_s
     }
 }
 
-sLLamaBlockWeights<TensorShard>& LLamaWeightsManager::get_master_block(int layer_idx, cudaStream_t stream) {
+SimpleTensorContainer& LLamaWeightsManager::get_master_block(int layer_idx, cudaStream_t stream) {
     if(!mOffloadMaster || mUseZeroCopy) return mMaster.Blocks[layer_idx];
 
     int buffer = layer_idx % 2;

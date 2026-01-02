@@ -279,16 +279,17 @@ std::vector<std::pair<std::string, Tensor>> MultiGPUPyTrainer::get_gradients(int
         }
         result.emplace_back("model.norm.weight", grads.get_lnf_w_shard(nullptr));
         for (int l = 0; l < config.NumLayers; l++) {
+            using namespace LLamaWeightID;
             std::string prefix = "model.layers." + std::to_string(l);
             auto& block = grads.get_block_shard(l, nullptr);
-            result.emplace_back(prefix + ".self_attn.qkv.weight", block.Attn_QKV_w);
-            if (block.Attn_QKV_b)
-                result.emplace_back(prefix + ".self_attn.qkv.bias", block.Attn_QKV_b);
-            result.emplace_back(prefix + ".self_attn.o_proj.weight", block.Attn_Out_w);
-            result.emplace_back(prefix + ".mlp.up.weight", block.MLP_Up_w);
-            result.emplace_back(prefix + ".mlp.down_proj.weight", block.MLP_Down_w);
-            result.emplace_back(prefix + ".input_layernorm.weight", block.LN1_w);
-            result.emplace_back(prefix + ".post_attention_layernorm.weight", block.LN2_w);
+            result.emplace_back(prefix + ".self_attn.qkv.weight", block.get_tensor(QKV_W));
+            if (block.get_tensor(QKV_B))
+                result.emplace_back(prefix + ".self_attn.qkv.bias", block.get_tensor(QKV_B));
+            result.emplace_back(prefix + ".self_attn.o_proj.weight", block.get_tensor(ATTO_W));
+            result.emplace_back(prefix + ".mlp.up.weight", block.get_tensor(UP_W));
+            result.emplace_back(prefix + ".mlp.down_proj.weight", block.get_tensor(DOWN_W));
+            result.emplace_back(prefix + ".input_layernorm.weight", block.get_tensor(LN1_W));
+            result.emplace_back(prefix + ".post_attention_layernorm.weight", block.get_tensor(LN2_W));
         }
         CUDA_CHECK(cudaDeviceSynchronize());
     }, gpu_id);

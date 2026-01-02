@@ -360,7 +360,7 @@ void LLamaGradientsBlockSharded_ScatterReduce::sr_accumulate_layer(int layer_idx
         if(mIsFirstMicroStep) {
             CUDA_CHECK(cudaMemcpyAsync(dst.Data, local_slice.Data, local_slice.bytes(), cudaMemcpyDeviceToDevice, stream));
         } else {
-            vector_add_sr(dst, dst, local_slice, 1.f, local_slice.nelem(), rng[i], stream);
+            vector_add_sr(dst, dst, local_slice, 1.f, local_slice.nelem(), rng.at(i), stream);
         }
         ++i;
     }, sw, dw);
@@ -382,8 +382,8 @@ private:
 
 void LLamaGradientsBlockSharded_AllToAll::scatter_reduce(int layer_idx, SimpleTensorContainer& dw, cudaStream_t stream, cudaEvent_t signal, NCCLCommunicator& comm) {
     auto& sw = get_block_shard(layer_idx, stream);
-    int rank = sw.LN1_w.ShardIndex;
-    int world = sw.LN1_w.NumShards;
+    int rank = comm.rank();
+    int world = comm.world_size();
 
     // accumulate local slice of block to local gradient
     {
@@ -396,7 +396,7 @@ void LLamaGradientsBlockSharded_AllToAll::scatter_reduce(int layer_idx, SimpleTe
             if(mIsFirstMicroStep) {
                 CUDA_CHECK(cudaMemcpyAsync(dst.Data, local_slice.Data, local_slice.bytes(), cudaMemcpyDeviceToDevice, stream));
             } else {
-                vector_add_sr(dst, dst, local_slice, 1.f, local_slice.nelem(), rng[i], stream);
+                vector_add_sr(dst, dst, local_slice, 1.f, local_slice.nelem(), rng.at(i), stream);
             }
             ++i;
         }, sw, dw);
@@ -408,7 +408,7 @@ void LLamaGradientsBlockSharded_AllToAll::scatter_reduce(int layer_idx, SimpleTe
     NvtxRange range("all-to-all-gradients", layer_idx);
 
     comm.begin_transaction(signal);
-    visit([&](Tensor& t){ comm.schedule_reduce_scatter(t); }, dw);
+    visit([&](Tensor& t){ comm.schedule_destructive_all_to_all(t); }, dw);
     comm.execute_transaction(signal);
 }
 
@@ -431,7 +431,7 @@ void LLamaGradientsBlockSharded_AllToAll::sr_accumulate_layer(int layer_idx,
 
     int i = 0;
     visit([&](Tensor& s, Tensor& d){
-        vector_reduce_sr(s, d, scale, world, (rank + world - 1) % world, s.nelem(), true, rng[i], stream);
+        vector_reduce_sr(s, d, scale, world, (rank + world - 1) % world, s.nelem(), true, rng.at(i), stream);
         ++i;
     }, sw, dw);
 }
