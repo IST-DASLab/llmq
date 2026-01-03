@@ -7,10 +7,11 @@
 
 #include <optional>
 #include <vector>
+#include <memory>
 
 #include "utilities/tensor.h"
 #include "utilities/tensor_container.h"
-#include "../training/transformer_config.h"
+#include "training/transformer_config.h"
 
 struct LLamaOptions;
 struct LLamaRunState;

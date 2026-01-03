@@ -71,9 +71,9 @@ struct TrainingRunner {
     std::string ModelRootPath = ".";
     std::string RunName = "llmq";
 
-    std::string TrainFile = "tiny-shakespeare-train.bin";
+    std::string TrainFile = "data/tiny-shakespeare-qwen/train.bin";
     std::uint64_t TrainLoaderSeed = 0x83b45442ull;
-    std::string EvalFile = "tiny-shakespeare-test.bin";
+    std::string EvalFile = "data/tiny-shakespeare-qwen/eval.bin";
     std::uint64_t EvalLoaderSeed = 0x384b4524ull;
     std::string OutDir = "output/%n";
     std::string CkptDir = "ckpt/%n";
