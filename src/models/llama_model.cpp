@@ -33,13 +33,13 @@ void forward_qmm(Tensor& out, QuantizableTensor& inp, Tensor& weight, const Tens
     }
 
     if (!reuse_inp_quant) {
-        quantize_with_abs_max(inp.Quant.value(), inp.Quant->scale(), inp.Value, inp.Quant->abs_max(), B*T*C, dp, stream);
+        quantize_with_abs_max(inp.Quant, inp.Quant.scale(), inp.Value, inp.Quant.abs_max(), B*T*C, dp, stream);
     }
 
     if (weight.DType == ETensorDType::BF16) {
-        matmul(out, weight, inp.Quant.value(), bias, nullptr, nullptr, handle, workspace, OC, B*T, C, EMMTranspose::TN, false, stream);
+        matmul(out, weight, inp.Quant, bias, nullptr, nullptr, handle, workspace, OC, B*T, C, EMMTranspose::TN, false, stream);
     } else {
-        matmul(out, weight, inp.Quant.value(), bias, weight.scale(), inp.Quant->scale(), handle, workspace, OC, B*T, C, EMMTranspose::TN, false, stream);
+        matmul(out, weight, inp.Quant, bias, weight.scale(), inp.Quant.scale(), handle, workspace, OC, B*T, C, EMMTranspose::TN, false, stream);
     }
 }
 
@@ -69,6 +69,10 @@ void trace_or_execute_cuda_graph(Function&& function, cudaStream_t stream, cudaG
 
 /// If `tensor` has quants, return their scales; otherwise, return nullptr
 float* quant_abs_max_ptr(QuantizableTensor& tensor) {
+    return tensor.Quant ? tensor.Quant.abs_max() : nullptr;
+}
+
+float* quant_abs_max_ptr(QuantizableTensorBwd& tensor) {
     return tensor.Quant.has_value() ? tensor.Quant->abs_max() : nullptr;
 }
 
@@ -199,8 +203,8 @@ void LLamaModel::_forward_block(sLLamaBlockWeights<Tensor>& weights, sLLamaLayer
     // 3) attention: att <- softmax(qk^T)v
     attention_forward_cudnn(acts.Att.Value, acts.LSE, acts.QKV, rs->CuBlasWorkspace, rs->CudnnHandle, B, T, Hq, Hkv, Hs, main_stream);
     // quantize attention if necessary
-    if(acts.Att.Quant.has_value()) {
-        abs_max(acts.Att.Quant->abs_max(), acts.Att.Value, acts.Att.Value.nelem(), rs->DeviceProp, main_stream);
+    if(acts.Att.Quant) {
+        abs_max(acts.Att.Quant.abs_max(), acts.Att.Value, acts.Att.Value.nelem(), rs->DeviceProp, main_stream);
     }
 
     forward_qmm(acts.AttO, acts.Att, weights.Attn_Out_w, Tensor{},
@@ -277,7 +281,7 @@ float LLamaModel::validate(Tensor inputs, Tensor targets, NCCLCommunicator& comm
 }
 
 void backward_qmm(Tensor& dinp, Tensor& dweight, Tensor dbias,
-                  QuantizableTensor& dout, QuantizableTensor& inp, Tensor& weight, Tensor bias_buffer,
+                  QuantizableTensorBwd& dout, QuantizableTensor& inp, Tensor& weight, Tensor bias_buffer,
                   bool accumulate_gradient,
                   LLamaRunState& rs,
                   int B, int T, int C, int OC,
@@ -292,11 +296,11 @@ void backward_qmm(Tensor& dinp, Tensor& dweight, Tensor dbias,
     } else if (weight.DType == ETensorDType::BF16) {
         quantize_with_abs_max(dout.Quant.value(), dout.Quant->scale(), dout.Value, nullptr, B*T*OC, rs.DeviceProp, stream);
         if(!reuse_inp) {
-            quantize_with_abs_max(inp.Quant.value(), dout.Quant->scale(), inp.Value, nullptr, B*T*C, rs.DeviceProp, stream);
+            quantize_with_abs_max(inp.Quant, dout.Quant->scale(), inp.Value, nullptr, B*T*C, rs.DeviceProp, stream);
         }
 
         matmul(dinp, weight, dout.Quant.value(), Tensor{}, nullptr, nullptr, rs.CublasLtHandle, rs.CuBlasWorkspace, C, B*T, OC, EMMTranspose::NN, false, stream);
-        matmul(dweight, inp.Quant.value(), dout.Quant.value(), Tensor{}, nullptr, nullptr, rs.CublasLtHandle, rs.CuBlasWorkspace, C, OC, B*T, EMMTranspose::NT, accumulate_gradient, stream);
+        matmul(dweight, inp.Quant, dout.Quant.value(), Tensor{}, nullptr, nullptr, rs.CublasLtHandle, rs.CuBlasWorkspace, C, OC, B*T, EMMTranspose::NT, accumulate_gradient, stream);
 
         if (dbias) {
             backward_bias(dbias, dout.Value, nullptr, nullptr, bias_buffer, B, T, OC, rs.DeviceProp, stream);
@@ -304,7 +308,7 @@ void backward_qmm(Tensor& dinp, Tensor& dweight, Tensor dbias,
     } else {
         quantize_with_abs_max(dout.Quant.value(), dout.Quant->scale(), dout.Value, dout.Quant->abs_max(), B*T*OC, rs.DeviceProp, stream);
 
-        auto& inp_q = inp.Quant.value();
+        auto& inp_q = inp.Quant;
         auto weight_tp = rs.temp_alloc(inp_q.DType, {C, OC});
         transpose(weight_tp, weight, OC, C, stream);
 
@@ -320,7 +324,7 @@ void backward_qmm(Tensor& dinp, Tensor& dweight, Tensor dbias,
         } else {
             // even though we're re-using (and overwriting) the main tensor, each tensor still has its own version
             // of the absmax-scale, so we can reuse the existing scale from the forward pass
-            quantize_and_transpose_with_abs_max(activation_tp, activation_tp.scale(), inp.Value, inp.Quant->abs_max(), B*T, C, rs.DeviceProp, stream);
+            quantize_and_transpose_with_abs_max(activation_tp, activation_tp.scale(), inp.Value, inp.Quant.abs_max(), B*T, C, rs.DeviceProp, stream);
         }
         transpose(grad_tp, dout.Quant.value(), B*T, OC, stream);
 
@@ -592,8 +596,8 @@ void LLamaModel::_recompute_block(sLLamaBlockWeights<Tensor>& weights, sLLamaLay
     }
 
     if(recompute_swiglu) {
-        if (acts.SwiGLu.Quant.has_value()) {
-            swiglu_forward_quant(acts.SwiGLu.Quant.value(), acts.SwiGLu.Quant->scale(), acts.MlpUp, acts.SwiGLu.Quant->abs_max(), B, T, D, main_stream);
+        if (acts.SwiGLu.Quant) {
+            swiglu_forward_quant(acts.SwiGLu.Quant, acts.SwiGLu.Quant.scale(), acts.MlpUp, acts.SwiGLu.Quant.abs_max(), B, T, D, main_stream);
         } else {
             swiglu_forward(acts.SwiGLu.Value, acts.MlpUp, nullptr, B, T, D, main_stream);
         }
