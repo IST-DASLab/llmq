@@ -45,11 +45,15 @@ Tensor LazyAllocator::commit(DeviceMemoryStack& storage, const char* name) {
     }
 
     Tensor backing = storage.allocate(ETensorDType::BYTE, {(long)total_size}, name);
-    auto* ptr = backing.get<std::byte>();
-    for(auto& target: mTargets) {
-        target->Data = ptr;
-        target->Device = backing.Device;
-        ptr += div_ceil(target->bytes(), page_size) * page_size;
+    // we may run the allocator in "tracing" mode, where we don't get any memory allocated from `storage`.
+    // in that case, `backing` may be nullptr, and we should leave target tensors empty
+    if (backing) {
+        auto* ptr = backing.get<std::byte>();
+        for(auto& target: mTargets) {
+            target->Data = ptr;
+            target->Device = backing.Device;
+            ptr += div_ceil(target->bytes(), page_size) * page_size;
+        }
     }
 
     mTargets.clear();

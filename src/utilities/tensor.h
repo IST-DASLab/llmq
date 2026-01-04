@@ -26,6 +26,10 @@ struct Tensor {
     int Rank = 0;
     int Device = -1;
 
+    [[nodiscard]] constexpr bool empty() const {
+        return Data == nullptr;
+    }
+
     [[nodiscard]] constexpr std::size_t bytes() const {
         return nelem() * get_dtype_size(DType);
     }
@@ -36,6 +40,10 @@ struct Tensor {
             sz *= Sizes[i];
         }
         return sz;
+    }
+
+    constexpr explicit operator bool() const {
+        return !empty();
     }
 
     //! this is a debugging function, copying the requested element from the GPU to the CPU
