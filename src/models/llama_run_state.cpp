@@ -174,7 +174,6 @@ std::vector<LLamaRunState::LayerGradients> RunStateBuilder::allocate_backward_bu
     for (int l = 0; l < Config.NumLayers; ++l) {
         if (Options.KeepAllActivations || l == 0) {
             LLamaRunState::LayerGradients grads = allocate_basic_bwd_tensors(d_lnf);
-            ETensorDType matmul_dtype = Options.matmul_dtype();
             ETensorDType grad_dtype = Options.grad_dtype();
             if(grad_dtype != Config.DType) {
                 grads.DResFFN.Quant = allocate(grad_dtype, "d_res_ffn.q", B, T, C);

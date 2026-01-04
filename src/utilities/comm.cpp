@@ -487,7 +487,7 @@ std::unique_ptr<CommunicatorThreadsPack> NCCLCommunicator::launch_threads_commun
     return std::make_unique<ThreadsPackImp>(std::move(threads), std::move(bar));
 }
 
-void NCCLCommunicator::schedule_destructive_all_to_all(const Tensor& tensor) {
+void NCCLCommunicator::schedule_destructive_all_to_all(Tensor& tensor) {
     std::size_t shard_size = (ptrdiff_t)tensor.bytes() / world_size();
     for(int n = 1; n < world_size(); ++n) {
         int dst = (n + rank()) % world_size();
