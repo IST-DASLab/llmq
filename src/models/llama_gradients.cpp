@@ -26,9 +26,7 @@ void LLamaGradsManager::scatter_reduce(int layer_idx, sLLamaBlockWeights<Tensor>
     comm.schedule_reduce_scatter(block.LN2_w);
     comm.schedule_reduce_scatter(block.MLP_Up_w);
     comm.schedule_reduce_scatter(block.MLP_Down_w);
-    if(block.Attn_QKV_b.has_value()) {
-        comm.schedule_reduce_scatter(block.Attn_QKV_b.value());
-    }
+    comm.schedule_reduce_scatter(block.Attn_QKV_b);
     comm.execute_transaction(signal);
 }
 
@@ -93,10 +91,7 @@ void LLamaGradientsUnsharded::on_first_micro_step(cudaStream_t stream) {
     for(auto& layer: mFullGradient.Blocks) {
         fill_zero(layer.LN1_w, stream);
         fill_zero(layer.LN2_w, stream);
-
-        if(auto& qkv_b = layer.Attn_QKV_b; qkv_b.has_value()) {
-            fill_zero(qkv_b.value(), stream);
-        }
+        fill_zero(layer.Attn_QKV_b, stream);
         // no need to zero out the matrix weights, we'll just overwrite them on the first
         // grad accumulation step
     }
@@ -289,9 +284,7 @@ sLLamaBlockWeights<Tensor>& LLamaGradientsBlockShardedBase::get_block_full(int l
     // reset local gradient buffers
     fill_zero(dw.LN1_w, stream);
     fill_zero(dw.LN2_w, stream);
-    if (dw.Attn_QKV_b.has_value()) {
-        fill_zero(dw.Attn_QKV_b.value(), stream);
-    }
+    fill_zero(dw.Attn_QKV_b, stream);
     return dw;
 }
 
@@ -380,8 +373,8 @@ void LLamaGradientsBlockSharded_ScatterReduce::sr_accumulate_layer(int layer_idx
     sr_accumulate_tensor(sw.MLP_Down_w, dw.MLP_Down_w, stream, rng[3]);
     sr_accumulate_tensor(sw.Attn_QKV_w, dw.Attn_QKV_w, stream, rng[4]);
     sr_accumulate_tensor(sw.Attn_Out_w, dw.Attn_Out_w, stream, rng[5]);
-    if(sw.Attn_QKV_b.has_value()) {
-        sr_accumulate_tensor(sw.Attn_QKV_b.value(), dw.Attn_QKV_b.value(), stream, rng[6]);
+    if(sw.Attn_QKV_b) {
+        sr_accumulate_tensor(sw.Attn_QKV_b, dw.Attn_QKV_b, stream, rng[6]);
     }
 }
 
@@ -415,8 +408,8 @@ void LLamaGradientsBlockSharded_AllToAll::scatter_reduce(int layer_idx, sLLamaBl
         sr_accumulate_tensor(sw.Attn_Out_w, dw.Attn_Out_w, stream, mIsFirstMicroStep, 1.f, rank, rng[3]);
         sr_accumulate_tensor(sw.MLP_Up_w, dw.MLP_Up_w, stream, mIsFirstMicroStep, 1.f, rank, rng[4]);
         sr_accumulate_tensor(sw.MLP_Down_w, dw.MLP_Down_w, stream, mIsFirstMicroStep, 1.f, rank, rng[5]);
-        if (sw.Attn_QKV_b.has_value()) {
-            sr_accumulate_tensor(sw.Attn_QKV_b.value(), dw.Attn_QKV_b.value(), stream, mIsFirstMicroStep, 1.f, rank, rng[6]);
+        if (sw.Attn_QKV_b) {
+            sr_accumulate_tensor(sw.Attn_QKV_b, dw.Attn_QKV_b, stream, mIsFirstMicroStep, 1.f, rank, rng[6]);
         }
     }
 
@@ -432,9 +425,7 @@ void LLamaGradientsBlockSharded_AllToAll::scatter_reduce(int layer_idx, sLLamaBl
     comm.schedule_destructive_all_to_all(dw.LN2_w);
     comm.schedule_destructive_all_to_all(dw.MLP_Up_w);
     comm.schedule_destructive_all_to_all(dw.MLP_Down_w);
-    if(dw.Attn_QKV_b.has_value()) {
-        comm.schedule_destructive_all_to_all(dw.Attn_QKV_b.value());
-    }
+    comm.schedule_destructive_all_to_all(dw.Attn_QKV_b);
     comm.execute_transaction(signal);
 }
 
@@ -470,8 +461,8 @@ void LLamaGradientsBlockSharded_AllToAll::sr_accumulate_layer(int layer_idx,
     vector_reduce_sr(sw.MLP_Down_w, dw.MLP_Down_w, scale, world, (rank + world - 1) % world, sw.MLP_Down_w.nelem(), true, rng[3], stream);
     vector_reduce_sr(sw.Attn_QKV_w, dw.Attn_QKV_w, scale, world, (rank + world - 1) % world, sw.Attn_QKV_w.nelem(), true, rng[4], stream);
     vector_reduce_sr(sw.Attn_Out_w, dw.Attn_Out_w, scale, world, (rank + world - 1) % world, sw.Attn_Out_w.nelem(), true, rng[5], stream);
-    if(sw.Attn_QKV_b.has_value()) {
-        vector_reduce_sr(sw.Attn_QKV_b.value(), dw.Attn_QKV_b.value(), scale, world, (rank + world - 1) % world, sw.Attn_QKV_b->nelem(), true, rng[6], stream);
+    if(sw.Attn_QKV_b) {
+        vector_reduce_sr(sw.Attn_QKV_b, dw.Attn_QKV_b, scale, world, (rank + world - 1) % world, sw.Attn_QKV_b.nelem(), true, rng[6], stream);
     }
 }
 
