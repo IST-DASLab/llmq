@@ -371,17 +371,17 @@ void LLamaGradientsBlockSharded_ScatterReduce::sr_accumulate_layer(int layer_idx
                                                                    cudaStream_t stream,
                                                                    NCCLCommunicator& comm) {
     NvtxRange range("accumulate_layer", layer_idx);
-    auto rng_1 = mRng.generate(2*mStepCounter + 0, layer_idx);
-    auto rng_2 = mRng.generate(2*mStepCounter + 1, layer_idx);
+    std::array<std::uint32_t, 8> rng;
+    mRng.generate(std::span(rng), 2*mStepCounter, layer_idx);
 
-    sr_accumulate_tensor(sw.LN1_w, dw.LN1_w, stream, rng_1[0]);
-    sr_accumulate_tensor(sw.LN2_w, dw.LN2_w, stream, rng_1[1]);
-    sr_accumulate_tensor(sw.MLP_Up_w, dw.MLP_Up_w, stream, rng_1[2]);
-    sr_accumulate_tensor(sw.MLP_Down_w, dw.MLP_Down_w, stream, rng_1[3]);
-    sr_accumulate_tensor(sw.Attn_QKV_w, dw.Attn_QKV_w, stream, rng_2[0]);
-    sr_accumulate_tensor(sw.Attn_Out_w, dw.Attn_Out_w, stream, rng_2[1]);
+    sr_accumulate_tensor(sw.LN1_w, dw.LN1_w, stream, rng[0]);
+    sr_accumulate_tensor(sw.LN2_w, dw.LN2_w, stream, rng[1]);
+    sr_accumulate_tensor(sw.MLP_Up_w, dw.MLP_Up_w, stream, rng[2]);
+    sr_accumulate_tensor(sw.MLP_Down_w, dw.MLP_Down_w, stream, rng[3]);
+    sr_accumulate_tensor(sw.Attn_QKV_w, dw.Attn_QKV_w, stream, rng[4]);
+    sr_accumulate_tensor(sw.Attn_Out_w, dw.Attn_Out_w, stream, rng[5]);
     if(sw.Attn_QKV_b.has_value()) {
-        sr_accumulate_tensor(sw.Attn_QKV_b.value(), dw.Attn_QKV_b.value(), stream, rng_2[2]);
+        sr_accumulate_tensor(sw.Attn_QKV_b.value(), dw.Attn_QKV_b.value(), stream, rng[6]);
     }
 }
 
@@ -407,17 +407,16 @@ void LLamaGradientsBlockSharded_AllToAll::scatter_reduce(int layer_idx, sLLamaBl
     // accumulate local slice of block to local gradient
     {
         NvtxRange range("accumulate-own-shard", layer_idx);
-        auto rng_1 = mRng.generate(2 * mStepCounter + 0, layer_idx);
-        auto rng_2 = mRng.generate(2 * mStepCounter + 1, layer_idx);
-        sr_accumulate_tensor(sw.LN1_w, dw.LN1_w, stream, mIsFirstMicroStep, 1.f, rank, rng_1[0]);
-        sr_accumulate_tensor(sw.LN2_w, dw.LN2_w, stream, mIsFirstMicroStep, 1.f, rank, rng_1[1]);
-        sr_accumulate_tensor(sw.Attn_QKV_w, dw.Attn_QKV_w, stream, mIsFirstMicroStep, 1.f, rank, rng_1[2]);
-        sr_accumulate_tensor(sw.Attn_Out_w, dw.Attn_Out_w, stream, mIsFirstMicroStep, 1.f, rank, rng_1[3]);
-        sr_accumulate_tensor(sw.MLP_Up_w, dw.MLP_Up_w, stream, mIsFirstMicroStep, 1.f, rank, rng_2[0]);
-        sr_accumulate_tensor(sw.MLP_Down_w, dw.MLP_Down_w, stream, mIsFirstMicroStep, 1.f, rank, rng_2[1]);
+        std::array<std::uint32_t, 8> rng;
+        mRng.generate(std::span(rng), 2*mStepCounter, layer_idx);
+        sr_accumulate_tensor(sw.LN1_w, dw.LN1_w, stream, mIsFirstMicroStep, 1.f, rank, rng[0]);
+        sr_accumulate_tensor(sw.LN2_w, dw.LN2_w, stream, mIsFirstMicroStep, 1.f, rank, rng[1]);
+        sr_accumulate_tensor(sw.Attn_QKV_w, dw.Attn_QKV_w, stream, mIsFirstMicroStep, 1.f, rank, rng[2]);
+        sr_accumulate_tensor(sw.Attn_Out_w, dw.Attn_Out_w, stream, mIsFirstMicroStep, 1.f, rank, rng[3]);
+        sr_accumulate_tensor(sw.MLP_Up_w, dw.MLP_Up_w, stream, mIsFirstMicroStep, 1.f, rank, rng[4]);
+        sr_accumulate_tensor(sw.MLP_Down_w, dw.MLP_Down_w, stream, mIsFirstMicroStep, 1.f, rank, rng[5]);
         if (sw.Attn_QKV_b.has_value()) {
-            sr_accumulate_tensor(sw.Attn_QKV_b.value(), dw.Attn_QKV_b.value(), stream, mIsFirstMicroStep, 1.f, rank,
-                                 rng_2[2]);
+            sr_accumulate_tensor(sw.Attn_QKV_b.value(), dw.Attn_QKV_b.value(), stream, mIsFirstMicroStep, 1.f, rank, rng[6]);
         }
     }
 
@@ -462,17 +461,17 @@ void LLamaGradientsBlockSharded_AllToAll::sr_accumulate_layer(int layer_idx,
         scale = 1.f / world;
     }
 
-    auto rng_1 = mRng.generate(2*mStepCounter + 0, layer_idx);
-    auto rng_2 = mRng.generate(2*mStepCounter + 1, layer_idx + 12345);
+    std::array<std::uint32_t, 8> rng;
+    mRng.generate(std::span(rng), 2*mStepCounter, layer_idx);
 
-    vector_reduce_sr(sw.LN1_w, dw.LN1_w, scale, world, (rank + world - 1) % world, sw.LN1_w.nelem(), true, rng_1[0], stream);
-    vector_reduce_sr(sw.LN2_w, dw.LN2_w, scale, world, (rank + world - 1) % world, sw.LN2_w.nelem(), true, rng_1[1], stream);
-    vector_reduce_sr(sw.MLP_Up_w, dw.MLP_Up_w, scale, world, (rank + world - 1) % world, sw.MLP_Up_w.nelem(), true, rng_1[2], stream);
-    vector_reduce_sr(sw.MLP_Down_w, dw.MLP_Down_w, scale, world, (rank + world - 1) % world, sw.MLP_Down_w.nelem(), true, rng_1[3], stream);
-    vector_reduce_sr(sw.Attn_QKV_w, dw.Attn_QKV_w, scale, world, (rank + world - 1) % world, sw.Attn_QKV_w.nelem(), true, rng_2[0], stream);
-    vector_reduce_sr(sw.Attn_Out_w, dw.Attn_Out_w, scale, world, (rank + world - 1) % world, sw.Attn_Out_w.nelem(), true, rng_2[1], stream);
+    vector_reduce_sr(sw.LN1_w, dw.LN1_w, scale, world, (rank + world - 1) % world, sw.LN1_w.nelem(), true, rng[0], stream);
+    vector_reduce_sr(sw.LN2_w, dw.LN2_w, scale, world, (rank + world - 1) % world, sw.LN2_w.nelem(), true, rng[1], stream);
+    vector_reduce_sr(sw.MLP_Up_w, dw.MLP_Up_w, scale, world, (rank + world - 1) % world, sw.MLP_Up_w.nelem(), true, rng[2], stream);
+    vector_reduce_sr(sw.MLP_Down_w, dw.MLP_Down_w, scale, world, (rank + world - 1) % world, sw.MLP_Down_w.nelem(), true, rng[3], stream);
+    vector_reduce_sr(sw.Attn_QKV_w, dw.Attn_QKV_w, scale, world, (rank + world - 1) % world, sw.Attn_QKV_w.nelem(), true, rng[4], stream);
+    vector_reduce_sr(sw.Attn_Out_w, dw.Attn_Out_w, scale, world, (rank + world - 1) % world, sw.Attn_Out_w.nelem(), true, rng[5], stream);
     if(sw.Attn_QKV_b.has_value()) {
-        vector_reduce_sr(sw.Attn_QKV_b.value(), dw.Attn_QKV_b.value(), scale, world, (rank + world - 1) % world, sw.Attn_QKV_b->nelem(), true, rng_2[2], stream);
+        vector_reduce_sr(sw.Attn_QKV_b.value(), dw.Attn_QKV_b.value(), scale, world, (rank + world - 1) % world, sw.Attn_QKV_b->nelem(), true, rng[6], stream);
     }
 }
 

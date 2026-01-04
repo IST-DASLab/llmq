@@ -6,6 +6,7 @@
 #define LLMQ_SRC_UTILS_PHILOX_H
 
 #include <array>
+#include <span>
 #include <cstdint>
 #include <utility>
 
@@ -30,8 +31,7 @@ public:
     Philox4x32(uint32_t seed_a, std::uint32_t seed_b) : key{seed_a, seed_b} {
     }
 
-    // Generate 4 random 32-bit values
-    std::array<uint32_t, 4> generate(std::uint32_t x, std::uint32_t y) {
+    void generate_4(std::span<std::uint32_t, 4> dst, std::uint32_t x, std::uint32_t y) {
         // Extract counter parts
         uint32_t R0 = x;
         uint32_t L0 = y;
@@ -57,7 +57,25 @@ public:
             K1 = (K1 + MC[3]) & 0xFFFFFFFF;
         }
 
-        return {R0, L0, R1, L1};
+        dst[0] = R0;
+        dst[1] = L0;
+        dst[2] = R1;
+        dst[3] = L1;
+    }
+
+    template<std::size_t S>
+    void generate(std::span<std::uint32_t, S> dst, std::uint32_t x, std::uint32_t y) {
+        static_assert(S % 4 == 0, "philox generates numbers in groups of 4");
+        for(std::size_t i = 0; i < S; i += 4) {
+            generate_4(std::span<std::uint32_t, 4>(dst.data() + i, 4), x + static_cast<std::uint32_t>(i / 4), y);
+        }
+    }
+
+    // Generate 4 random 32-bit values
+    std::array<uint32_t, 4> generate(std::uint32_t x, std::uint32_t y) {
+        std::array<uint32_t, 4> res;
+        generate_4(res, x, y);
+        return res;
     }
 };
 
