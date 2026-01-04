@@ -67,11 +67,6 @@ void trace_or_execute_cuda_graph(Function&& function, cudaStream_t stream, cudaG
     }
 }
 
-/// If `tensor` has quants, return their scales; otherwise, return nullptr
-float* quant_abs_max_ptr(QuantizableTensor& tensor) {
-    return tensor.Quant ? tensor.Quant.abs_max() : nullptr;
-}
-
 void LLamaModel::forward(Tensor inputs, NCCLCommunicator& comm, int micro_step) {
     NVTX_RANGE_FN();
 
@@ -136,12 +131,12 @@ void LLamaModel::forward(Tensor inputs, NCCLCommunicator& comm, int micro_step) 
         // graph, so this block has to be separate.
         if (l == 0) {
             rmsnorm_forward(rs->Acts[0].LN1.Value, rs->Acts[0].LN1_Rstd, residual, wgt.LN1_w,
-                            quant_abs_max_ptr(rs->Acts[0].LN1), Config.RmsNormEps, B, T, C, main_stream);
+                            rs->Acts[0].LN1.Quant.abs_max(), Config.RmsNormEps, B, T, C, main_stream);
         } else {
             auto& prev = rs->Acts[l-1];
             fused_residual_rmsnorm_forward(residual, rs->Acts[l].LN1.Value, rs->Acts[l].LN1_Rstd,
                                            prev.ResidualAtt, prev.MlpDown, wgt.LN1_w,
-                                           quant_abs_max_ptr(rs->Acts[l].LN1),
+                                           rs->Acts[l].LN1.Quant.abs_max(),
                                            Config.RmsNormEps, B * T, C, main_stream);
             rs->mark_res_ffn_ready(l-1, main_stream);
         }
@@ -209,13 +204,13 @@ void LLamaModel::_forward_block(sLLamaBlockWeights<Tensor>& weights, sLLamaLayer
                 rs->DeviceProp, false, main_stream);
 
     fused_residual_rmsnorm_forward(acts.ResidualAtt, acts.LN2.Value, acts.LN2_Rstd, residual, acts.AttO, weights.LN2_w,
-                                   quant_abs_max_ptr(acts.LN2), Config.RmsNormEps, B * T, C, main_stream);
+                                   acts.LN2.Quant.abs_max(), Config.RmsNormEps, B * T, C, main_stream);
 
     forward_qmm(acts.MlpUp, acts.LN2, weights.MLP_Up_w, Tensor{},
                 rs->CublasLtHandle, rs->CuBlasWorkspace,
                 B, T, C, 2 * D,
                 rs->DeviceProp, false, main_stream);
-    swiglu_forward(acts.SwiGLu.Value, acts.MlpUp, quant_abs_max_ptr(acts.SwiGLu), B, T, D, main_stream);
+    swiglu_forward(acts.SwiGLu.Value, acts.MlpUp, acts.SwiGLu.Quant.abs_max(), B, T, D, main_stream);
 
     forward_qmm(acts.MlpDown, acts.SwiGLu, weights.MLP_Down_w, Tensor{},
                 rs->CublasLtHandle, rs->CuBlasWorkspace,
@@ -388,7 +383,7 @@ void LLamaModel::backward(Tensor inputs, Tensor targets, NCCLCommunicator& comm,
     // backward the final layernorm
     rmsnorm_backward(rs->DActs[L-1].DResFFN.Value, d_lnf_w, rs->RMSNormScratch, rs->DActs[L - 1].DResFFN.Value, rs->DLNF,
                      rs->get_res_ffn(L-1, main_stream), Parameters->get_lnf(main_stream), rs->LNF_Rstd,
-                     quant_abs_max_ptr(rs->DActs[L-1].DResFFN), B, T, C, rs->DeviceProp, main_stream);
+                     rs->DActs[L-1].DResFFN.Quant.abs_max(), B, T, C, rs->DeviceProp, main_stream);
     rs->release_res_ffn(L-1, main_stream);
 
     Parameters->release_lnf(main_stream);
@@ -424,7 +419,7 @@ void LLamaModel::backward(Tensor inputs, Tensor targets, NCCLCommunicator& comm,
         if(l > 0) {
             auto& prev_dacts = rs->DActs.at(l - 1);
             rmsnorm_backward(prev_dacts.DResFFN.Value, dw.LN1_w, rs->RMSNormScratch, prev_dacts.DResAtt.Value, d_acts.DLN1,
-                             rs->get_res_ffn(l-1, main_stream), weights.LN1_w, rs->Acts[l].LN1_Rstd, quant_abs_max_ptr(prev_dacts.DResFFN),
+                             rs->get_res_ffn(l-1, main_stream), weights.LN1_w, rs->Acts[l].LN1_Rstd, prev_dacts.DResFFN.Quant.abs_max(),
                              B, T, C, rs->DeviceProp, main_stream);
             rs->release_res_ffn(l - 1, main_stream);
         } else {
@@ -619,7 +614,7 @@ void LLamaModel::_backward_block(bool accumulate, sLLamaBlockWeights<Tensor>& we
     backward_qmm(d_acts.DSwiGLU, d_weights.MLP_Down_w, Tensor{}, d_acts.DResFFN, acts.SwiGLu, weights.MLP_Down_w, Tensor{},
                  accumulate, *rs, B, T, D, C, true, main_stream);
 
-    swiglu_backward(d_acts.DMlpUp.Value, d_acts.DSwiGLU, acts.MlpUp, quant_abs_max_ptr(d_acts.DMlpUp), B, T, D, main_stream);
+    swiglu_backward(d_acts.DMlpUp.Value, d_acts.DSwiGLU, acts.MlpUp, d_acts.DMlpUp.Quant.abs_max(), B, T, D, main_stream);
     rs->temp_free(d_acts.DSwiGLU);
 
     if(Options.grad_dtype() != d_acts.DMlpUp.Value.DType) {
@@ -633,7 +628,7 @@ void LLamaModel::_backward_block(bool accumulate, sLLamaBlockWeights<Tensor>& we
 
     // rmsnorm backward does += to the dresidual, so it correctly accumulates grad from the MLP block above
     rmsnorm_backward(d_acts.DResAtt.Value, d_weights.LN2_w, rs->RMSNormScratch, d_acts.DResFFN.Value, d_acts.DLN2,
-                     acts.ResidualAtt, weights.LN2_w, acts.LN2_Rstd, quant_abs_max_ptr(d_acts.DResAtt), B, T, C, rs->DeviceProp, main_stream);
+                     acts.ResidualAtt, weights.LN2_w, acts.LN2_Rstd, d_acts.DResAtt.Quant.abs_max(), B, T, C, rs->DeviceProp, main_stream);
 
     bool recompute_ln1 = rs->Options.RecomputeRMSNorm || rs->Options.RecomputeAtt;
     backward_qmm(d_acts.DAttY, d_weights.Attn_Out_w, Tensor{}, d_acts.DResAtt, acts.Att, weights.Attn_Out_w, Tensor{},
@@ -652,7 +647,7 @@ void LLamaModel::_backward_block(bool accumulate, sLLamaBlockWeights<Tensor>& we
             chunk_batch_size, T, Hq, Hkv, Hs, main_stream);
     }
     rs->temp_free(rs->CuDNNWorkspace);
-    rope_backward(d_acts.DQKV.Value, d_acts.DQKV.Value, rs->FreqCis, quant_abs_max_ptr(d_acts.DQKV), B, T, Hq, Hkv, Hs, main_stream);
+    rope_backward(d_acts.DQKV.Value, d_acts.DQKV.Value, rs->FreqCis, d_acts.DQKV.Quant.abs_max(), B, T, Hq, Hkv, Hs, main_stream);
 
     backward_qmm(d_acts.DLN1, d_weights.Attn_QKV_w, d_weights.Attn_QKV_b, d_acts.DQKV, acts.LN1, weights.Attn_QKV_w, rs->MatmulBiasScratch,
                  accumulate, *rs, B, T, C, Config.qkv_channels(), !recompute_ln1, main_stream);
