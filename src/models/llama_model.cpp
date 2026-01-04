@@ -622,12 +622,12 @@ void LLamaModel::_backward_block(bool accumulate, sLLamaBlockWeights<Tensor>& we
     swiglu_backward(d_acts.DMlpUp.Value, d_acts.DSwiGLU, acts.MlpUp, quant_abs_max_ptr(d_acts.DMlpUp), B, T, D, main_stream);
     rs->temp_free(d_acts.DSwiGLU);
 
-    if(d_acts.DMlpUp.Quant.has_value()) {
+    if(Options.grad_dtype() != d_acts.DMlpUp.Value.DType) {
         rs->temp_acquire(d_acts.DMlpUp.Quant.value());
     }
     backward_qmm(d_acts.DLN2, d_weights.MLP_Up_w, std::nullopt, d_acts.DMlpUp, acts.LN2, weights.MLP_Up_w, std::nullopt,
                  accumulate, *rs, B, T, C, 2 * D, !rs->Options.RecomputeRMSNorm, main_stream);
-    if(d_acts.DMlpUp.Quant.has_value()) {
+    if(Options.grad_dtype() != d_acts.DMlpUp.Value.DType) {
         rs->temp_free(d_acts.DMlpUp.Quant.value());
     }
 
