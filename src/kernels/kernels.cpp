@@ -103,11 +103,11 @@ void fused_classifier(Tensor& logits, Tensor& losses,
     }
 }
 
-void encoder_forward(Tensor& out, const Tensor& inp, const Tensor& wte, std::optional<Tensor> wpe, int B, int T, int C, int V, cudaStream_t stream) {
+void encoder_forward(Tensor& out, const Tensor& inp, const Tensor& wte, const Tensor& wpe, int B, int T, int C, int V, cudaStream_t stream) {
     if(out.DType == ETensorDType::FP32) {
-        encoder_forward(out.get<float>(), inp.get<std::int32_t>(), wte.get<float>(), wpe.has_value() ? wpe->get<float>() : nullptr, B, T, C, V, stream);
+        encoder_forward(out.get<float>(), inp.get<std::int32_t>(), wte.get<float>(), wpe.get_optional<float>(), B, T, C, V, stream);
     } else if(out.DType == ETensorDType::BF16) {
-        encoder_forward(out.get<nv_bfloat16>(), inp.get<std::int32_t>(), wte.get<nv_bfloat16>(),  wpe.has_value() ? wpe->get<nv_bfloat16>() : nullptr, B, T, C, V, stream);
+        encoder_forward(out.get<nv_bfloat16>(), inp.get<std::int32_t>(), wte.get<nv_bfloat16>(),  wpe.get_optional<nv_bfloat16>(), B, T, C, V, stream);
     } else {
         throw std::runtime_error("encoder_forward: unsupported dtype");
     }
