@@ -155,14 +155,14 @@ std::vector<LLamaRunState::LayerActivations> RunStateBuilder::allocate_forward_b
 }
 
 LLamaRunState::LayerGradients RunStateBuilder::allocate_basic_bwd_tensors(Tensor d_lnf) {
-    QuantizableTensorBwd d_res_ffn{allocate(Config.DType, "d_res_ffn", B, T, C)};
+    QuantizableTensor d_res_ffn{allocate(Config.DType, "d_res_ffn", B, T, C)};
     Tensor d_swiglu = Tensor{Config.DType, {B, T, H}, nullptr, nullptr, 3, d_lnf.Device};
-    QuantizableTensorBwd d_mlp_up{};   // this will be handled in-place
+    QuantizableTensor d_mlp_up{};   // this will be handled in-place
     Tensor d_ln2 = Options.KeepAllActivations ? allocate(Config.DType, "d_ln2", B, T, C) : d_lnf;
     Tensor d_att_y = Options.KeepAllActivations ? allocate(Config.DType, "d_att_y", B, T, C) : d_lnf;
-    QuantizableTensorBwd d_qkv{Tensor{Config.DType, {B, T, Config.qkv_channels()}, nullptr, nullptr, 3, d_lnf.Device}};
+    QuantizableTensor d_qkv{Tensor{Config.DType, {B, T, Config.qkv_channels()}, nullptr, nullptr, 3, d_lnf.Device}};
     Tensor d_ln1 = Options.KeepAllActivations ? allocate(Config.DType, "d_ln1", B, T, C) : d_lnf;
-    QuantizableTensorBwd d_res_att = Options.KeepAllActivations ? QuantizableTensorBwd{allocate(Config.DType, "d_res_att", B, T, C)} : d_res_ffn;
+    QuantizableTensor d_res_att = Options.KeepAllActivations ? QuantizableTensor{allocate(Config.DType, "d_res_att", B, T, C)} : d_res_ffn;
 
     return LLamaRunState::LayerGradients{d_res_ffn, d_swiglu, d_mlp_up, d_ln2, d_res_att, d_att_y, d_qkv, d_ln1};
 }
@@ -335,22 +335,22 @@ LLamaRunState::LLamaRunState(TransformerConfig config, LLamaOptions options, lon
 
             Acts[i].LN1.Quant.Stats = layer_abs_maxes + 0;
             Acts[i].QKV.Stats = layer_abs_maxes + 2;
-            DActs.at(i).DQKV.Quant->Stats = layer_abs_maxes + 4;
+            DActs.at(i).DQKV.Quant.Stats = layer_abs_maxes + 4;
             DActs.at(i).DLN1.Stats = layer_abs_maxes + 6;
 
             Acts[i].Att.Quant.Stats = layer_abs_maxes + 8;
             Acts[i].AttO.Stats = layer_abs_maxes + 10;
-            DActs.at(i).DResAtt.Quant->Stats = layer_abs_maxes + 12;
+            DActs.at(i).DResAtt.Quant.Stats = layer_abs_maxes + 12;
             DActs.at(i).DAttY.Stats = layer_abs_maxes + 14;
 
             Acts[i].LN2.Quant.Stats = layer_abs_maxes + 16;
             Acts[i].MlpUp.Stats = layer_abs_maxes + 18;
-            DActs.at(i).DMlpUp.Quant->Stats = layer_abs_maxes + 20;
+            DActs.at(i).DMlpUp.Quant.Stats = layer_abs_maxes + 20;
             DActs.at(i).DLN2.Stats = layer_abs_maxes + 22;
 
             Acts[i].SwiGLu.Quant.Stats = layer_abs_maxes + 24;
             Acts[i].MlpDown.Stats = layer_abs_maxes + 26;
-            DActs.at(i).DResFFN.Quant->Stats = layer_abs_maxes + 28;
+            DActs.at(i).DResFFN.Quant.Stats = layer_abs_maxes + 28;
             DActs.at(i).DSwiGLU.Stats = layer_abs_maxes + 30;
         }
     }
@@ -378,7 +378,7 @@ LLamaRunState::LLamaRunState(TransformerConfig config, LLamaOptions options, lon
     stack.free(dswi);
 
     if(use_fp8) {
-        auto dupq = stack.allocate(DActs[0].DMlpUp.Quant->bytes(), "dup.q");
+        auto dupq = stack.allocate(DActs[0].DMlpUp.Quant.bytes(), "dup.q");
         bw_qmm(B, T, C, 2 * H);     // backward qmm up
         stack.free(dupq);
     }
