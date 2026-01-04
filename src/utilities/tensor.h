@@ -61,6 +61,10 @@ struct Tensor {
             throw std::logic_error("DType mismatch");
         }
 
+        if(Data == nullptr) {
+            throw std::logic_error("Tensor is null");
+        }
+
         return reinterpret_cast<const TargetType*>(Data);
     }
 
@@ -70,7 +74,32 @@ struct Tensor {
             throw std::logic_error("DType mismatch");
         }
 
+        if(Data == nullptr) {
+            throw std::logic_error("Tensor is null");
+        }
+
         return reinterpret_cast<TargetType*>(Data);
+    }
+
+    // like `get`, but may return nullptr. In case of nullptr, no type check will be performed.
+    template<class TargetType>
+    [[nodiscard]] constexpr TargetType* get_optional() {
+        if(Data == nullptr) { return nullptr; }
+        if(dtype_from_type<TargetType> != DType) {
+            throw std::logic_error("DType mismatch");
+        }
+
+        return reinterpret_cast<TargetType*>(Data);
+    }
+
+    template<class TargetType>
+    [[nodiscard]] constexpr const TargetType* get_optional() const {
+        if(Data == nullptr) { return nullptr; }
+        if(dtype_from_type<TargetType> != DType) {
+            throw std::logic_error("DType mismatch");
+        }
+
+        return reinterpret_cast<const TargetType*>(Data);
     }
 
 
