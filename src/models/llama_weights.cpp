@@ -23,7 +23,7 @@ void allocate_non_matrix_params(sLLamaBlockWeights<T>& target, const Transformer
     if(config.UseQKVBias) {
         target.Attn_QKV_b = alloc.allocate_shard(dtype, shard_idx, num_shards, "att_qkv_b", {attn_intermediate_size}, kind);
     } else {
-        target.Attn_QKV_b = std::nullopt;
+        target.Attn_QKV_b = Tensor{};
     }
 }
 
@@ -77,10 +77,9 @@ void non_matrix_params_lazy(sLLamaBlockWeights<TensorShard>& target, const Trans
     create_vector_shard(target.LN2_w, C, "LN2_w");
     long attn_intermediate_size = (config.NumQueryHeads + 2 * config.NumKeyValHeads) * HS;
     if(config.UseQKVBias) {
-        target.Attn_QKV_b = std::make_optional<TensorShard>();
-        create_vector_shard(target.Attn_QKV_b.value(), attn_intermediate_size, "Attn_QKV_b");
+        create_vector_shard(target.Attn_QKV_b, attn_intermediate_size, "Attn_QKV_b");
     } else {
-        target.Attn_QKV_b = std::nullopt;
+        target.Attn_QKV_b = Tensor{};
     }
 }
 
@@ -138,9 +137,7 @@ sLLamaBlockWeights<TensorShard> shard_block(const sLLamaBlockWeights<Tensor>& bl
     result.Attn_Out_w = shard_view(block.Attn_Out_w, shard_idx, num_shards);
     result.MLP_Up_w = shard_view(block.MLP_Up_w, shard_idx, num_shards);
     result.MLP_Down_w = shard_view(block.MLP_Down_w, shard_idx, num_shards);
-    if(block.Attn_QKV_b.has_value()) {
-        result.Attn_QKV_b = shard_view(block.Attn_QKV_b.value(), shard_idx, num_shards);
-    }
+    result.Attn_QKV_b = shard_view(block.Attn_QKV_b, shard_idx, num_shards);
     result.LN1_w = shard_view(block.LN1_w, shard_idx, num_shards);
     result.LN2_w = shard_view(block.LN2_w, shard_idx, num_shards);
     return result;
@@ -243,9 +240,7 @@ void LLamaWeightsManager::setup_scales(TensorAllocator& alloc) {
         mMaster.Blocks[i].Attn_Out_w.Stats = a + 2;
         mMaster.Blocks[i].MLP_Up_w.Stats = a + 4;
         mMaster.Blocks[i].MLP_Down_w.Stats = a + 6;
-        if(mMaster.Blocks[i].Attn_QKV_b.has_value()) {
-            mMaster.Blocks[i].Attn_QKV_b.value().Stats = a + 8;
-        }
+        mMaster.Blocks[i].Attn_QKV_b.Stats = a + 8;
         mMaster.Blocks[i].LN1_w.Stats = a + 10;
         mMaster.Blocks[i].LN2_w.Stats = a + 12;
     }
@@ -360,8 +355,8 @@ void LLamaWeightsManager::fetch_master_block(int layer_idx, cudaStream_t fetch_s
     fetch(buf.Attn_Out_w, ref.Attn_Out_w);
     fetch(buf.MLP_Up_w, ref.MLP_Up_w);
     fetch(buf.MLP_Down_w, ref.MLP_Down_w);
-    if (ref.Attn_QKV_b.has_value()) {
-        fetch(buf.Attn_QKV_b.value(), ref.Attn_QKV_b.value());
+    if (ref.Attn_QKV_b) {
+        fetch(buf.Attn_QKV_b, ref.Attn_QKV_b);
     }
 
     if(stat.Fetch) {
@@ -411,8 +406,8 @@ void LLamaWeightsManager::release_master_block(int layer_idx, cudaStream_t strea
         convert_dtype_for_gather(src.Attn_Out_w, qnt.Block.Attn_Out_w, convert_any, !mOffloadMaster, run_state);
         convert_dtype_for_gather(src.MLP_Up_w, qnt.Block.MLP_Up_w, convert_any, !mOffloadMaster, run_state);
         convert_dtype_for_gather(src.MLP_Down_w, qnt.Block.MLP_Down_w, convert_any, !mOffloadMaster, run_state);
-        if (src.Attn_QKV_b.has_value()) {
-            convert_dtype_for_gather(src.Attn_QKV_b.value(), qnt.Block.Attn_QKV_b.value(), convert_any, !mOffloadMaster, run_state);
+        if (src.Attn_QKV_b) {
+            convert_dtype_for_gather(src.Attn_QKV_b, qnt.Block.Attn_QKV_b, convert_any, !mOffloadMaster, run_state);
         }
         // indicate that this is already the version for the next step
         qnt.Version = mVersion + 1;
@@ -425,8 +420,8 @@ void LLamaWeightsManager::release_master_block(int layer_idx, cudaStream_t strea
     send(ref.Attn_Out_w, buf.Attn_Out_w);
     send(ref.MLP_Up_w, buf.MLP_Up_w);
     send(ref.MLP_Down_w, buf.MLP_Down_w);
-    if (ref.Attn_QKV_b.has_value()) {
-        send(ref.Attn_QKV_b.value(), buf.Attn_QKV_b.value());
+    if (ref.Attn_QKV_b) {
+        send(ref.Attn_QKV_b, buf.Attn_QKV_b);
     }
 
     // put is only considered complete once *both* master weights *and* quants
@@ -513,8 +508,8 @@ void LLamaWeightsManager::gather_block(int layer_idx, NCCLCommunicator& comm, LL
         convert_dtype_for_gather(src.Attn_Out_w, qnt.Block.Attn_Out_w, convert_any, true, run_state);
         convert_dtype_for_gather(src.MLP_Up_w, qnt.Block.MLP_Up_w, convert_any, true, run_state);
         convert_dtype_for_gather(src.MLP_Down_w, qnt.Block.MLP_Down_w, convert_any, true, run_state);
-        if (src.Attn_QKV_b.has_value()) {
-            convert_dtype_for_gather(src.Attn_QKV_b.value(), qnt.Block.Attn_QKV_b.value(), convert_any, true, run_state);
+        if (src.Attn_QKV_b) {
+            convert_dtype_for_gather(src.Attn_QKV_b, qnt.Block.Attn_QKV_b, convert_any, true, run_state);
         }
 
         qnt.Version = mVersion;
@@ -525,9 +520,7 @@ void LLamaWeightsManager::gather_block(int layer_idx, NCCLCommunicator& comm, LL
     dst.LN1_w.Stats = qnt.Block.LN1_w.Stats;
     dst.LN2_w.Stats = qnt.Block.LN2_w.Stats;
     dst.Attn_QKV_w.Stats = qnt.Block.Attn_QKV_w.Stats;
-    if (src.Attn_QKV_b.has_value()) {
-        dst.Attn_QKV_b.value().Stats = qnt.Block.Attn_QKV_b.value().Stats;
-    }
+    dst.Attn_QKV_b.Stats = qnt.Block.Attn_QKV_b.Stats;
     dst.Attn_Out_w.Stats = qnt.Block.Attn_Out_w.Stats;
     dst.MLP_Up_w.Stats = qnt.Block.MLP_Up_w.Stats;
     dst.MLP_Down_w.Stats = qnt.Block.MLP_Down_w.Stats;
@@ -540,8 +533,8 @@ void LLamaWeightsManager::gather_block(int layer_idx, NCCLCommunicator& comm, LL
     comm.schedule_all_gather(qnt.Block.LN1_w, dst.LN1_w);
     comm.schedule_all_gather(qnt.Block.LN2_w, dst.LN2_w);
     comm.schedule_all_gather(qnt.Block.Attn_QKV_w, dst.Attn_QKV_w);
-    if (src.Attn_QKV_b.has_value()) {
-        comm.schedule_all_gather(qnt.Block.Attn_QKV_b.value(), dst.Attn_QKV_b.value());
+    if (src.Attn_QKV_b) {
+        comm.schedule_all_gather(qnt.Block.Attn_QKV_b, dst.Attn_QKV_b);
     }
     comm.schedule_all_gather(qnt.Block.Attn_Out_w, dst.Attn_Out_w);
     comm.schedule_all_gather(qnt.Block.MLP_Up_w, dst.MLP_Up_w);
@@ -633,7 +626,7 @@ void sLLamaWeights::iterate_tensors(const std::function<void(std::string, const 
         std::string prefix = "model.layers." + std::to_string(i);
         callback(prefix + ".self_attn.qkv.weight", qkv_w);
         if (layer.Attn_QKV_b) {
-            callback(prefix + ".self_attn.qkv.bias", layer.Attn_QKV_b.value());
+            callback(prefix + ".self_attn.qkv.bias", layer.Attn_QKV_b);
         }
 
         callback(prefix + ".self_attn.o_proj.weight", layer.Attn_Out_w);
@@ -846,7 +839,7 @@ void LLamaWeightsManager::random_init(int seed, const LLamaOptions& options, NCC
             fill_normal(down_proj, down_proj.nelem(), 0.f, scale * residual_scale, seed, local_seeds[2], nullptr);
         }
         if (qkv_b) {
-            fill_zero(qkv_b.value(), nullptr);
+            fill_zero(qkv_b, nullptr);
         }
     }
 
@@ -874,8 +867,8 @@ void LLamaWeightsManager::synchronize_absmax(NCCLCommunicator& comm) {
         abs_max(layer.Attn_Out_w.abs_max(), layer.Attn_Out_w, layer.Attn_Out_w.nelem(), dp, nullptr);
         abs_max(layer.MLP_Up_w.abs_max(), layer.MLP_Up_w, layer.MLP_Up_w.nelem(), dp, nullptr);
         abs_max(layer.MLP_Down_w.abs_max(), layer.MLP_Down_w, layer.MLP_Down_w.nelem(), dp, nullptr);
-        if (layer.Attn_QKV_b.has_value()) {
-            abs_max(layer.Attn_QKV_b.value().abs_max(), layer.Attn_QKV_b.value(), layer.Attn_QKV_b.value().nelem(), dp, nullptr);
+        if (layer.Attn_QKV_b) {
+            abs_max(layer.Attn_QKV_b.abs_max(), layer.Attn_QKV_b, layer.Attn_QKV_b.nelem(), dp, nullptr);
         }
         comm.reduce_max(layer.LN1_w.abs_max());
         comm.reduce_max(layer.LN2_w.abs_max());
@@ -883,8 +876,8 @@ void LLamaWeightsManager::synchronize_absmax(NCCLCommunicator& comm) {
         comm.reduce_max(layer.Attn_Out_w.abs_max());
         comm.reduce_max(layer.MLP_Up_w.abs_max());
         comm.reduce_max(layer.MLP_Down_w.abs_max());
-        if (layer.Attn_QKV_b.has_value()) {
-            comm.reduce_max(layer.Attn_QKV_b.value().abs_max());
+        if (layer.Attn_QKV_b) {
+            comm.reduce_max(layer.Attn_QKV_b.abs_max());
         }
         comm.wait_on_comms(nullptr);
     }
@@ -984,11 +977,11 @@ void LLamaWeightsManager::import_from_file(const std::string& file_name, bool al
             } else if (suffix == ".self_attn.v_proj.weight") {
                 load_intersect(layer.Attn_QKV_w, entry, k_end * C, v_end * C, allow_cast);
             } else if (suffix == ".self_attn.q_proj.bias") {
-                load_intersect(layer.Attn_QKV_b.value(), entry, 0, q_end, allow_cast);
+                load_intersect(layer.Attn_QKV_b, entry, 0, q_end, allow_cast);
             } else if (suffix == ".self_attn.k_proj.bias") {
-                load_intersect(layer.Attn_QKV_b.value(), entry, q_end, k_end, allow_cast);
+                load_intersect(layer.Attn_QKV_b, entry, q_end, k_end, allow_cast);
             } else if (suffix == ".self_attn.v_proj.bias") {
-                load_intersect(layer.Attn_QKV_b.value(), entry, k_end, v_end, allow_cast);
+                load_intersect(layer.Attn_QKV_b, entry, k_end, v_end, allow_cast);
             } else if (suffix == ".mlp.up_proj.weight") {
                 load_intersect(layer.MLP_Up_w, entry, 0, H * C, allow_cast);
             } else if (suffix == ".mlp.gate_proj.weight") {
@@ -1043,12 +1036,12 @@ void LLamaWeightsManager::export_to_file(const std::string& file_name, NCCLCommu
         writer.register_tensor(prefix + ".mlp.gate_proj.weight", gate_proj_w);
 
         // Handle bias if present
-        if (layer.Attn_QKV_b.has_value()) {
-            TensorShard q_proj_b = layer.Attn_QKV_b.value();
+        if (layer.Attn_QKV_b) {
+            TensorShard q_proj_b = layer.Attn_QKV_b;
             q_proj_b.GlobalShape[0] = HS * HQ;
-            TensorShard k_proj_b = layer.Attn_QKV_b.value();
+            TensorShard k_proj_b = layer.Attn_QKV_b;
             k_proj_b.GlobalShape[0] = HS * HKV;
-            TensorShard v_proj_b = layer.Attn_QKV_b.value();
+            TensorShard v_proj_b = layer.Attn_QKV_b;
             v_proj_b.GlobalShape[0] = HS * HKV;
 
             writer.register_tensor(prefix + ".self_attn.q_proj.bias", q_proj_b);
@@ -1088,8 +1081,8 @@ void LLamaWeightsManager::export_to_file(const std::string& file_name, NCCLCommu
                        layer.MLP_Up_w, H * C, 2 * H * C);
 
         // Write Q, K, V projection biases if present
-        if (layer.Attn_QKV_b.has_value()) {
-            const auto& qkv_bias = layer.Attn_QKV_b.value();
+        if (layer.Attn_QKV_b) {
+            const auto& qkv_bias = layer.Attn_QKV_b;
             write_intersect(writer, prefix + ".self_attn.q_proj.bias",
                            qkv_bias, 0, q_end);
             write_intersect(writer, prefix + ".self_attn.k_proj.bias",

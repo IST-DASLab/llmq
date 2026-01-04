@@ -177,9 +177,9 @@ sLLamaWeights allocate_scales(TransformerConfig config, int shard_idx, int num_s
         block.LN2_w = alloc.allocate_shard(ETensorDType::FP32, shard_idx, num_shards, "ln2_w", {div_exact(C, 128l)}, EAllocationType::ON_DEVICE);
         if(config.UseQKVBias) {
             block.Attn_QKV_b = alloc.allocate_shard(ETensorDType::FP32, shard_idx, num_shards, "att_qkv_b", {div_exact(attn_intermediate_size, 128l)}, EAllocationType::ON_DEVICE);
-            fill_constant(block.Attn_QKV_b.value(), 1.f, block.Attn_QKV_b.value().nelem(), nullptr);
+            fill_constant(block.Attn_QKV_b, 1.f, block.Attn_QKV_b.nelem(), nullptr);
         } else {
-            block.Attn_QKV_b = std::nullopt;
+            block.Attn_QKV_b = Tensor{};
         }
 
         fill_constant(block.Attn_QKV_w, 1.f, block.Attn_QKV_w.nelem(), nullptr);

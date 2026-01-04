@@ -92,7 +92,7 @@ void matmul(nv_bfloat16* c, const __nv_fp8_e4m3* a, const __nv_fp8_e5m2* b, cons
             cublasLtHandle_t handle, std::byte* workspace, std::size_t workspace_size,
             int M, int N, int K, EMMTranspose mode, bool accumulate, cudaStream_t stream);
 
-void matmul(Tensor& c, const Tensor& a, const Tensor& b, std::optional<Tensor> bias, const float* scale_a, const float* scale_b,
+void matmul(Tensor& c, const Tensor& a, const Tensor& b, const Tensor& bias, const float* scale_a, const float* scale_b,
             cublasLtHandle_t handle, Tensor& workspace,
             int M, int N, int K, EMMTranspose mode, bool accumulate, cudaStream_t stream);
 
