@@ -23,14 +23,14 @@ LLamaModel::LLamaModel(TransformerConfig config, const LLamaOptions& options, in
 LLamaModel::~LLamaModel() = default;
 
 void forward_qmm(Tensor& out, QuantizableTensor& inp, Tensor& weight, std::optional<Tensor> bias,
-                 cublasLtHandle_t handle, Tensor workspace,
+                 cublasLtHandle_t handle, Tensor& workspace,
                  int B, int T, int C, int OC,
                  const cudaDeviceProp& dp, bool reuse_inp_quant,
                  cudaStream_t stream) {
     if (weight.DType == inp.Value.DType) {
         matmul(out, weight, inp.Value, bias, nullptr, nullptr, handle, workspace, OC, B*T, C, EMMTranspose::TN, false, stream);
         return;
-   }
+    }
 
     if (!reuse_inp_quant) {
         quantize_with_abs_max(inp.Quant.value(), inp.Quant->scale(), inp.Value, inp.Quant->abs_max(), B*T*C, dp, stream);
