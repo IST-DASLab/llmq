@@ -20,6 +20,13 @@ struct QuantizableTensor {
     /// original, high-precision value
     Tensor Value;
     /// Quantized value
+    Tensor Quant = Tensor{};
+};
+
+struct QuantizableTensorBwd {
+    /// original, high-precision value
+    Tensor Value;
+    /// Quantized value
     std::optional<Tensor> Quant = std::nullopt;
 };
 
@@ -41,7 +48,7 @@ struct sLLamaLayerActivations {
 };
 
 struct sLLamaLayerGradients {
-    using QTensor = QuantizableTensor;
+    using QTensor = QuantizableTensorBwd;
 
     QTensor DResFFN;                   // (B, T, C)
     Tensor DSwiGLU;                    // (B, T, Ch)
