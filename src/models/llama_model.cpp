@@ -112,7 +112,7 @@ void LLamaModel::forward(Tensor inputs, NCCLCommunicator& comm, int micro_step) 
             rs->Encoded,
             rs->Inputs,
             Parameters->get_embeddings(main_stream),
-            std::nullopt, B, T, C, V, main_stream);
+            Tensor{}, B, T, C, V, main_stream);
         Parameters->release_embeddings(main_stream);
     }
 
