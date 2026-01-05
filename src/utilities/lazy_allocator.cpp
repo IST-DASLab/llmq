@@ -6,6 +6,7 @@
 #include "utilities/tensor.h"
 #include "utilities/allocator.h"
 #include "utilities/stack.h"
+#include "utilities/tensor_container.h"
 
 void LazyAllocator::allocate(Tensor* target, ETensorDType dtype, const std::vector<long>& shape) {
     target->Data = nullptr;
@@ -13,6 +14,18 @@ void LazyAllocator::allocate(Tensor* target, ETensorDType dtype, const std::vect
     target->DType = dtype;
     std::copy(shape.begin(), shape.end(), target->Sizes.begin());
     mTargets.push_back(target);
+}
+
+void LazyAllocator::allocate(Tensor *target) {
+    target->Data = nullptr;
+    mTargets.push_back(target);
+}
+
+void LazyAllocator::allocate(SimpleTensorContainer& target) {
+    std::size_t count = target.num_tensors();
+    for(std::size_t i = 0; i < count; ++i) {
+        allocate(&target.get_tensor(i));
+    }
 }
 
 Tensor LazyAllocator::commit(TensorAllocator& storage, EAllocationType type, const char* name) {

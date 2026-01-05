@@ -40,13 +40,17 @@ void allocate_matrix_params(sLLamaBlockWeights<T>& target, const TransformerConf
     target.MLP_Down_w = alloc.allocate_shard(dtype, shard_idx, num_shards, "mlp_down_w", {C, H}, kind);
 }
 
-void matrix_params_lazy(sLLamaBlockWeights<TensorShard>& target, const TransformerConfig& config, ETensorDType dtype, int shard_idx, int num_shards, LazyAllocator& alloc) {
+void fill_matrix_shapes(sLLamaBlockWeights<TensorShard>& target, const TransformerConfig& config, ETensorDType dtype, int shard_idx, int num_shards) {
     long C = config.HiddenSize;
     long H = config.IntermediateSize;
 
-    auto create_matrix_shard = [&](TensorShard& tgt, long rows, long cols, const char* name) {
-        // TODO name is currently ignored
-        alloc.allocate(&tgt, dtype, {div_exact(rows, (long)num_shards), cols});
+    auto create_matrix_shard = [&](TensorShard& tgt, long rows, long cols) {
+        assert(tgt.Data == nullptr);
+        tgt.Rank = 2;
+        tgt.DType = dtype;
+        tgt.Sizes[0] = div_exact(rows, (long)num_shards);
+        tgt.Sizes[1] = cols;
+
         tgt.ShardIndex = shard_idx;
         tgt.NumShards = num_shards;
         tgt.GlobalShape[0] = rows;
@@ -55,32 +59,41 @@ void matrix_params_lazy(sLLamaBlockWeights<TensorShard>& target, const Transform
 
     long head_size = C / config.NumQueryHeads;
     long attn_intermediate_size = (config.NumQueryHeads + 2 * config.NumKeyValHeads) * head_size;
-    create_matrix_shard(target.Attn_QKV_w, attn_intermediate_size, C, "Attn_QKV_w");
-    create_matrix_shard(target.Attn_Out_w, C, C, "Attn_Out_w");
-    create_matrix_shard(target.MLP_Up_w, 2 * H, C, "MLP_Up_w");
-    create_matrix_shard(target.MLP_Down_w, C, H, "MLP_Down_w");
+    create_matrix_shard(target.Attn_QKV_w, attn_intermediate_size, C);
+    create_matrix_shard(target.Attn_Out_w, C, C);
+    create_matrix_shard(target.MLP_Up_w, 2 * H, C);
+    create_matrix_shard(target.MLP_Down_w, C, H);
 }
 
-void non_matrix_params_lazy(sLLamaBlockWeights<TensorShard>& target, const TransformerConfig& config, ETensorDType dtype, int shard_idx, int num_shards, LazyAllocator& alloc) {
+void fill_non_matrix_shapes(sLLamaBlockWeights<TensorShard>& target, const TransformerConfig& config, ETensorDType dtype, int shard_idx, int num_shards) {
     long C = config.HiddenSize;
     long HS = config.head_size();
 
-    auto create_vector_shard = [&](TensorShard& tgt, long elems, const char* name) {
-        // TODO name is currently ignored
-        alloc.allocate(&tgt, dtype, {div_exact(elems, (long)num_shards)});
+    auto create_vector_shard = [&](TensorShard& tgt, long elems) {
+        assert(tgt.Data == nullptr);
+        tgt.Rank = 1;
+        tgt.DType = dtype;
+        tgt.Sizes[0] = div_exact(elems, (long)num_shards);
+
         tgt.ShardIndex = shard_idx;
         tgt.NumShards = num_shards;
         tgt.GlobalShape[0] = elems;
     };
 
-    create_vector_shard(target.LN1_w, C, "LN1_w");
-    create_vector_shard(target.LN2_w, C, "LN2_w");
+    create_vector_shard(target.LN1_w, C);
+    create_vector_shard(target.LN2_w, C);
     long attn_intermediate_size = (config.NumQueryHeads + 2 * config.NumKeyValHeads) * HS;
-    if(config.UseQKVBias) {
-        create_vector_shard(target.Attn_QKV_b, attn_intermediate_size, "Attn_QKV_b");
-    } else {
-        target.Attn_QKV_b = Tensor{};
-    }
+    create_vector_shard(target.Attn_QKV_b, config.UseQKVBias ? attn_intermediate_size : 0);
+}
+
+void matrix_params_lazy(sLLamaBlockWeights<TensorShard>& target, const TransformerConfig& config, ETensorDType dtype, int shard_idx, int num_shards, LazyAllocator& alloc) {
+    fill_matrix_shapes(target, config, dtype, shard_idx, num_shards);
+    alloc.allocate(target);
+}
+
+void non_matrix_params_lazy(sLLamaBlockWeights<TensorShard>& target, const TransformerConfig& config, ETensorDType dtype, int shard_idx, int num_shards, LazyAllocator& alloc) {
+    fill_non_matrix_shapes(target, config, dtype, shard_idx, num_shards);
+    alloc.allocate(target);
 }
 
 std::size_t aligned_size(std::size_t raw, int num_shards) {
@@ -321,7 +334,8 @@ void LLamaWeightsManager::begin_optimizer(DeviceMemoryStack& memory, cudaStream_
         for (int i = 0; i < 2; ++i) {
             auto& buf = mMasterDeviceDoubleBuffer.at(i);
             if (mMaster.Blocks[0].Attn_QKV_w.Device == -1) {
-                matrix_params_lazy(buf, mConfig, mMasterDType, mShardIdx, mNumShards, alloc);
+                fill_matrix_shapes(buf, mConfig, mMasterDType, mShardIdx, mNumShards);
+                alloc.allocate(buf);
             } else {
                 // note: the actual data pointers will be overwritten before use, so this is safe
                 buf.Attn_QKV_w = mMaster.Blocks[0].Attn_QKV_w;
@@ -331,7 +345,8 @@ void LLamaWeightsManager::begin_optimizer(DeviceMemoryStack& memory, cudaStream_
             }
 
             if (mMaster.Blocks[0].LN1_w.Device == -1) {
-                non_matrix_params_lazy(buf, mConfig, mMasterDType, mShardIdx, mNumShards, alloc);
+                fill_non_matrix_shapes(buf, mConfig, mMasterDType, mShardIdx, mNumShards);
+                alloc.allocate(buf);
             } else {
                 buf.LN1_w = mMaster.Blocks[0].LN1_w;
                 buf.LN2_w = mMaster.Blocks[0].LN2_w;
