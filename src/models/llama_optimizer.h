@@ -18,9 +18,9 @@ public:
 
     void begin_optimizer(DeviceMemoryStack& memory, cudaStream_t main_stream) override;
 
-    sLLamaWeights& full_m() { return mOptM; }
+    ITensorContainer& full_m() { return mOptM; }
+    ITensorContainer& full_v() { return mOptV; }
     sLLamaWeights& scales_m() { return mOptMScales; }
-    sLLamaWeights& full_v() { return mOptV; }
 
     SimpleTensorContainer& get_block_m(int layer_idx, cudaStream_t stream) override;
     SimpleTensorContainer& get_block_v(int layer_idx, cudaStream_t stream) override;

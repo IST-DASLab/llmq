@@ -61,6 +61,8 @@ struct sLLamaBlockWeights : public SimpleTensorContainer {
                 throw std::out_of_range("Invalid tensor index");
         }
     }
+
+    using SimpleTensorContainer::get_tensor;
 };
 
 template<class TTensor>
@@ -81,6 +83,8 @@ struct sLLamaNonBlockWeights : public SimpleTensorContainer {
                 throw std::out_of_range("Invalid tensor index");
         }
     }
+
+    using SimpleTensorContainer::get_tensor;
 };
 
 template<class TTensor>
