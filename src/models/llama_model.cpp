@@ -752,16 +752,18 @@ void LLamaModel::update(NCCLCommunicator& comm, float learning_rate, float beta_
 
     auto& m_scales = OptimizerState->scales_m();
 
+    using namespace LLamaWeightID;
     run_update(Parameters->get_master_embeddings(), Grads->get_embeddings_shard(main_stream),
-               OptimizerState->non_block_m().Embeddings, OptimizerState->non_block_v().Embeddings, m_scales.NonBlocks.Embeddings, weight_decay);
+               OptimizerState->non_block_m().get_tensor(EMBEDDING), OptimizerState->non_block_v().get_tensor(EMBEDDING),
+               m_scales.NonBlocks.Embeddings, weight_decay);
     comm.reduce_max(Parameters->get_master_embeddings().abs_max());
     run_update(Parameters->get_master_lnf_w(), Grads->get_lnf_w_shard(main_stream),
-               OptimizerState->non_block_m().LNF_w, OptimizerState->non_block_v().LNF_w, m_scales.NonBlocks.LNF_w, 0.f);
+               OptimizerState->non_block_m().get_tensor(LNF_W), OptimizerState->non_block_v().get_tensor(LNF_W), m_scales.NonBlocks.LNF_w, 0.f);
     comm.reduce_max(Parameters->get_master_lnf_w().abs_max());
     CUDA_CHECK(cudaEventRecord(rs->OptEmbeddingsDone, main_stream));
 
     for(int i = 0; i < Config.NumLayers; i++) {
-        using namespace LLamaWeightID;
+
         NvtxRange layer_range("Layer", i);
         Parameters->fetch_master_block(i, comm.stream());
         OptimizerState->fetch_block(i, comm.stream());
@@ -798,7 +800,7 @@ void LLamaModel::update(NCCLCommunicator& comm, float learning_rate, float beta_
 
     if(!Config.TiedWordEmbeddings) {
         run_update(Parameters->get_master_lmhead(), Grads->get_lmhead_shard(main_stream),
-                   OptimizerState->non_block_m().LMHead, OptimizerState->non_block_v().LMHead, m_scales.NonBlocks.LMHead, weight_decay);
+                   OptimizerState->non_block_m().get_tensor(LM_HEAD), OptimizerState->non_block_v().get_tensor(LM_HEAD), m_scales.NonBlocks.LMHead, weight_decay);
         comm.reduce_max(Parameters->get_master_lmhead().abs_max());
     }
     comm.wait_on_comms(main_stream);

@@ -51,11 +51,11 @@ SimpleTensorContainer& LLamaOptimizerStateManager::get_block_v(int layer_idx, cu
     return get_block_from(layer_idx, stream, mOptVBuffer.at(layer_idx % 2));
 }
 
-sLLamaNonBlockWeights<TensorShard>& LLamaOptimizerStateManager::non_block_m() {
+SimpleTensorContainer& LLamaOptimizerStateManager::non_block_m() {
     return mOptM.NonBlocks;
 }
 
-sLLamaNonBlockWeights<TensorShard>& LLamaOptimizerStateManager::non_block_v() {
+SimpleTensorContainer& LLamaOptimizerStateManager::non_block_v() {
     return mOptV.NonBlocks;
 }
 
