@@ -13,8 +13,8 @@
 class LLamaOptimizerStateManager : public AdamWStateManager {
 public:
     LLamaOptimizerStateManager(TransformerConfig cfg, LLamaOptions options, cudaStream_t stream, NCCLCommunicator& comm, TensorAllocator& alloc);
-    sLLamaNonBlockWeights<TensorShard>& non_block_m();
-    sLLamaNonBlockWeights<TensorShard>& non_block_v();
+    SimpleTensorContainer& non_block_m() override;
+    SimpleTensorContainer& non_block_v() override;
 
     void begin_optimizer(DeviceMemoryStack& memory, cudaStream_t main_stream) override;
 

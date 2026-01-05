@@ -28,6 +28,9 @@ public:
     virtual SimpleTensorContainer& get_block_scales_m(int layer_idx) = 0;
     virtual void store_block(int layer_idx, cudaStream_t stream, cudaStream_t put_stream);
 
+    virtual SimpleTensorContainer& non_block_m() = 0;
+    virtual SimpleTensorContainer& non_block_v() = 0;
+
 protected:
     SimpleTensorContainer& get_block_from(int layer_idx, cudaStream_t stream, SimpleTensorContainer& buf);
 

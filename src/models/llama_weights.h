@@ -30,6 +30,9 @@ namespace LLamaWeightID {
     inline constexpr unsigned ATTO_W = 4;
     inline constexpr unsigned UP_W = 5;
     inline constexpr unsigned DOWN_W = 6;
+    inline constexpr unsigned EMBEDDING = 0;
+    inline constexpr unsigned LM_HEAD = 1;
+    inline constexpr unsigned LNF_W = 2;
 };
 
 template<class TTensor>
@@ -43,6 +46,7 @@ struct sLLamaBlockWeights : public SimpleTensorContainer {
     TTensor MLP_Down_w;
 
     std::size_t num_tensors() const noexcept override { return 7; }
+
     const Tensor& get_tensor(std::size_t idx) const override {
         using namespace LLamaWeightID;
         switch (idx) {
@@ -60,10 +64,23 @@ struct sLLamaBlockWeights : public SimpleTensorContainer {
 };
 
 template<class TTensor>
-struct sLLamaNonBlockWeights {
+struct sLLamaNonBlockWeights : public SimpleTensorContainer {
     TTensor Embeddings;      // V, C
     TTensor LMHead;          // V, C
     TTensor LNF_w;           // C
+
+    std::size_t num_tensors() const noexcept override { return 3; }
+
+    const Tensor& get_tensor(std::size_t idx) const override {
+        using namespace LLamaWeightID;
+        switch (idx) {
+            case EMBEDDING: return Embeddings;
+            case LM_HEAD: return LMHead;
+            case LNF_W: return LNF_w;
+            default:
+                throw std::out_of_range("Invalid tensor index");
+        }
+    }
 };
 
 template<class TTensor>
