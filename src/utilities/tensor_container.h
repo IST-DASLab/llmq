@@ -13,15 +13,22 @@
 class Tensor;
 class TensorShard;
 
+//! \brief Base class for an object that supports iterating over its tensors
 class SimpleTensorContainer {
 public:
+    //! Get the total number of tensors in this container. This count includes empty tensors.
     virtual std::size_t num_tensors() const noexcept = 0;
-    virtual const Tensor& get_tensor(unsigned idx) const = 0;
 
-    Tensor& get_tensor(unsigned idx) {
+    //! Return a constant reference to the tensor at the given index.
+    virtual const Tensor& get_tensor(std::size_t idx) const = 0;
+
+    //! Return a mutable reference to the tensor at the given index.
+    //! Implemented in terms of const `get_tensor`.
+    Tensor& get_tensor(std::size_t idx) {
         return const_cast<Tensor&>(const_cast<const SimpleTensorContainer&>(*this).get_tensor(idx));
     }
 protected:
+    //! Protected destructor: Don't delete through `SimpleTensorContainer` pointers.
     ~SimpleTensorContainer() = default;
 };
 
