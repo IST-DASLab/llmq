@@ -23,13 +23,13 @@ enum class EAllocationType : int;
 typedef struct CUevent_st* cudaEvent_t;
 
 namespace LLamaWeightID {
-    static constexpr unsigned LN1_W = 0;
-    static constexpr unsigned LN2_W = 1;
-    static constexpr unsigned QKV_W = 2;
-    static constexpr unsigned QKV_B = 3;
-    static constexpr unsigned ATTO_W = 4;
-    static constexpr unsigned UP_W = 5;
-    static constexpr unsigned DOWN_W = 6;
+    inline constexpr unsigned LN1_W = 0;
+    inline constexpr unsigned LN2_W = 1;
+    inline constexpr unsigned QKV_W = 2;
+    inline constexpr unsigned QKV_B = 3;
+    inline constexpr unsigned ATTO_W = 4;
+    inline constexpr unsigned UP_W = 5;
+    inline constexpr unsigned DOWN_W = 6;
 };
 
 template<class TTensor>
@@ -43,7 +43,7 @@ struct sLLamaBlockWeights : public SimpleTensorContainer {
     TTensor MLP_Down_w;
 
     std::size_t num_tensors() const noexcept override { return 7; }
-    const Tensor& get_tensor(unsigned idx) const override {
+    const Tensor& get_tensor(std::size_t idx) const override {
         using namespace LLamaWeightID;
         switch (idx) {
             case LN1_W: return LN1_w;

@@ -117,7 +117,7 @@ TensorShard shard_view(const Tensor& src, int idx, int num) {
 
 void visit(const std::function<void(Tensor&)>& func, SimpleTensorContainer& container) {
     auto cs = container.num_tensors();
-    for(unsigned i = 0; i < cs; ++i) {
+    for(std::size_t i = 0; i < cs; ++i) {
         auto& t = container.get_tensor(i);
         if(t) {
             func(t);
@@ -127,15 +127,15 @@ void visit(const std::function<void(Tensor&)>& func, SimpleTensorContainer& cont
 
 void visit(const std::function<void(Tensor&, Tensor&)>& func, SimpleTensorContainer& a, SimpleTensorContainer& b) {
     if(a.num_tensors() != b.num_tensors()) {
-        throw std::logic_error(fmt::format("TensorContainer size mismatch: {} != {}", a.num_tensors(), b.num_tensors()));
+        throw std::invalid_argument(fmt::format("TensorContainer size mismatch: {} != {}", a.num_tensors(), b.num_tensors()));
     }
 
     auto cs = a.num_tensors();
-    for(unsigned i = 0; i < cs; ++i) {
+    for(std::size_t i = 0; i < cs; ++i) {
         auto& t1 = a.get_tensor(i);
         auto& t2 = b.get_tensor(i);
         if(t1.empty() != t2.empty()) {
-            throw std::logic_error(fmt::format("TensorContainer structure mismatch at tensor {}", i));
+            throw std::invalid_argument(fmt::format("TensorContainer structure mismatch at tensor {}", i));
         }
         if(t1 && t2) {
             func(t1, t2);
