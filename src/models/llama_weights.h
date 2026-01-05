@@ -237,9 +237,6 @@ sLLamaWeights allocate_weights(const TransformerConfig& config, EAllocationType 
 sLLamaBlockWeights<TensorShard> shard_block(const sLLamaBlockWeights<Tensor>& block, int shard_idx, int num_shards);
 sLLamaNonBlockWeights<TensorShard> shard_non_block(const sLLamaNonBlockWeights<Tensor>& block, int shard_idx, int num_shards);
 
-void matrix_params_lazy(sLLamaBlockWeights<TensorShard>& target, const TransformerConfig& config, ETensorDType dtype, int shard_idx, int num_shards, LazyAllocator& alloc);
-void non_matrix_params_lazy(sLLamaBlockWeights<TensorShard>& target, const TransformerConfig& config, ETensorDType dtype, int shard_idx, int num_shards, LazyAllocator& alloc);
-
 void fill_matrix_shapes(sLLamaBlockWeights<TensorShard>& target, const TransformerConfig& config, ETensorDType dtype, int shard_idx, int num_shards);
 void fill_non_matrix_shapes(sLLamaBlockWeights<TensorShard>& target, const TransformerConfig& config, ETensorDType dtype, int shard_idx, int num_shards);
 
