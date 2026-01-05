@@ -8,6 +8,8 @@
 #include <vector>
 
 class Tensor;
+class SimpleTensorContainer;
+
 class TensorAllocator;
 class DeviceMemoryStack;
 enum class EAllocationType : int;
@@ -23,6 +25,16 @@ public:
     //! the data pointer null. Actual memory allocation happens during `commit()`.
     //! Note that `target` will be modified by `commit()`, so it must remain valid.
     void allocate(Tensor* target, ETensorDType dtype, const std::vector<long>& shape);
+
+    //! Registers a tensor for lazy allocation. Assumes shape and dtype are already set for `target`.
+    //! Actual memory allocation happens during `commit()`.
+    //! Note that `target` will be modified by `commit()`, so it must remain valid.
+    void allocate(Tensor* target);
+
+    //! Registers all tensors in `target` for allocation. Assumes shape and dtype are already set for `target`.
+    //! Actual memory allocation happens during `commit()`.
+    //! Note that `target` will be modified by `commit()`, so it must remain valid.
+    void allocate(SimpleTensorContainer& target);
 
     //! Allocates memory for all registered tensors from `storage`, using `type` and `name` to request a sufficiently
     //! large area of memory from the underlying `TensorAllocator`.

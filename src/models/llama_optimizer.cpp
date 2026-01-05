@@ -113,8 +113,9 @@ std::vector<Tensor> allocate_weights_opt(sLLamaWeights& weights, const Transform
     weights.Blocks.resize(config.NumLayers);
     LazyAllocator alloc_lazy;
     for(auto& block : weights.Blocks) {
-        matrix_params_lazy(block, config, dtype, shard_idx, num_shards, alloc_lazy);
-        non_matrix_params_lazy(block, config, dtype, shard_idx, num_shards, alloc_lazy);
+        fill_matrix_shapes(block, config, dtype, shard_idx, num_shards);
+        fill_non_matrix_shapes(block, config, dtype, shard_idx, num_shards);
+        alloc_lazy.allocate(block);
         result.push_back(alloc_lazy.commit(alloc, kind, "block_shard"));
     }
     weights.NonBlocks = allocate_non_block_shard(config, dtype, kind, shard_idx, num_shards, alloc);
