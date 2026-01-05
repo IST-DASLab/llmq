@@ -86,16 +86,6 @@ void fill_non_matrix_shapes(sLLamaBlockWeights<TensorShard>& target, const Trans
     create_vector_shard(target.Attn_QKV_b, config.UseQKVBias ? attn_intermediate_size : 0);
 }
 
-void matrix_params_lazy(sLLamaBlockWeights<TensorShard>& target, const TransformerConfig& config, ETensorDType dtype, int shard_idx, int num_shards, LazyAllocator& alloc) {
-    fill_matrix_shapes(target, config, dtype, shard_idx, num_shards);
-    alloc.allocate(target);
-}
-
-void non_matrix_params_lazy(sLLamaBlockWeights<TensorShard>& target, const TransformerConfig& config, ETensorDType dtype, int shard_idx, int num_shards, LazyAllocator& alloc) {
-    fill_non_matrix_shapes(target, config, dtype, shard_idx, num_shards);
-    alloc.allocate(target);
-}
-
 std::size_t aligned_size(std::size_t raw, int num_shards) {
     return div_ceil(div_exact(raw, static_cast<std::size_t>(num_shards)), static_cast<std::size_t>(4096)) * 4096;
 }

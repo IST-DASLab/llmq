@@ -19,7 +19,7 @@ public:
     AdamWStateManager(TransformerConfig cfg, bool offload_m, bool offload_v, bool zero_copy, int rank, int world) :
         mConfig(cfg), mOffloadM(offload_m), mOffloadV(offload_v), mUseZeroCopy(zero_copy), mRank(rank), mWorld(world) {}
     virtual ~AdamWStateManager() = default;
-    virtual void begin_optimizer(DeviceMemoryStack& memory, cudaStream_t main_stream) = 0;
+    virtual void begin_optimizer(DeviceMemoryStack& memory, cudaStream_t main_stream);
     virtual void end_optimizer(DeviceMemoryStack& memory);
 
     void fetch_block(int layer_idx, cudaStream_t fetch_stream);
@@ -34,11 +34,17 @@ public:
 protected:
     SimpleTensorContainer& get_block_from(int layer_idx, cudaStream_t stream, SimpleTensorContainer& buf);
 
+    virtual SimpleTensorContainer& get_m_buffer(int idx) = 0;
+    virtual SimpleTensorContainer& get_v_buffer(int idx) = 0;
+
     TransformerConfig mConfig;
 
     bool mOffloadM;
     bool mOffloadV;
     bool mUseZeroCopy;
+
+    ETensorDType mMType;
+    ETensorDType mVType;
 
     int mRank;
     int mWorld;

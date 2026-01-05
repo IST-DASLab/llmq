@@ -16,8 +16,6 @@ public:
     SimpleTensorContainer& non_block_m() override;
     SimpleTensorContainer& non_block_v() override;
 
-    void begin_optimizer(DeviceMemoryStack& memory, cudaStream_t main_stream) override;
-
     ITensorContainer& full_m() { return mOptM; }
     ITensorContainer& full_v() { return mOptV; }
     sLLamaWeights& scales_m() { return mOptMScales; }
@@ -35,6 +33,9 @@ private:
 
     std::array<sLLamaBlockWeights<TensorShard>, 2> mOptMBuffer;
     std::array<sLLamaBlockWeights<TensorShard>, 2> mOptVBuffer;
+
+    SimpleTensorContainer& get_m_buffer(int idx) override;
+    SimpleTensorContainer& get_v_buffer(int idx) override;
 };
 
 #endif //LLMQ_SRC_MODELS_LLAMA_OPTIMIZER_H

@@ -6,15 +6,40 @@
 #include "utilities/utils.h"
 #include "utilities/tensor.h"
 #include "utilities/stack.h"
+#include "utilities/lazy_allocator.h"
+
+
+void AdamWStateManager::begin_optimizer(DeviceMemoryStack& memory, cudaStream_t main_stream) {
+    LazyAllocator alloc;
+    if (!mUseZeroCopy && (mOffloadM || mOffloadV)) {
+        // double buffering needs to block on main_stream, so we can be sure that the stack memory can be reused safely
+        CUDA_CHECK(cudaEventRecord(mStatus.at(0).DoneEvent, main_stream));
+        CUDA_CHECK(cudaEventRecord(mStatus.at(1).DoneEvent, main_stream));
+    }
+
+    if(mOffloadM && !mUseZeroCopy) {
+        alloc.allocate(get_m_buffer(0));
+        mMBufferStorage[0] = alloc.commit(memory, "opt_m_a");
+        alloc.allocate(get_m_buffer(1));
+        mMBufferStorage[1] = alloc.commit(memory, "opt_m_b");
+    }
+
+    if(mOffloadV && !mUseZeroCopy) {
+        alloc.allocate(get_v_buffer(0));
+        mVBufferStorage[0] = alloc.commit(memory, "opt_v_a");
+        alloc.allocate(get_v_buffer(1));
+        mVBufferStorage[1] = alloc.commit(memory, "opt_v_b");
+    }
+}
 
 
 void AdamWStateManager::end_optimizer(DeviceMemoryStack& memory) {
-    if(mOffloadV &&! mUseZeroCopy) {
+    if(mOffloadV && !mUseZeroCopy) {
         memory.free(mVBufferStorage[1]);
         memory.free(mVBufferStorage[0]);
     }
 
-    if(mOffloadM &&! mUseZeroCopy) {
+    if(mOffloadM && !mUseZeroCopy) {
         memory.free(mMBufferStorage[1]);
         memory.free(mMBufferStorage[0]);
     }
