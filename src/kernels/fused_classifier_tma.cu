@@ -77,7 +77,7 @@ __global__ void __cluster_dims__(8, 1, 1) __launch_bounds__(128, 2)
     assert(0 <= ix && ix < V);
     __syncthreads();
     int block_start_ix = cluster.block_rank() * logits_per_block;
-    int block_middle_idx = round_down(block_start_ix + logits_per_block / 2, static_cast<int>(2 * x128::size * BLOCK_SIZE));
+    int block_middle_idx = block_start_ix + round_down(logits_per_block / 2, static_cast<int>(2 * x128::size * BLOCK_SIZE));
     int block_end_ix = block_start_ix + logits_per_block;
     logits += idx * P;
 
