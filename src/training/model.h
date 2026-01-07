@@ -170,6 +170,7 @@ public:
     cudaEvent_t BackwardDone  = nullptr;       //!< recorded at the end of the backward pass
     cudaEvent_t TransferDone  = nullptr;       //!< recorded once CPU-side buffers have been copied to GPU
     cudaEvent_t NormDone      = nullptr;       //!< recorded after norm calculation completes
+    cudaEvent_t LSEDone       = nullptr;       //!< recorded after logit lse (z) has been computed
     cudaEvent_t OptimizerDone = nullptr;       //!< recorded after the optimizer completes
 
     cudnnHandle_t CudnnHandle = nullptr;

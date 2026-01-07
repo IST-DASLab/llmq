@@ -516,6 +516,7 @@ void LLamaModel::_backward_lmhead(long B, long T, float z_loss, int micro_step, 
     Parameters->release_head(main_stream);
 
     reduce_lse_stats(rs->LSEHost, rs->LSE.get<float>(), rs->LSE.nelem(), micro_step == 0, rs->SideStream);
+    CUDA_CHECK(cudaEventRecord(rs->LSEDone, rs->SideStream));
 
     if(Options.TriggerTimingEvents) {
         CUDA_CHECK(cudaEventRecord(rs->TimingHeadEnd[micro_step], main_stream));

@@ -53,6 +53,7 @@ IRunState::IRunState(TransformerConfig config, long batch_size, long seq_len, st
     BackwardDone = create_named_event("backward_done");
     TransferDone = create_named_event("transfer_done");
     NormDone = create_named_event("norm_done");
+    LSEDone = create_named_event("lse_done");
     OptimizerDone = create_named_event("optimizer_done");
 
     Tensor host_buffer = Allocator->allocate(ETensorDType::FP32, "host_buffer", EAllocationType::PINNED, {4});
@@ -85,12 +86,12 @@ float IRunState::get_norm() const {
 }
 
 float IRunState::get_lse_max() const {
-    CUDA_CHECK(cudaEventSynchronize(NormDone));
+    CUDA_CHECK(cudaEventSynchronize(LSEDone));
     return LSEHost[0];
 }
 
 float IRunState::get_lse_sum() const {
-    CUDA_CHECK(cudaEventSynchronize(NormDone));
+    CUDA_CHECK(cudaEventSynchronize(LSEDone));
     return LSEHost[1];
 }
 
