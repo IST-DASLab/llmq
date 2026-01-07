@@ -40,7 +40,7 @@ public:
     void log_options(const std::vector<std::pair<std::string_view, std::variant<bool, std::int64_t, float, std::string>>>& options);
     void log_gpu_model(NCCLCommunicator& comm);
     void log_dataset(const DataLoader& train_loader, const DataLoader& eval_loader);
-    void log_step(int step, float epoch, int step_tokens, int duration_ms, float norm, float loss, float lr);
+    void log_step(int step, float epoch, int step_tokens, int duration_ms, float norm, float loss, float logit_lse_max, float logit_lse_mean, float lr);
     void log_eval(int step, float epoch, int eval_tokens, int duration_ms, float loss);
     void log_gpu_state(int step, int gpu_id, const GPUUtilInfo& gpu_util);
     void log_allocator(

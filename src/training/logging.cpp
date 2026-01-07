@@ -143,7 +143,7 @@ std::string format_time(int duration_ms) {
     }
 }
 
-void TrainingRunLogger::log_step(int step, float epoch, int step_tokens, int duration_ms, float norm, float loss, float lr)
+void TrainingRunLogger::log_step(int step, float epoch, int step_tokens, int duration_ms, float norm, float loss, float logit_lse_max, float logit_lse_mean, float lr)
 {
     if(mRank != 0) return;
     mTotalTrainingLoss += loss;
@@ -166,8 +166,8 @@ void TrainingRunLogger::log_step(int step, float epoch, int step_tokens, int dur
         printf("[T] step %5d [%5.1f%%] | time: %s | norm %10f | loss %10f | tps %s%s\n", step, progress, time_str.c_str(), norm, loss, tps_msg.c_str(), sol_msg.c_str());
         fflush(stdout);
     }
-    log_line(fmt::format(R"(  {{"log": "step", "time": "{}", "step": {}, "epoch": {}, "step_tokens": {}, "duration_ms": {}, "norm": {}, "loss": {}, "lr": {}}})",
-        std::chrono::system_clock::now(), step, epoch, step_tokens, duration_ms, norm, loss, lr ));
+    log_line(fmt::format(R"(  {{"log": "step", "time": "{}", "step": {}, "epoch": {}, "step_tokens": {}, "duration_ms": {}, "norm": {}, "loss": {}, "lr": {}, "lse_max": {}, "lse_mean": {}}})",
+        std::chrono::system_clock::now(), step, epoch, step_tokens, duration_ms, norm, loss, lr, logit_lse_max, logit_lse_mean ));
 }
 
 void TrainingRunLogger::log_eval(int step, float epoch, int eval_tokens, int duration_ms, float loss)

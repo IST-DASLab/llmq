@@ -255,12 +255,14 @@ float LLamaModel::validate(Tensor inputs, Tensor targets, NCCLCommunicator& comm
         tgt.Data += nano_step *  nano_batch_size * get_dtype_size(tgt.DType);
         Tensor losses = rs->Losses;
         losses.Data += nano_step * nano_batch_size * get_dtype_size(losses.DType);
+        Tensor lse = rs->LSE;
+        lse.Data += nano_step * nano_batch_size * get_dtype_size(lse.DType);
 
         matmul(rs->Output, Parameters->get_head(main_stream), lnf_slice,
                Tensor{}, nullptr, nullptr, rs->CublasLtHandle, rs->CuBlasWorkspace, V, nano_batch_size, C, EMMTranspose::TN, false, main_stream);
 
         // accumulate the losses inside rs->losses, and kick off the backward pass inside the fused classifier
-        fused_classifier(rs->Output, losses, d_loss, tgt, 0.f, nano_batch_size, V, Vp, false, main_stream);
+        fused_classifier(rs->Output, losses, lse, d_loss, tgt, 0.f, nano_batch_size, V, Vp, false, main_stream);
     }
     rs->temp_free(rs->Output);
     Parameters->release_head(main_stream);
@@ -474,6 +476,8 @@ void LLamaModel::_backward_lmhead(long B, long T, float z_loss, int micro_step, 
         tgt.Data += nano_step * nano_batch_size * get_dtype_size(tgt.DType);
         Tensor losses = rs->Losses;
         losses.Data += nano_step * nano_batch_size * get_dtype_size(losses.DType);
+        Tensor lse = rs->LSE;
+        lse.Data += nano_step * nano_batch_size * get_dtype_size(lse.DType);
         Tensor dlnf_slice = rs->DLNF;
         dlnf_slice.Data += nano_step * nano_batch_size * C * get_dtype_size(dlnf_slice.DType);
 
@@ -487,7 +491,7 @@ void LLamaModel::_backward_lmhead(long B, long T, float z_loss, int micro_step, 
         }
 
         // accumulate the losses inside rs->losses, and kick off the backward pass inside the fused classifier
-        fused_classifier(rs->Output, losses, d_loss, tgt, z_loss, nano_batch_size, V, Vp, true, main_stream);
+        fused_classifier(rs->Output, losses, lse, d_loss, tgt, z_loss, nano_batch_size, V, Vp, true, main_stream);
 
         // if we reset model grads to zero, now is the time we need to wait
         if (micro_step == 0 && nano_step == 0) {
@@ -511,6 +515,7 @@ void LLamaModel::_backward_lmhead(long B, long T, float z_loss, int micro_step, 
     rs->temp_free(rs->Output);
     Parameters->release_head(main_stream);
 
+    reduce_lse_stats(rs->LSEHost, rs->LSE.get<float>(), rs->LSE.nelem(), micro_step == 0, rs->SideStream);
 
     if(Options.TriggerTimingEvents) {
         CUDA_CHECK(cudaEventRecord(rs->TimingHeadEnd[micro_step], main_stream));

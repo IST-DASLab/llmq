@@ -97,7 +97,7 @@ __device__ SoftmaxParams prepare_softmax_blockwide3(int64_t idx, const floatX* i
 // split both loops in "multiple-of-x128-size" and "bounds-checked remainder" parts
 template <class floatX, bool WriteDLogits, bool ZLoss>
 __global__ void __launch_bounds__(1024, 1)
-    fused_classifier_kernel5(floatX* logits, float* losses,
+    fused_classifier_kernel5(floatX* logits, float* losses, float* lse_out,
                              const float dloss, const int* targets, float z_loss,
                              int V, int P, std::bool_constant<WriteDLogits>, std::bool_constant<ZLoss>) {
     using x128 = GenericVector<floatX, 16/sizeof(floatX)>;
@@ -122,13 +122,15 @@ __global__ void __launch_bounds__(1024, 1)
 
     // calculate the probability needed for the loss and update (single-threaded)
     float scale = 1.f / sp.SumExp;
+    float lse = logf(sp.SumExp) + sp.Offset;
     if(threadIdx.x == 0) {
         float prob = expf((float)logits[idx * P + ix] - sp.Offset) * scale;
         losses[idx] -= logf(prob);
+        lse_out[idx] = lse;
     }
 
     if constexpr (ZLoss) {
-        z_loss = z_loss * (logf(sp.SumExp) + sp.Offset);
+        z_loss = z_loss * lse;
     }
 
     // without this synchronization point we have a race condition:
@@ -182,33 +184,88 @@ __global__ void __launch_bounds__(1024, 1)
 
 // replaces logits with logit gradients
 template <typename Type>
-void fused_classifier_imp(Type* logits, float* losses,
+void fused_classifier_imp(Type* logits, float* losses, float* lse,
                       const float dloss, const int* targets, const float z_loss,
                       int BT, int V, int P, bool write_dlogits, cudaStream_t stream) {
     const int block_size = 1024;
     const int grid_size = BT;
     if(write_dlogits) {
         if (z_loss != 0.f) {
-            fused_classifier_kernel5<<<grid_size, block_size, 0, stream>>>(logits, losses, dloss, targets,
+            fused_classifier_kernel5<<<grid_size, block_size, 0, stream>>>(logits, losses, lse, dloss, targets,
                                                                            BT, V, P, std::bool_constant<true>(), std::bool_constant<true>());
         } else {
-            fused_classifier_kernel5<<<grid_size, block_size, 0, stream>>>(logits, losses, dloss, targets,
+            fused_classifier_kernel5<<<grid_size, block_size, 0, stream>>>(logits, losses, lse, dloss, targets,
                                                                            BT, V, P, std::bool_constant<true>(), std::bool_constant<false>());
         }
     } else {
-        fused_classifier_kernel5<<<grid_size, block_size, 0, stream>>>(logits, losses, dloss, targets,
+        fused_classifier_kernel5<<<grid_size, block_size, 0, stream>>>(logits, losses, lse, dloss, targets,
                                                                        BT, V, P, std::bool_constant<false>(), std::bool_constant<false>());
     }
     CUDA_CHECK(cudaGetLastError());
 }
 
-void fused_classifier(float* logits, float* losses,
+void fused_classifier(float* logits, float* losses, float* lse,
                       const float dloss, const int* targets, const float z_loss,
                       int BT, int V, int P, bool write_dlogits, cudaStream_t stream) {
-    fused_classifier_imp(logits, losses, dloss, targets, z_loss, BT, V, P, write_dlogits, stream);
+    fused_classifier_imp(logits, losses, lse, dloss, targets, z_loss, BT, V, P, write_dlogits, stream);
 }
-void fused_classifier(nv_bfloat16* logits, float* losses,
+void fused_classifier(nv_bfloat16* logits, float* losses, float* lse,
                       const float dloss, const int* targets, const float z_loss,
                       int BT, int V, int P, bool write_dlogits, cudaStream_t stream) {
-    fused_classifier_imp(logits, losses, dloss, targets, z_loss, BT, V, P, write_dlogits, stream);
+    fused_classifier_imp(logits, losses, lse, dloss, targets, z_loss, BT, V, P, write_dlogits, stream);
+}
+
+
+// ------------------------------------------------------------------------------
+// Logit partition function (Z) tracking
+
+__global__ void reduce_lse_stats_kernel(float* __restrict__ stats, const float* __restrict__ lse, long N, bool first_step) {
+    using vec_t = GenericVector<float, 4>;
+
+    __shared__ float warp_max[32];
+    __shared__ float warp_sum[32];
+
+    float thread_max = 0.f;
+    float thread_sum = 0.f;
+    for (int i = vec_t::size * (blockIdx.x * blockDim.x + threadIdx.x); i < N; i += blockDim.x * gridDim.x * vec_t::size) {
+        vec_t values = vec_t::load(lse + i);
+        for(int j = 0; j < vec_t::size; ++j) {
+            thread_max = fmaxf(thread_max, values[j]);
+            thread_sum += values[j];
+        }
+    }
+
+    // warp reduction
+    thread_max = warpReduceMax(thread_max);
+    thread_sum = warpReduceSum(thread_sum);
+
+    if (threadIdx.x % 32 == 0) {
+        warp_max[threadIdx.x / 32] = thread_max;
+        warp_sum[threadIdx.x / 32] = thread_sum;
+    }
+    __syncthreads();
+    if (threadIdx.x < 32) {
+        thread_max = warpReduceMax(warp_max[threadIdx.x]);
+        if (threadIdx.x == 0) {
+            if (first_step) {
+                stats[0] = thread_max;
+            } else {
+                stats[0] = fmaxf(thread_max, stats[0]);
+            }
+        }
+    } else if (threadIdx.x < 64) {
+        thread_sum = warpReduceSum(thread_sum);
+        if (threadIdx.x == 32) {
+            if (first_step) {
+                stats[1] = thread_sum;
+            } else {
+                stats[1] = thread_sum + stats[1];
+            }
+        }
+    }
+}
+
+void reduce_lse_stats(float* result, const float* in, long N, bool first_step, cudaStream_t stream) {
+    reduce_lse_stats_kernel<<<1, 1024, 0, stream>>>(result, in, N, first_step);
+    CUDA_CHECK(cudaGetLastError());
 }
