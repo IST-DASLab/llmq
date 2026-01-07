@@ -304,10 +304,12 @@ NB_MODULE(_pyllmq, m) {
             return trainer->validate(inputs.data(), targets.data());
         }, nb::arg("inputs"), nb::arg("targets"), "Perform one step of forward and loss calculation with the given inputs and targets, and return the resulting loss.")
         .def("update", [](MultiGPUPyTrainer* trainer, float lr, float beta1, float beta2, int step, float weight_decay, float grad_clip){
-            auto [loss, norm] = trainer->update(lr, beta1, beta2, step, weight_decay, grad_clip);
+            auto [loss, norm, z_max, z_mean] = trainer->update(lr, beta1, beta2, step, weight_decay, grad_clip);
             nb::dict ret;
             ret["loss"] = loss;
             ret["norm"] = norm;
+            ret["z_max"] = z_max;
+            ret["z_mean"] = z_mean;
             return ret;
         }, nb::arg("learning_rate"), nb::arg("beta1"), nb::arg("beta2"), nb::arg("step"), nb::arg("weight_decay"), nb::arg("grad_clip"),
              "Run the optimizer step and return the loss and gradient norm. This function blocks until the optimizer step is complete.")
@@ -438,7 +440,7 @@ NB_MODULE(_pyllmq, m) {
              "Log dataset information")
         .def("log_step", &TrainingRunLogger::log_step,
              nb::arg("step"), nb::arg("epoch"), nb::arg("step_tokens"), nb::arg("duration_ms"),
-             nb::arg("norm"), nb::arg("loss"), nb::arg("lr"),
+             nb::arg("norm"), nb::arg("loss"), nb::arg("logit_lse_max"), nb::arg("logit_lse_mean"), nb::arg("lr"),
              "Log a training step")
         .def("log_eval", &TrainingRunLogger::log_eval,
              nb::arg("step"), nb::arg("epoch"), nb::arg("eval_tokens"), nb::arg("duration_ms"), nb::arg("loss"),
