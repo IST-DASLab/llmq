@@ -63,6 +63,7 @@ struct TrainingRunner {
     float GradClip = 1.0f;
     float WeightDecay = 0.1f;
     float Epsilon = 1e-8f;
+    float ZLoss = 0.f;
     int GradAccSteps = 4;
 
     bool FromScratch = false;
@@ -146,6 +147,7 @@ void TrainingRunner::load_training_config(int argc, const char** argv) {
     app.add_option("--grad-accumulation", GradAccSteps, "number of micro-batches per optimizer step")->check(CLI::PositiveNumber);
     app.add_option("--grad-clip", GradClip, "Gradient clipping");
     app.add_option("--weight-decay", WeightDecay, "Weight decay for matrix parameters")->check(CLI::NonNegativeNumber);
+    app.add_option("--z-loss", ZLoss, "Z-Loss regularization strength")->check(CLI::NonNegativeNumber);
     app.add_option("--adam-epsilon", Epsilon, "Epsilon to use for AdamW")->check(CLI::NonNegativeNumber);
 
     auto steps_opt = app.add_option("--steps", MaxSteps, "Number of training steps");
@@ -512,7 +514,7 @@ void TrainingRunner::run_training(int argc, const char** argv, NCCLCommunicator&
         for (int j = 0; j < GradAccSteps; ++j) {
             train_loader.load_batch(inputs, targets);
             model.forward(inputs, comm, j);
-            model.backward(inputs, targets, comm, GradAccSteps, j);
+            model.backward(inputs, targets, comm, ZLoss, GradAccSteps, j);
         }
 
         if (LogGPUEvery > 0 && step % LogGPUEvery == 0) {

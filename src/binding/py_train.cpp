@@ -94,7 +94,7 @@ void MultiGPUPyTrainer::save_checkpoint(std::string directory, int step) {
     });
 }
 
-void MultiGPUPyTrainer::step(const std::int32_t* inputs, const std::int32_t* targets) {
+void MultiGPUPyTrainer::step(const std::int32_t* inputs, const std::int32_t* targets, float z_loss) {
     for(int i = 0; i < mContexts.size(); ++i) {
         auto& ctx = mContexts.at(i);
         auto* ib = ctx.Model->get_input_buffer().get<std::int32_t>();
@@ -108,11 +108,11 @@ void MultiGPUPyTrainer::step(const std::int32_t* inputs, const std::int32_t* tar
         throw std::runtime_error(fmt::format("step: micro_step {} >= grad_accumulation {}", mTrainMicroStep, mGradAccumulation));
     }
 
-    run_work([micro_idx = mTrainMicroStep, micro_batches = mGradAccumulation](sThreadContext& ctx) {
+    run_work([micro_idx = mTrainMicroStep, micro_batches = mGradAccumulation, z_loss](sThreadContext& ctx) {
         Tensor inputs = ctx.Model->get_input_buffer();
         Tensor targets = ctx.Model->get_target_buffer();
         ctx.Model->forward(inputs, *ctx.Communicator, micro_idx);
-        ctx.Model->backward(inputs, targets, *ctx.Communicator, micro_batches, micro_idx);
+        ctx.Model->backward(inputs, targets, *ctx.Communicator, z_loss, micro_batches, micro_idx);
     });
     ++mTrainMicroStep;
 }

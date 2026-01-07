@@ -40,7 +40,7 @@ __device__ inline float blockReduce(float val, bool final_sync=false, float out_
 
 
 struct SoftmaxParams {
-    float Scale;
+    float SumExp;
     float Offset;
 };
 
@@ -89,17 +89,17 @@ __device__ SoftmaxParams prepare_softmax_blockwide3(int64_t idx, const floatX* i
     float block_sumval = blockReduce<warpReduceSum>(thread_sumval);
 
     // return the softmax parameters
-    return SoftmaxParams{1.f / block_sumval, block_maxval};
+    return SoftmaxParams{block_sumval, block_maxval};
 }
 
 // will _update_ logits to logit gradients
 // uses template to decide whether to write logits and probs
 // split both loops in "multiple-of-x128-size" and "bounds-checked remainder" parts
-template <class floatX, bool WriteDLogits = true, bool WriteProbs = false>
+template <class floatX, bool WriteDLogits, bool ZLoss>
 __global__ void __launch_bounds__(1024, 1)
-    fused_classifier_kernel5(floatX* logits, float* losses, floatX* probs,
-                             const float dloss, const int* targets,
-                             int BT, int V, int P, std::bool_constant<WriteDLogits>) {
+    fused_classifier_kernel5(floatX* logits, float* losses,
+                             const float dloss, const int* targets, float z_loss,
+                             int V, int P, std::bool_constant<WriteDLogits>, std::bool_constant<ZLoss>) {
     using x128 = GenericVector<floatX, 16/sizeof(floatX)>;
     // note: idx is small enough that it easily fits into 32 bit;
     // by making it a long here, we ensure that any offsets calculated with it (e.g., idx * P)
@@ -121,9 +121,14 @@ __global__ void __launch_bounds__(1024, 1)
     SoftmaxParams sp = prepare_softmax_blockwide3(idx, logits, V, P);
 
     // calculate the probability needed for the loss and update (single-threaded)
+    float scale = 1.f / sp.SumExp;
     if(threadIdx.x == 0) {
-        float prob = expf((float)logits[idx * P + ix] - sp.Offset) * sp.Scale;
+        float prob = expf((float)logits[idx * P + ix] - sp.Offset) * scale;
         losses[idx] -= logf(prob);
+    }
+
+    if constexpr (ZLoss) {
+        z_loss = z_loss * (logf(sp.SumExp) + sp.Offset);
     }
 
     // without this synchronization point we have a race condition:
@@ -140,18 +145,18 @@ __global__ void __launch_bounds__(1024, 1)
         x128 packed_probs;
         for(int k = 0; k < x128::size; ++k) {
             int element = i*x128::size + k;
-            float prob = expf((float)packed_logits_vec[k] - sp.Offset) * sp.Scale;
+            float prob = expf((float)packed_logits_vec[k] - sp.Offset) * scale;
             packed_probs[k] = (floatX)prob;
             float indicator = (element == ix) ? 1.0f : 0.0f;
             packed_logits_vec[k] = (floatX)((prob - indicator) * dloss);
+            if constexpr (ZLoss) {
+                packed_logits_vec[k] += z_loss * prob;
+            }
         }
         if (WriteDLogits){
             // reduce cache persistence for the overwritten logits
             // to maximise the probability that logits remain in cache between prepare_softmax and here
             packed_logits_vec.store_cs(logits + idx * P + i * x128::size);
-        }
-        if (WriteProbs) {
-            packed_probs.store_cs(probs + idx * P + i * x128::size);
         }
     }
 
@@ -159,14 +164,15 @@ __global__ void __launch_bounds__(1024, 1)
     // e.g. if V = 8003, and x128::size = 8, we need to handle the last 3 elements
     int unaligned_start = V & ~(x128::size - 1); // round down to multiple of x128::size
     for (int i = threadIdx.x + unaligned_start; i < V; i += blockDim.x) {
-        float prob = expf((float)logits_vec[i] - sp.Offset) * sp.Scale;
+        float prob = expf((float)logits_vec[i] - sp.Offset) * scale;
         float indicator = (i == ix) ? 1.0f : 0.0f;
         float dlogit = (prob - indicator) * dloss;
+        if constexpr (ZLoss) {
+            dlogit += z_loss * prob;
+        }
+
         if (WriteDLogits){
             __stcs(logits + idx * P + i, (floatX)dlogit);
-        }
-        if (WriteProbs) {
-            probs[idx * P + i] = (floatX)prob;
         }
     }
 }
@@ -177,27 +183,32 @@ __global__ void __launch_bounds__(1024, 1)
 // replaces logits with logit gradients
 template <typename Type>
 void fused_classifier_imp(Type* logits, float* losses,
-                      const float dloss, const int* targets,
+                      const float dloss, const int* targets, const float z_loss,
                       int BT, int V, int P, bool write_dlogits, cudaStream_t stream) {
     const int block_size = 1024;
     const int grid_size = BT;
     if(write_dlogits) {
-        fused_classifier_kernel5<<<grid_size, block_size, 0, stream>>>(logits, losses, (Type*) NULL, dloss, targets,
-                                                                       BT, V, P, std::bool_constant<true>());
+        if (z_loss != 0.f) {
+            fused_classifier_kernel5<<<grid_size, block_size, 0, stream>>>(logits, losses, dloss, targets,
+                                                                           BT, V, P, std::bool_constant<true>(), std::bool_constant<true>());
+        } else {
+            fused_classifier_kernel5<<<grid_size, block_size, 0, stream>>>(logits, losses, dloss, targets,
+                                                                           BT, V, P, std::bool_constant<true>(), std::bool_constant<false>());
+        }
     } else {
-        fused_classifier_kernel5<<<grid_size, block_size, 0, stream>>>(logits, losses, (Type*) NULL, dloss, targets,
-                                                                       BT, V, P, std::bool_constant<false>());
+        fused_classifier_kernel5<<<grid_size, block_size, 0, stream>>>(logits, losses, dloss, targets,
+                                                                       BT, V, P, std::bool_constant<false>(), std::bool_constant<false>());
     }
     CUDA_CHECK(cudaGetLastError());
 }
 
 void fused_classifier(float* logits, float* losses,
-                      const float dloss, const int* targets,
+                      const float dloss, const int* targets, const float z_loss,
                       int BT, int V, int P, bool write_dlogits, cudaStream_t stream) {
-    fused_classifier_imp(logits, losses, dloss, targets, BT, V, P, write_dlogits, stream);
+    fused_classifier_imp(logits, losses, dloss, targets, z_loss, BT, V, P, write_dlogits, stream);
 }
 void fused_classifier(nv_bfloat16* logits, float* losses,
-                      const float dloss, const int* targets,
+                      const float dloss, const int* targets, const float z_loss,
                       int BT, int V, int P, bool write_dlogits, cudaStream_t stream) {
-    fused_classifier_imp(logits, losses, dloss, targets, BT, V, P, write_dlogits, stream);
+    fused_classifier_imp(logits, losses, dloss, targets, z_loss, BT, V, P, write_dlogits, stream);
 }
