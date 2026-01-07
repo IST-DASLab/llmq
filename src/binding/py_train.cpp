@@ -145,7 +145,7 @@ float MultiGPUPyTrainer::validate(const std::int32_t* inputs, const std::int32_t
 
 
 
-std::pair<float, float> MultiGPUPyTrainer::update(float lr, float beta1, float beta2, int step, float weight_decay, float grad_clip) {
+std::tuple<float, float, float, float> MultiGPUPyTrainer::update(float lr, float beta1, float beta2, int step, float weight_decay, float grad_clip) {
     run_work([=](sThreadContext& ctx) {
         ctx.Model->update(*ctx.Communicator, lr, beta1, beta2, step + 1, 1e-8f, weight_decay, grad_clip);
         CUDA_CHECK(cudaDeviceSynchronize());
@@ -156,12 +156,14 @@ std::pair<float, float> MultiGPUPyTrainer::update(float lr, float beta1, float b
     auto& ctx = mContexts.at(0);
     step_loss = ctx.Model->get_loss();
     step_norm = ctx.Model->get_norm();
+    float logit_lse_max = ctx.Model->get_run_state().get_lse_max();
+    float logit_lse_mean = ctx.Model->get_run_state().get_lse_sum() / ( B * T * mGradAccumulation );
 
     // ensure we're re-gathering on next forward for eval and train
     mTrainMicroStep = 0;
     mEvalStep = 0;
 
-    return {step_loss / B / T / mGradAccumulation, step_norm};
+    return {step_loss / B / T / mGradAccumulation, step_norm, logit_lse_max, logit_lse_mean};
 }
 
 

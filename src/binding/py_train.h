@@ -51,7 +51,7 @@ public:
     void save_checkpoint(std::string directory, int step);
     void step(const std::int32_t* inputs, const std::int32_t* targets, float z_loss);
     float validate(const std::int32_t* inputs, const std::int32_t* targets);
-    std::pair<float, float> update(float lr, float beta1, float beta2, int step, float weight_decay, float grad_clip);
+    std::tuple<float, float, float, float> update(float lr, float beta1, float beta2, int step, float weight_decay, float grad_clip);
     void stop();
 
     std::vector<GPUUtilInfo> get_gpu_info();
