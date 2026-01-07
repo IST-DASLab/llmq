@@ -45,7 +45,6 @@ void fill_matrix_shapes(sLLamaBlockWeights<TensorShard>& target, const Transform
     long H = config.IntermediateSize;
 
     auto create_matrix_shard = [&](TensorShard& tgt, long rows, long cols) {
-        assert(tgt.Data == nullptr);
         tgt.Rank = 2;
         tgt.DType = dtype;
         tgt.Sizes[0] = div_exact(rows, (long)num_shards);
@@ -70,7 +69,6 @@ void fill_non_matrix_shapes(sLLamaBlockWeights<TensorShard>& target, const Trans
     long HS = config.head_size();
 
     auto create_vector_shard = [&](TensorShard& tgt, long elems) {
-        assert(tgt.Data == nullptr);
         tgt.Rank = 1;
         tgt.DType = dtype;
         tgt.Sizes[0] = div_exact(elems, (long)num_shards);

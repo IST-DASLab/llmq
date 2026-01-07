@@ -192,14 +192,14 @@ void fused_classifier_imp(Type* logits, float* losses, float* lse,
     if(write_dlogits) {
         if (z_loss != 0.f) {
             fused_classifier_kernel5<<<grid_size, block_size, 0, stream>>>(logits, losses, lse, dloss, targets,
-                                                                           BT, V, P, std::bool_constant<true>(), std::bool_constant<true>());
+                                                                           z_loss, V, P, std::bool_constant<true>(), std::bool_constant<true>());
         } else {
             fused_classifier_kernel5<<<grid_size, block_size, 0, stream>>>(logits, losses, lse, dloss, targets,
-                                                                           BT, V, P, std::bool_constant<true>(), std::bool_constant<false>());
+                                                                           z_loss, V, P, std::bool_constant<true>(), std::bool_constant<false>());
         }
     } else {
         fused_classifier_kernel5<<<grid_size, block_size, 0, stream>>>(logits, losses, lse, dloss, targets,
-                                                                       BT, V, P, std::bool_constant<false>(), std::bool_constant<false>());
+                                                                       z_loss, V, P, std::bool_constant<false>(), std::bool_constant<false>());
     }
     CUDA_CHECK(cudaGetLastError());
 }
@@ -244,6 +244,7 @@ __global__ void reduce_lse_stats_kernel(float* __restrict__ stats, const float* 
         warp_sum[threadIdx.x / 32] = thread_sum;
     }
     __syncthreads();
+    // one warp handles max, another handles sum.
     if (threadIdx.x < 32) {
         thread_max = warpReduceMax(warp_max[threadIdx.x]);
         if (threadIdx.x == 0) {
@@ -254,7 +255,7 @@ __global__ void reduce_lse_stats_kernel(float* __restrict__ stats, const float* 
             }
         }
     } else if (threadIdx.x < 64) {
-        thread_sum = warpReduceSum(thread_sum);
+        thread_sum = warpReduceSum(warp_sum[threadIdx.x - 32]);
         if (threadIdx.x == 32) {
             if (first_step) {
                 stats[1] = thread_sum;

@@ -45,7 +45,7 @@ public:
     //! before accessing any of the results (or run subsequent work on `run_state.MainStream`).
     //! However, it is guaranteed that `inputs` and `targets` have been copied to the GPU-side buffer
     //! before this function returns.
-    //! `z_loss` specifies the strength of z-loss regulartization, 1/2 z_loss * log²(sum(z_i)
+    //! `z_loss` specifies the strength of z-loss regularization, 1/2 z_loss * log²(sum(z_i)
     virtual void backward(Tensor inputs, Tensor targets, NCCLCommunicator& comm, float z_loss, int grad_accum_steps, int micro_step) = 0;
 
     //! \brief Runs the AdamW update step.
