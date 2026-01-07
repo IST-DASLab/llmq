@@ -290,12 +290,12 @@ NB_MODULE(_pyllmq, m) {
         .def("init_weights", &MultiGPUPyTrainer::init_weights, "Initialize weights from scratch")
         .def("load_checkpoint", &MultiGPUPyTrainer::load_checkpoint, nb::arg("path"), nb::arg("step"), "Load a checkpoint for the specified step from the given checkpoint directory")
         .def("save_checkpoint", &MultiGPUPyTrainer::save_checkpoint, nb::arg("path"), nb::arg("step"), "Save a checkpoint for the specified step from to given checkpoint directory")
-        .def("step", [](MultiGPUPyTrainer* trainer, TokenArray inputs, TokenArray targets) {
+        .def("step", [](MultiGPUPyTrainer* trainer, TokenArray inputs, TokenArray targets, float z_loss) {
             CHECK_SHAPE(inputs, trainer->batch_size() * trainer->world_size(), trainer->seq_length());
             CHECK_SHAPE(targets, trainer->batch_size() * trainer->world_size(), trainer->seq_length());
 
-            trainer->step(inputs.data(), targets.data());
-        }, nb::arg("inputs"), nb::arg("targets"),
+            trainer->step(inputs.data(), targets.data(), z_loss);
+        }, nb::arg("inputs"), nb::arg("targets"), nb::arg("z_loss") = 0.f,
              "Perform one step of forward/backward with the given inputs and targets. This function runs asynchronously; the loss will be made available during the next call to `update`.")
         .def("validate", [](MultiGPUPyTrainer* trainer, TokenArray inputs, TokenArray targets) {
             CHECK_SHAPE(inputs, trainer->batch_size() * trainer->world_size(), trainer->seq_length());

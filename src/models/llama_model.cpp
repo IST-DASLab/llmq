@@ -260,7 +260,7 @@ float LLamaModel::validate(Tensor inputs, Tensor targets, NCCLCommunicator& comm
                Tensor{}, nullptr, nullptr, rs->CublasLtHandle, rs->CuBlasWorkspace, V, nano_batch_size, C, EMMTranspose::TN, false, main_stream);
 
         // accumulate the losses inside rs->losses, and kick off the backward pass inside the fused classifier
-        fused_classifier(rs->Output, losses, d_loss, tgt, nano_batch_size, V, Vp, true, main_stream);
+        fused_classifier(rs->Output, losses, d_loss, tgt, 0.f, nano_batch_size, V, Vp, false, main_stream);
     }
     rs->temp_free(rs->Output);
     Parameters->release_head(main_stream);
@@ -329,7 +329,7 @@ void backward_qmm(Tensor& dinp, Tensor& dweight, Tensor dbias,
 }
 
 
-void LLamaModel::backward(Tensor inputs, Tensor targets, NCCLCommunicator& comm, int grad_accum_steps, int micro_step) {
+void LLamaModel::backward(Tensor inputs, Tensor targets, NCCLCommunicator& comm, float z_loss, int grad_accum_steps, int micro_step) {
     auto& rs = RunState;
     cudaStream_t main_stream = rs->MainStream;
 
@@ -370,7 +370,7 @@ void LLamaModel::backward(Tensor inputs, Tensor targets, NCCLCommunicator& comm,
     // reset residual stream gradients (put here to work with gradient accumulation)
     fill_zero(rs->DLNF, main_stream);
     fill_zero(rs->DActs[L-1].DResFFN.Value, main_stream);
-    _backward_lmhead(B, T, micro_step, grad_accum_steps, comm);
+    _backward_lmhead(B, T, z_loss, micro_step, grad_accum_steps, comm);
 
     // ok, now reduce the loss across all ranks
     if (last_step) {
@@ -447,7 +447,7 @@ void LLamaModel::backward(Tensor inputs, Tensor targets, NCCLCommunicator& comm,
     }
 }
 
-void LLamaModel::_backward_lmhead(long B, long T, int micro_step, int grad_accum_steps, NCCLCommunicator& comm) {
+void LLamaModel::_backward_lmhead(long B, long T, float z_loss, int micro_step, int grad_accum_steps, NCCLCommunicator& comm) {
     auto& rs = RunState;
     const size_t C = Config.HiddenSize;
     const size_t V = Config.VocabSize;
@@ -487,7 +487,7 @@ void LLamaModel::_backward_lmhead(long B, long T, int micro_step, int grad_accum
         }
 
         // accumulate the losses inside rs->losses, and kick off the backward pass inside the fused classifier
-        fused_classifier(rs->Output, losses, d_loss, tgt, nano_batch_size, V, Vp, true, main_stream);
+        fused_classifier(rs->Output, losses, d_loss, tgt, z_loss, nano_batch_size, V, Vp, true, main_stream);
 
         // if we reset model grads to zero, now is the time we need to wait
         if (micro_step == 0 && nano_step == 0) {

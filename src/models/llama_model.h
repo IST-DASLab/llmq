@@ -94,7 +94,7 @@ public:
     // main training loop
     void forward(Tensor inputs, NCCLCommunicator& comm, int micro_step) override;
     float validate(Tensor inputs, Tensor targets, NCCLCommunicator& comm, int micro_step) override;
-    void backward(Tensor inputs, Tensor targets, NCCLCommunicator& comm, int grad_accum_steps, int micro_step) override;
+    void backward(Tensor inputs, Tensor targets, NCCLCommunicator& comm, float z_loss, int grad_accum_steps, int micro_step) override;
     void update(NCCLCommunicator& comm, float learning_rate, float beta_1, float beta_2, int t, float epsilon, float weight_decay, float grad_clip) override;
 
     void allocate_run_state(const LLamaOptions& options, NCCLCommunicator& comm, int B, int T);
@@ -124,7 +124,7 @@ protected:
     void _reduce_loss(LLamaRunState& acts, NCCLCommunicator& comm, int B, int T);
 
     void _forward_block(sLLamaBlockWeights<Tensor>& weights, sLLamaLayerActivations& activations, Tensor& residual);
-    void _backward_lmhead(long B, long T, int micro_step, int grad_accum_steps, NCCLCommunicator& comm);
+    void _backward_lmhead(long B, long T, float z_loss, int micro_step, int grad_accum_steps, NCCLCommunicator& comm);
     void _recompute_block(sLLamaBlockWeights<Tensor>& weights, sLLamaLayerActivations& activations, Tensor& residual);
     void _backward_block(bool accumulate, sLLamaBlockWeights<Tensor>& weights, sLLamaGradBlock& grads,
                          sLLamaLayerActivations& activations, sLLamaLayerGradients& d_activations);
