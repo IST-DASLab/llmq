@@ -91,13 +91,13 @@ void rope_backward(Tensor& dinp, const Tensor& dout, const Tensor& freqs_cis, fl
     }
 }
 
-void fused_classifier(Tensor& logits, Tensor& losses,
-                      float dloss, const Tensor& targets, float z_loss,
+void fused_classifier(Tensor& logits, Tensor& losses, Tensor& lse,
+                      float dloss, const Tensor& targets, float z_reg,
                       int BT, int V, int P, bool write_dlogits, cudaStream_t stream) {
     if(logits.DType == ETensorDType::FP32) {
-        fused_classifier(logits.get<float>(), losses.get<float>(), dloss, targets.get<int>(), z_loss, BT, V, P, write_dlogits, stream);
+        fused_classifier(logits.get<float>(), losses.get<float>(), lse.get<float>(), dloss, targets.get<int>(), z_reg, BT, V, P, write_dlogits, stream);
     } else if(logits.DType == ETensorDType::BF16) {
-        fused_classifier(logits.get<nv_bfloat16>(), losses.get<float>(), dloss, targets.get<int>(), z_loss, BT, V, P, write_dlogits, stream);
+        fused_classifier(logits.get<nv_bfloat16>(), losses.get<float>(), lse.get<float>(), dloss, targets.get<int>(), z_reg, BT, V, P, write_dlogits, stream);
     } else {
         throw std::runtime_error("fused_classifier: unsupported dtype");
     }

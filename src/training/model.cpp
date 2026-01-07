@@ -38,6 +38,7 @@ IRunState::IRunState(TransformerConfig config, long batch_size, long seq_len, st
     Inputs_CPU = Allocator->allocate(ETensorDType::INT32, "inputs_cpu", EAllocationType::PINNED, {B, T});
     Targets_CPU = Allocator->allocate(ETensorDType::INT32, "targets_cpu", EAllocationType::PINNED, {B, T});
     Losses = Allocator->allocate(ETensorDType::FP32, "losses", {B, T});
+    LSE = Allocator->allocate(ETensorDType::FP32, "lse", {B, T});
 
     CudnnHandle = create_cudnn_handle();
     CublasLtHandle = create_cublaslt_handle();
@@ -54,9 +55,10 @@ IRunState::IRunState(TransformerConfig config, long batch_size, long seq_len, st
     NormDone = create_named_event("norm_done");
     OptimizerDone = create_named_event("optimizer_done");
 
-    Tensor host_buffer = Allocator->allocate(ETensorDType::FP32, "host_buffer", EAllocationType::PINNED, {2});
+    Tensor host_buffer = Allocator->allocate(ETensorDType::FP32, "host_buffer", EAllocationType::PINNED, {4});
     NormHost = host_buffer.get<float>();
     LossHost = host_buffer.get<float>() + 1;
+    LSEHost = host_buffer.get<float>() + 2;
 }
 
 void IRunState::setup_timing_events(int micro_steps) {
@@ -80,6 +82,16 @@ float IRunState::get_loss() const {
 float IRunState::get_norm() const {
     CUDA_CHECK(cudaEventSynchronize(NormDone));
     return NormHost[0];
+}
+
+float IRunState::get_lse_max() const {
+    CUDA_CHECK(cudaEventSynchronize(NormDone));
+    return LSEHost[0];
+}
+
+float IRunState::get_lse_sum() const {
+    CUDA_CHECK(cudaEventSynchronize(NormDone));
+    return LSEHost[1];
 }
 
 Tensor IRunState::temp_alloc(ETensorDType dtype, const std::vector<long>& shape) {

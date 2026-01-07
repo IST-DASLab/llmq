@@ -53,10 +53,10 @@ public:
     virtual void update(NCCLCommunicator& comm, float learning_rate, float beta_1, float beta_2, int t, float epsilon, float weight_decay, float grad_clip) = 0;
 
     //! Gets the loss of the preceding validate or backward call (forward does _not_ calculate the loss)
-    virtual float get_loss() const;
+    float get_loss() const;
 
     //! Gets the gradient norm of the preceding update call.
-    virtual float get_norm() const;
+    float get_norm() const;
 
     //! Gets the tensor into which model inputs are to be placed.
     virtual Tensor& get_input_buffer();
@@ -134,6 +134,11 @@ public:
     //! i.e., the function is safe to call without additional synchronization.
     float get_norm() const;
 
+    //! gets the maximum log-sum-exp of any token's logits
+    float get_lse_max() const;
+    //! gets the sum of all tokens' logits' log-sum-exp
+    float get_lse_sum() const;
+
     // temporary buffers
     Tensor temp_alloc(ETensorDType dtype, const std::vector<long>& shape);
     void temp_acquire(Tensor& target);
@@ -149,9 +154,11 @@ public:
     Tensor Inputs;                      // (B, T) Int32
     Tensor Targets;                     // (B, T) Int32
     Tensor Losses;                      // (B, T) FP32
+    Tensor LSE;                         // (B, T) FP32; log-sum-exp of logits
 
     float* NormHost = nullptr;          // single value
     float* LossHost = nullptr;          // single value
+    float* LSEHost = nullptr;           // two values
 
     std::pair<float, float> record_step(float loss, float norm);
 
