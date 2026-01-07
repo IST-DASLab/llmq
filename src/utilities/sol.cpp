@@ -254,6 +254,7 @@ std::unordered_map<std::string_view, sPerfSpecs> create_device_map() {
     device_map["NVIDIA GeForce RTX 5060"] = interpolate(RTX_5070, 30, 2497);
 
     device_map["NVIDIA RTX PRO 6000 Blackwell Server Edition"] = B6000_WS;
+    device_map["NVIDIA RTX PRO 4000 Blackwell"] = interpolate(B6000_WS, 70, 2055);
     device_map["NVIDIA GB10"] = GB10;
     return device_map;
 }
