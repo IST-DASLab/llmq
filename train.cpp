@@ -563,7 +563,7 @@ void TrainingRunner::run_training(int argc, const char** argv, NCCLCommunicator&
     }
 
     float loss = run_evaluation(test_loader, model, logger, train_loader.epoch() + 0.01f*train_loader.progress(), MaxSteps, comm, test_loader.num_chunks(), inputs, targets);
-    logger.log_message(0, fmt::format("Done. validation loss {:10f}", loss));
+    logger.log_message(MaxSteps, fmt::format("Done. validation loss {:10f}", loss));
 
     auto log = logger.log_section_start(MaxSteps, fmt::format("Saving model to `{}`", OutDir.c_str()));
     std::filesystem::path p(OutDir);
