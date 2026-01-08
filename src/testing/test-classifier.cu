@@ -31,9 +31,9 @@ namespace {
 
 // CPU reference: per-row softmax + cross-entropy with optional ignore_index (-100)
 // Also computes in-place dlogits = (softmax - one_hot) * dloss for first V entries of each row
-static void classifier_cpu(float* losses, float* dlogits,
+static void classifier_cpu(float* losses, float* lse_out, float* dlogits,
                            const float* logits, const int* targets,
-                           int BT, int V, int P, float dloss)
+                           int BT, int V, int P, float dloss, const float z_reg)
 {
     for (int r = 0; r < BT; ++r) {
         const int ix = targets[r];
@@ -50,9 +50,11 @@ static void classifier_cpu(float* losses, float* dlogits,
         // compute logsumexp and probs for first V entries
         float maxv = -INFINITY;
         for (int i = 0; i < V; ++i) maxv = std::max(maxv, row[i]);
-        float sumexp = 0.0f;
+        double sumexp = 0.0;
         for (int i = 0; i < V; ++i) sumexp += std::exp(row[i] - maxv);
-        float invsum = 1.0f / sumexp;
+        float lse = std::log(sumexp) + maxv;
+        lse_out[r] = lse;
+        float invsum = static_cast<float>(1.0 / sumexp);
         // loss
         float prob_ix = std::exp(row[ix] - maxv) * invsum;
         losses[r] = -std::log(prob_ix);
@@ -60,7 +62,7 @@ static void classifier_cpu(float* losses, float* dlogits,
         for (int i = 0; i < V; ++i) {
             float prob = std::exp(row[i] - maxv) * invsum;
             float indicator = (i == ix) ? 1.0f : 0.0f;
-            gout[i] = (prob - indicator) * dloss;
+            gout[i] = (prob - indicator) * dloss + z_reg * lse * prob;
         }
     }
 }
@@ -96,30 +98,36 @@ TEST_CASE("fused classifier fp32 forward/backward matches CPU", "[classifier][fp
 
     // CPU reference
     std::vector<float> h_losses_ref(BT, 0.0f);
+    std::vector<float> h_lse_ref(BT, 0.0f);
     std::vector<float> h_dlogits_ref((size_t)BT * P, 0.0f);
-    classifier_cpu(h_losses_ref.data(), h_dlogits_ref.data(), h_logits.data(), h_targets.data(), BT, V, P, dloss);
+    classifier_cpu(h_losses_ref.data(), h_lse_ref.data(), h_dlogits_ref.data(), h_logits.data(), h_targets.data(), BT, V, P, dloss, 0.1f);
 
     // Device buffers
     thrust::device_vector<float> d_logits = to_device(h_logits);
     thrust::device_vector<float> d_losses(BT, 0.0f);
+    thrust::device_vector<float> d_lse(BT, 0.0f);
     thrust::device_vector<int> d_targets = to_device(h_targets);
 
     // Run kernel: write_dlogits = true => logits become gradients
     fused_classifier(thrust::raw_pointer_cast(d_logits.data()),
                      thrust::raw_pointer_cast(d_losses.data()),
+                     thrust::raw_pointer_cast(d_lse.data()),
                      dloss,
                      thrust::raw_pointer_cast(d_targets.data()),
+                     0.1f,
                      BT, V, P, /*write_dlogits*/ true, /*stream*/ 0);
     CUDA_CHECK(cudaDeviceSynchronize());
 
     // Copy back
     std::vector<float> h_losses = from_device(d_losses);
+    std::vector<float> h_lse = from_device(d_lse);
     std::vector<float> h_dlogits = from_device(d_logits);
 
     // Compare
     for (int r = 0; r < BT; ++r) {
         // loss
         REQUIRE(h_losses[r] == Catch::Approx(h_losses_ref[r]).margin(1e-6f));
+        REQUIRE(h_lse[r] == Catch::Approx(h_lse_ref[r]).margin(1e-6f));
         // gradients (only first V entries are defined)
         for (int i = 0; i < V; ++i) {
             REQUIRE(h_dlogits[r * P + i] == Catch::Approx(h_dlogits_ref[r * P + i]).margin(5e-5f));
@@ -134,7 +142,7 @@ TEST_CASE("fused classifier bf16 forward/backward matches CPU (tolerant)", "[cla
     const int BT = B * T;
 
     // V multiple of 8 (x128::size for bf16 is 8)
-    const int V = 16384;
+    const int V = 151936;
     const int P = V;
     const float dloss = 0.7f;
 
@@ -153,24 +161,29 @@ TEST_CASE("fused classifier bf16 forward/backward matches CPU (tolerant)", "[cla
 
     // CPU reference (computed in float)
     std::vector<float> h_losses_ref(BT, 0.0f);
+    std::vector<float> h_lse_ref(BT, 0.0f);
     std::vector<float> h_dlogits_ref((size_t)BT * P, 0.0f);
 
-    classifier_cpu(h_losses_ref.data(), h_dlogits_ref.data(), h_logits_f.data(), h_targets.data(), BT, V, P, dloss);
+    classifier_cpu(h_losses_ref.data(), h_lse_ref.data(), h_dlogits_ref.data(), h_logits_f.data(), h_targets.data(), BT, V, P, dloss, 0.3f);
 
     // Device
     std::vector<nv_bfloat16> h_logits_bf16 = to_bf16(h_logits_f);
     thrust::device_vector<nv_bfloat16> d_logits = to_device(h_logits_bf16);
     thrust::device_vector<float> d_losses(BT, 0.0f);
+    thrust::device_vector<float> d_lse(BT, 0.0f);
     thrust::device_vector<int> d_targets = to_device(h_targets);
 
     fused_classifier(thrust::raw_pointer_cast(d_logits.data()),
                      thrust::raw_pointer_cast(d_losses.data()),
+                     thrust::raw_pointer_cast(d_lse.data()),
                      dloss,
                      thrust::raw_pointer_cast(d_targets.data()),
+                     0.3f,
                      BT, V, P, /*write_dlogits*/ true, /*stream*/ 0);
 
     // Copy back
     std::vector<float> h_losses = from_device(d_losses);
+    std::vector<float> h_lse = from_device(d_lse);
     std::vector<nv_bfloat16> h_dlogits_bf16 = from_device(d_logits);
 
     // Convert bf16 grads to float on host to compare
@@ -183,6 +196,7 @@ TEST_CASE("fused classifier bf16 forward/backward matches CPU (tolerant)", "[cla
     // Compare with looser tolerances due to bf16 rounding
     for (int r = 0; r < BT; ++r) {
         REQUIRE(h_losses[r] == Catch::Approx(h_losses_ref[r]).margin(5e-3f));
+        REQUIRE(h_lse[r] == Catch::Approx(h_lse_ref[r]).margin(1e-6f));
         for (int i = 0; i < V; ++i) {
             float got = bf16_to_float(h_dlogits_bf16[r * P + i]);
             float exp = h_dlogits_ref[r * P + i];

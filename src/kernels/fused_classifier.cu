@@ -98,7 +98,7 @@ __device__ SoftmaxParams prepare_softmax_blockwide3(int64_t idx, const floatX* i
 template <class floatX, bool WriteDLogits, bool ZLoss>
 __global__ void __launch_bounds__(1024, 1)
     fused_classifier_kernel5(floatX* logits, float* losses, float* lse_out,
-                             const float dloss, const int* targets, float z_loss,
+                             const float dloss, const int* targets, float z_reg,
                              int V, int P, std::bool_constant<WriteDLogits>, std::bool_constant<ZLoss>) {
     using x128 = GenericVector<floatX, 16/sizeof(floatX)>;
     // note: idx is small enough that it easily fits into 32 bit;
@@ -130,7 +130,7 @@ __global__ void __launch_bounds__(1024, 1)
     }
 
     if constexpr (ZLoss) {
-        z_loss = z_loss * lse;
+        z_reg = z_reg * lse;
     }
 
     // without this synchronization point we have a race condition:
@@ -152,7 +152,7 @@ __global__ void __launch_bounds__(1024, 1)
             float indicator = (element == ix) ? 1.0f : 0.0f;
             packed_logits_vec[k] = (floatX)((prob - indicator) * dloss);
             if constexpr (ZLoss) {
-                packed_logits_vec[k] += z_loss * prob;
+                packed_logits_vec[k] += z_reg * prob;
             }
         }
         if (WriteDLogits){
@@ -170,7 +170,7 @@ __global__ void __launch_bounds__(1024, 1)
         float indicator = (i == ix) ? 1.0f : 0.0f;
         float dlogit = (prob - indicator) * dloss;
         if constexpr (ZLoss) {
-            dlogit += z_loss * prob;
+            dlogit += z_reg * prob;
         }
 
         if (WriteDLogits){
