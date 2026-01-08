@@ -45,6 +45,7 @@ __global__ void __cluster_dims__(8, 1, 1) __launch_bounds__(128, 2)
                              int V, int P) {
     #if __CUDA_ARCH__ >= 900
     constexpr int BLOCK_SIZE = 128;
+    constexpr float kLog2e = 1.4426950408889634f;
     using x128 = GenericVector<floatX, 16/sizeof(floatX)>;
     using barrier = cuda::barrier<cuda::thread_scope_block>;
 
@@ -114,11 +115,13 @@ __global__ void __cluster_dims__(8, 1, 1) __launch_bounds__(128, 2)
         // write this as a two-level reduction. this does not require any additional instructions (we change FMUL to
         // FMA, but that costs the same), but could give slightly less rounding error accumulation.
         float vec_sum = 0.f;
+        float log2_thread_max = thread_max * kLog2e;
+
         for(int k = 0; k < x128::size; ++k) {
-            vec_sum += expf(static_cast<float>(v1[k]) - thread_max);
-            vec_sum += expf(static_cast<float>(v2[k]) - thread_max);
+            vec_sum += exp2f(static_cast<float>(v1[k]) * kLog2e - log2_thread_max);
+            vec_sum += exp2f(static_cast<float>(v2[k]) * kLog2e - log2_thread_max);
         }
-        thread_sum = thread_sum * expf(old_maxval - thread_max) + vec_sum;
+        thread_sum = thread_sum * exp2f(old_maxval * kLog2e - log2_thread_max) + vec_sum;
     }
 
     // now wait for the second half of the data
@@ -136,11 +139,12 @@ __global__ void __cluster_dims__(8, 1, 1) __launch_bounds__(128, 2)
             // write this as a two-level reduction. this does not require any additional instructions (we change FMUL to
             // FMA, but that costs the same), but could give slightly less rounding error accumulation.
             float vec_sum = 0.f;
+            float log2_thread_max = thread_max * kLog2e;
             for(int k = 0; k < x128::size; ++k) {
-                vec_sum += expf(static_cast<float>(v1[k]) - thread_max);
-                vec_sum += expf(static_cast<float>(v2[k]) - thread_max);
+                vec_sum += exp2f(static_cast<float>(v1[k]) * kLog2e - log2_thread_max);
+                vec_sum += exp2f(static_cast<float>(v2[k]) * kLog2e - log2_thread_max);
             }
-            thread_sum = thread_sum * expf(old_maxval - thread_max) + vec_sum;
+            thread_sum = thread_sum * exp2f(old_maxval * kLog2e - log2_thread_max) + vec_sum;
         }
 
         // epilogue
@@ -153,10 +157,11 @@ __global__ void __cluster_dims__(8, 1, 1) __launch_bounds__(128, 2)
             // write this as a two-level reduction. this does not require any additional instructions (we change FMUL to
             // FMA, but that costs the same), but could give slightly less rounding error accumulation.
             float vec_sum = 0.f;
+            float log2_thread_max = thread_max * kLog2e;
             for(int k = 0; k < x128::size; ++k) {
-                vec_sum += expf(static_cast<float>(v[k]) - thread_max);
+                vec_sum += exp2f(static_cast<float>(v[k]) * kLog2e - log2_thread_max);
             }
-            thread_sum = thread_sum * expf(old_maxval - thread_max) + vec_sum;
+            thread_sum = thread_sum * exp2f(old_maxval * kLog2e - log2_thread_max) + vec_sum;
         }
     }
 
@@ -206,13 +211,13 @@ __global__ void __cluster_dims__(8, 1, 1) __launch_bounds__(128, 2)
     }
 
     // figure out which warp will encounter the groud-truth token
-    float loss_scale = dloss * scale + z_reg * lse * scale;
+    float shift = (logf((dloss + z_reg * lse) * scale) - cluster_max) * kLog2e;
 
     // treat all classes as if they are negative. This allows us to avoid any conditionals inside this loop.
     for (int i = block_start_ix + threadIdx.x * x128::size; i < block_end_ix; i += x128::size * BLOCK_SIZE) {
         x128 v = x128::load(smem_logits + i - block_start_ix);
         for(int k = 0; k < x128::size; ++k) {
-            float d_logit = expf((float)(v[k]) - cluster_max) * loss_scale;
+            float d_logit = exp2f((float)v[k] * kLog2e + shift);
             v[k] = (floatX)d_logit;
         }
         v.store_cg(logits + i);
@@ -227,7 +232,7 @@ __global__ void __cluster_dims__(8, 1, 1) __launch_bounds__(128, 2)
     }
     if (threadIdx.x == thread_with_ix) {
         floatX logit = smem_logits[ix - block_start_ix];
-        float loss_neg = expf((float)(logit) - cluster_max) * loss_scale;
+        float loss_neg = exp2f((float)logit * kLog2e + shift);
         logits[ix] = (floatX)(loss_neg - dloss);
     }
 
