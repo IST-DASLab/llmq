@@ -12,6 +12,8 @@
 #include <cooperative_groups/reduce.h>
 #endif
 
+#include "utilities/vec.cuh"
+
 static __forceinline__ __device__ void handle_absmax_reduction(float* __restrict__ abs_max_ptr, float* __restrict__ block_max, float thread_max) {
     if (abs_max_ptr) {
         // this code is only guaranteed to be correct if it is warp convergent
@@ -51,6 +53,34 @@ __device__ inline float warpReduceMax(float val) {
         val = fmaxf(val, __shfl_xor_sync(0xFFFFFFFFu, val, offset));
     }
     return val;
+}
+
+template<std::size_t Size>
+static __forceinline__ __device__ float vecReduceMax(GenericVector<float, Size> val) {
+    static_assert(Size % 2 == 0, "Size must be even for vecReduceMax");
+    float max = fmaxf(val[0], val[1]);
+
+    // two-level reduction for ILP: the inner fmaxf of iteration k+2 can
+    // overlap with the outer fmaxf of iteration k
+    #pragma unroll
+    for (int k = 2; k < Size; k += 2) {
+        max = fmaxf(max, fmaxf(val[k], val[k+1]));
+    }
+    return max;
+}
+
+template<std::size_t Size>
+static __forceinline__ __device__ nv_bfloat16 vecReduceMax(GenericVector<nv_bfloat16, Size> val) {
+    static_assert(Size % 2 == 0, "Size must be even for vecReduceMax");
+    // use nv_bfloat162 reduction instructions to require only half as many instructions as a naive implementation.
+    for (std::size_t end = Size / 2; end > 1; end /= 2) {
+        for (int k = 0; k < end; k += 2) {
+            nv_bfloat162 m = __hmax2(make_bfloat162(val[k], val[k+1]), make_bfloat162(val[k + end / 2], val[k + end / 2 + 1]));
+            val[k] = m.x;
+            val[k + 1] = m.y;
+        }
+    }
+    return __hmax(val[0], val[1]);
 }
 
 #endif //LLMQ_SRC_KERNELS_KERNEL_UTILS_CUH
