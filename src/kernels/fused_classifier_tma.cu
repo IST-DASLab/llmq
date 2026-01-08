@@ -203,10 +203,7 @@ __global__ void __cluster_dims__(8, 1, 1) __launch_bounds__(128, 2)
     // calculate the probability needed for the loss and update (single-threaded)
     // warp 0 gets all the extra work during reductions, so we let this be handled by warp 1
     if(threadIdx.x == 32 && block_start_ix < ix && ix < block_end_ix) {
-        // here, it is important that the subtraction is performed in float precision,
-        // otherwise we can't match the test's required accuracy
-        float prob = expf((float)(smem_logits[ix - block_start_ix]) - (float)cluster_max) * scale;
-        losses[idx] -= logf(prob);
+        losses[idx] -= (float)(smem_logits[ix - block_start_ix]) - lse;
         lse_out[idx] = lse;
     }
 
