@@ -143,6 +143,10 @@ __global__ void __launch_bounds__(1024, 1)
     // the logits used above to compute the loss are concurrently (race) modified to carry backward pass grads.
     __syncthreads();
 
+
+    int ix_by_v = ix / x128::size;
+    float shift = logf((dloss + z_reg) * scale) - sp.Offset;
+
     // calculate the gradients directly, saves bandwidth from probs during training
     // but also supports writing probs for inference-only and debugging
     const floatX* logits_vec = logits + idx * P;
@@ -150,18 +154,19 @@ __global__ void __launch_bounds__(1024, 1)
         // this is the 2nd read of logits after the one in prepare_softmax2
         // it will be overwritten by the logits gradients which is when we reduce cache persistence
         x128 packed_logits_vec = x128::load(logits_vec + i * x128::size); // rely on cs of store128cs
-        x128 packed_probs;
-        for(int k = 0; k < x128::size; ++k) {
-            int element = i*x128::size + k;
-            float prob = expf((float)packed_logits_vec[k] - sp.Offset) * scale;
-            packed_probs[k] = (floatX)prob;
-            float indicator = (element == ix) ? 1.0f : 0.0f;
-            packed_logits_vec[k] = (floatX)((prob - indicator) * dloss);
-            if constexpr (ZLoss) {
-                packed_logits_vec[k] += z_reg * prob;
+        if ( i != ix_by_v ) {
+            for(int k = 0; k < x128::size; ++k) {
+                packed_logits_vec[k] = static_cast<floatX>(expf((float)packed_logits_vec[k] + shift));
+            }
+        } else {
+            for(int k = 0; k < x128::size; ++k) {
+                int element = i*x128::size + k;
+                float loss_neg = expf((float)packed_logits_vec[k] + shift);
+                float indicator = (element == ix) ? 1.0f : 0.0f;
+                packed_logits_vec[k] = (floatX)(loss_neg - indicator * dloss);
             }
         }
-        if (WriteDLogits){
+        if constexpr (WriteDLogits){
             // reduce cache persistence for the overwritten logits
             // to maximise the probability that logits remain in cache between prepare_softmax and here
             packed_logits_vec.store_cs(logits + idx * P + i * x128::size);
