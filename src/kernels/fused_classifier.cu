@@ -211,6 +211,8 @@ void fused_classifier_dispatch(Type* logits, float* losses, float* lse,
     int major;
     CUDA_CHECK(cudaDeviceGetAttribute(&major, cudaDevAttrComputeCapabilityMajor, device));
     if ((major == 9 || major == 10) && write_dlogits == true && V % 8 == 0) {
+        // while the TMA implementation also works on CC12, it doesn't seem to bring performance
+        // benefits so far.
         fused_classifier_tma(logits, losses, lse, dloss, targets, z_reg, BT, V, P, stream);
     } else {
         fused_classifier_imp(logits, losses, lse, dloss, targets, z_reg, BT, V, P, write_dlogits, stream);
