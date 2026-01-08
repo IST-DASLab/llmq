@@ -53,10 +53,12 @@ __device__ SoftmaxParams prepare_softmax_blockwide3(int64_t idx, const floatX* i
         float old_maxval = thread_max;
         auto vec_max = vecReduceMax(packed_x);
         thread_max = fmaxf(thread_max, static_cast<float>(vec_max));
-        thread_sum *= expf(old_maxval - thread_max);
+        constexpr float kLog2e = 1.4426950408889634f;
+        float log2_thread_max = thread_max * kLog2e;
+        thread_sum *= exp2f(old_maxval * kLog2e - log2_thread_max);
         for(int k = 0; k < x128::size; ++k) {
             float v = (float)packed_x[k];
-            thread_sum += expf(v - thread_max);
+            thread_sum += exp2f(v * kLog2e - log2_thread_max);
         }
     }
 
@@ -71,7 +73,7 @@ __device__ SoftmaxParams prepare_softmax_blockwide3(int64_t idx, const floatX* i
     __syncthreads();
     float block_max = warpReduceMax(smem_max[lane_id]);
 
-    thread_sum *= expf(static_cast<float>(thread_max) - block_max);
+    thread_sum *= expf(thread_max - block_max);
     float warp_sum = warpReduceSum(thread_sum);
     if(lane_id == 0) {
         smem_sum[threadIdx.x / 32] = warp_sum;
@@ -135,18 +137,20 @@ __global__ void __launch_bounds__(1024, 1)
     // calculate the gradients directly, saves bandwidth from probs during training
     // but also supports writing probs for inference-only and debugging
     const floatX* logits_vec = logits + idx * P;
+    constexpr float kLog2e = 1.4426950408889634f;
+    shift *= kLog2e;
     for (int i = threadIdx.x; i < V/x128::size; i += blockDim.x) {
         // this is the 2nd read of logits after the one in prepare_softmax2
         // it will be overwritten by the logits gradients which is when we reduce cache persistence
         x128 packed_logits_vec = x128::load(logits_vec + i * x128::size); // rely on cs of store128cs
         if ( i != ix_by_v ) {
             for(int k = 0; k < x128::size; ++k) {
-                packed_logits_vec[k] = static_cast<floatX>(expf((float)packed_logits_vec[k] + shift));
+                packed_logits_vec[k] = static_cast<floatX>(exp2f((float)packed_logits_vec[k] * kLog2e + shift));
             }
         } else {
             for(int k = 0; k < x128::size; ++k) {
                 int element = i*x128::size + k;
-                float loss_neg = expf((float)packed_logits_vec[k] + shift);
+                float loss_neg = exp2f((float)packed_logits_vec[k] * kLog2e + shift);
                 float indicator = (element == ix) ? 1.0f : 0.0f;
                 packed_logits_vec[k] = (floatX)(loss_neg - indicator * dloss);
             }
