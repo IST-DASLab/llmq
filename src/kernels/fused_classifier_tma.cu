@@ -17,10 +17,9 @@ namespace {
         std::byte content[128];
     };
 
-    template<typename FloatX>
     struct alignas(8) SoftmaxStats {
         float Sum;
-        FloatX Max;
+        float Max;
     };
 }
 
@@ -51,7 +50,7 @@ __global__ void __cluster_dims__(8, 1, 1) __launch_bounds__(128, 2)
 
     // 1. Initialize shared memory barrier with the number of threads participating in the barrier.
     __shared__ barrier bar;
-    __shared__ SoftmaxStats<floatX> reduction_buffer[8];
+    __shared__ SoftmaxStats reduction_buffer[8];
     extern __shared__ AlignedSmem smem[];
     cg::cluster_group cluster = cg::this_cluster();
 
@@ -90,7 +89,7 @@ __global__ void __cluster_dims__(8, 1, 1) __launch_bounds__(128, 2)
     // 3a. All threads arrive on the barrier.
     barrier::arrival_token token_a = bar.arrive();
 
-    floatX thread_max = -INFINITY;
+    float thread_max = -INFINITY;
     float thread_sum = 0.0f;
     int lane_id = threadIdx.x % 32;
 
@@ -109,17 +108,17 @@ __global__ void __cluster_dims__(8, 1, 1) __launch_bounds__(128, 2)
     for (int i = threadIdx.x * x128::size; i < (block_middle_idx - block_start_ix); i += 2 * x128::size * BLOCK_SIZE) {
         x128 v1 = x128::load(smem_logits + i);
         x128 v2 = x128::load(smem_logits + i + x128::size * BLOCK_SIZE);
-        floatX old_maxval = thread_max;
-        thread_max = dispatch_max(vecReduceMax(v1), vecReduceMax(v2));
+        float old_maxval = thread_max;
+        thread_max = static_cast<float>(dispatch_max(vecReduceMax(v1), vecReduceMax(v2)));
 
         // write this as a two-level reduction. this does not require any additional instructions (we change FMUL to
         // FMA, but that costs the same), but could give slightly less rounding error accumulation.
         float vec_sum = 0.f;
         for(int k = 0; k < x128::size; ++k) {
-            vec_sum += expf(static_cast<float>(v1[k] - thread_max));
-            vec_sum += expf(static_cast<float>(v2[k] - thread_max));
+            vec_sum += expf(static_cast<float>(v1[k]) - thread_max);
+            vec_sum += expf(static_cast<float>(v2[k]) - thread_max);
         }
-        thread_sum = thread_sum * expf(static_cast<float>(old_maxval - thread_max)) + vec_sum;
+        thread_sum = thread_sum * expf(old_maxval - thread_max) + vec_sum;
     }
 
     // now wait for the second half of the data
@@ -131,43 +130,43 @@ __global__ void __cluster_dims__(8, 1, 1) __launch_bounds__(128, 2)
         for (; i + x128::size * BLOCK_SIZE < logits_per_block; i += 2 * x128::size * BLOCK_SIZE) {
             x128 v1 = x128::load(smem_logits + i);
             x128 v2 = x128::load(smem_logits + i + x128::size * BLOCK_SIZE);
-            floatX old_maxval = thread_max;
-            thread_max = dispatch_max(vecReduceMax(v1), vecReduceMax(v2));
+            float old_maxval = thread_max;
+            thread_max = static_cast<float>(dispatch_max(vecReduceMax(v1), vecReduceMax(v2)));
 
             // write this as a two-level reduction. this does not require any additional instructions (we change FMUL to
             // FMA, but that costs the same), but could give slightly less rounding error accumulation.
             float vec_sum = 0.f;
             for(int k = 0; k < x128::size; ++k) {
-                vec_sum += expf(static_cast<float>(v1[k] - thread_max));
-                vec_sum += expf(static_cast<float>(v2[k] - thread_max));
+                vec_sum += expf(static_cast<float>(v1[k]) - thread_max);
+                vec_sum += expf(static_cast<float>(v2[k]) - thread_max);
             }
-            thread_sum = thread_sum * expf(static_cast<float>(old_maxval - thread_max)) + vec_sum;
+            thread_sum = thread_sum * expf(old_maxval - thread_max) + vec_sum;
         }
 
         // epilogue
         if (i < logits_per_block) {
             x128 v = x128::load(smem_logits + i);
-            floatX old_maxval = thread_max;
+            float old_maxval = thread_max;
             for(int k = 0; k < x128::size; ++k) {
-                thread_max = dispatch_max(thread_max, v[k]);
+                thread_max = fmaxf(thread_max, static_cast<float>(v[k]));
             }
             // write this as a two-level reduction. this does not require any additional instructions (we change FMUL to
             // FMA, but that costs the same), but could give slightly less rounding error accumulation.
             float vec_sum = 0.f;
             for(int k = 0; k < x128::size; ++k) {
-                vec_sum += expf(static_cast<float>(v[k] - thread_max));
+                vec_sum += expf(static_cast<float>(v[k]) - thread_max);
             }
-            thread_sum = thread_sum * expf(static_cast<float>(old_maxval - thread_max)) + vec_sum;
+            thread_sum = thread_sum * expf(old_maxval - thread_max) + vec_sum;
         }
     }
 
-    floatX warp_max = warpReduceMax(thread_max);
+    float warp_max = warpReduceMax(thread_max);
     if(lane_id == 0) {
         reduction_buffer[threadIdx.x / 32].Max = warp_max;
     }
     __syncthreads();
-    floatX block_max = subWarpReduceMax<4>(reduction_buffer[lane_id % 4].Max);
-    thread_sum *= expf(static_cast<float>(thread_max - block_max));
+    float block_max = subWarpReduceMax<4>(reduction_buffer[lane_id % 4].Max);
+    thread_sum *= expf(thread_max - block_max);
     float warp_sum = warpReduceSum(thread_sum);
     if(lane_id == 0) {
         reduction_buffer[threadIdx.x / 32].Sum = warp_sum;
@@ -177,24 +176,24 @@ __global__ void __cluster_dims__(8, 1, 1) __launch_bounds__(128, 2)
 
     if (threadIdx.x == 0) {
         SoftmaxStats stats{block_sum, block_max};
-        reinterpret_cast<SoftmaxStats<floatX>*>(smem)[0] = stats;
+        reinterpret_cast<SoftmaxStats*>(smem)[0] = stats;
     }
 
     // cluster data exchange
     cluster.sync();
     if (threadIdx.x < 8) {
         const std::byte* remote_mem_ptr = cluster.map_shared_rank(reinterpret_cast<const std::byte*>(smem), threadIdx.x);
-        reduction_buffer[threadIdx.x] = *reinterpret_cast<const SoftmaxStats<floatX>*>(remote_mem_ptr);
+        reduction_buffer[threadIdx.x] = *reinterpret_cast<const SoftmaxStats*>(remote_mem_ptr);
     }
     __syncthreads();
     SoftmaxStats other_stats = reduction_buffer[lane_id % 8];
-    floatX cluster_max = subWarpReduceMax<8>(other_stats.Max);
-    other_stats.Sum *= expf(static_cast<float>(other_stats.Max - cluster_max));
+    float cluster_max = subWarpReduceMax<8>(other_stats.Max);
+    other_stats.Sum *= expf(other_stats.Max - cluster_max);
     cg::cluster_group::arrival_token dsmem_done_token = cluster.barrier_arrive();
 
     float cluster_sum = warpReduceSum(lane_id < 8 ? other_stats.Sum : 0.f);
     float scale = 1.f / cluster_sum;
-    float lse = logf(cluster_sum) + (float)cluster_max;
+    float lse = logf(cluster_sum) + cluster_max;
 
     // calculate the probability needed for the loss and update (single-threaded)
     // warp 0 gets all the extra work during reductions, so we let this be handled by warp 1
@@ -213,7 +212,7 @@ __global__ void __cluster_dims__(8, 1, 1) __launch_bounds__(128, 2)
     for (int i = block_start_ix + threadIdx.x * x128::size; i < block_end_ix; i += x128::size * BLOCK_SIZE) {
         x128 v = x128::load(smem_logits + i - block_start_ix);
         for(int k = 0; k < x128::size; ++k) {
-            float d_logit = expf((float)(v[k] - cluster_max)) * loss_scale;
+            float d_logit = expf((float)(v[k]) - cluster_max) * loss_scale;
             v[k] = (floatX)d_logit;
         }
         v.store_cg(logits + i);
@@ -228,7 +227,7 @@ __global__ void __cluster_dims__(8, 1, 1) __launch_bounds__(128, 2)
     }
     if (threadIdx.x == thread_with_ix) {
         floatX logit = smem_logits[ix - block_start_ix];
-        float loss_neg = expf((float)(logit - cluster_max)) * loss_scale;
+        float loss_neg = expf((float)(logit) - cluster_max) * loss_scale;
         logits[ix] = (floatX)(loss_neg - dloss);
     }
 
