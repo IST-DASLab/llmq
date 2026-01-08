@@ -88,11 +88,11 @@ __device__ SoftmaxParams prepare_softmax_blockwide3(int64_t idx, const floatX* i
 // will _update_ logits to logit gradients
 // uses template to decide whether to write logits and probs
 // split both loops in "multiple-of-x128-size" and "bounds-checked remainder" parts
-template <class floatX, bool WriteDLogits, bool ZLoss>
+template <class floatX, bool WriteDLogits>
 __global__ void __launch_bounds__(1024, 1)
     fused_classifier_kernel5(floatX* logits, float* losses, float* lse_out,
                              const float dloss, const int* targets, float z_reg,
-                             int V, int P, std::bool_constant<WriteDLogits>, std::bool_constant<ZLoss>) {
+                             int V, int P, std::bool_constant<WriteDLogits>) {
     using x128 = GenericVector<floatX, 16/sizeof(floatX)>;
     // note: idx is small enough that it easily fits into 32 bit;
     // by making it a long here, we ensure that any offsets calculated with it (e.g., idx * P)
@@ -117,14 +117,10 @@ __global__ void __launch_bounds__(1024, 1)
     float scale = 1.f / sp.SumExp;
     float lse = logf(sp.SumExp) + sp.Offset;
     if(threadIdx.x == 0) {
-        float prob = expf((float)logits[idx * P + ix] - sp.Offset) * scale;
-        losses[idx] -= logf(prob);
+        losses[idx] -= (float)logits[idx * P + ix] - lse;
         lse_out[idx] = lse;
     }
-
-    if constexpr (ZLoss) {
-        z_reg = z_reg * lse;
-    }
+    z_reg = z_reg * lse;
 
     // without this synchronization point we have a race condition:
     // the logits used above to compute the loss are concurrently (race) modified to carry backward pass grads.
@@ -169,9 +165,7 @@ __global__ void __launch_bounds__(1024, 1)
         float prob = expf((float)logits_vec[i] - sp.Offset) * scale;
         float indicator = (i == ix) ? 1.0f : 0.0f;
         float dlogit = (prob - indicator) * dloss;
-        if constexpr (ZLoss) {
-            dlogit += z_reg * prob;
-        }
+        dlogit += z_reg * prob;
 
         if (WriteDLogits){
             __stcs(logits + idx * P + i, (floatX)dlogit);
@@ -190,16 +184,11 @@ void fused_classifier_imp(Type* logits, float* losses, float* lse,
     const int block_size = 1024;
     const int grid_size = BT;
     if(write_dlogits) {
-        if (z_loss != 0.f) {
-            fused_classifier_kernel5<<<grid_size, block_size, 0, stream>>>(logits, losses, lse, dloss, targets,
-                                                                           z_loss, V, P, std::bool_constant<true>(), std::bool_constant<true>());
-        } else {
-            fused_classifier_kernel5<<<grid_size, block_size, 0, stream>>>(logits, losses, lse, dloss, targets,
-                                                                           z_loss, V, P, std::bool_constant<true>(), std::bool_constant<false>());
-        }
+        fused_classifier_kernel5<<<grid_size, block_size, 0, stream>>>(logits, losses, lse, dloss, targets,
+                                                                       z_loss, V, P, std::bool_constant<true>());
     } else {
         fused_classifier_kernel5<<<grid_size, block_size, 0, stream>>>(logits, losses, lse, dloss, targets,
-                                                                       z_loss, V, P, std::bool_constant<false>(), std::bool_constant<false>());
+                                                                       z_loss, V, P, std::bool_constant<false>());
     }
     CUDA_CHECK(cudaGetLastError());
 }
