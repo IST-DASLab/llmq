@@ -12,7 +12,7 @@
 
 class LLamaOptimizerStateManager : public AdamWStateManager {
 public:
-    LLamaOptimizerStateManager(TransformerConfig cfg, LLamaOptions options, cudaStream_t stream, NCCLCommunicator& comm, TensorAllocator& alloc);
+    LLamaOptimizerStateManager(TransformerConfig cfg, IModel& model, LLamaOptions options, cudaStream_t stream, NCCLCommunicator& comm, TensorAllocator& alloc);
     SimpleTensorContainer& non_block_m() override;
     SimpleTensorContainer& non_block_v() override;
 
@@ -30,12 +30,6 @@ private:
     sLLamaWeights mOptM;
     sLLamaWeights mOptV;
     sLLamaWeights mOptMScales;
-
-    std::array<sLLamaBlockWeights<TensorShard>, 2> mOptMBuffer;
-    std::array<sLLamaBlockWeights<TensorShard>, 2> mOptVBuffer;
-
-    SimpleTensorContainer& get_m_buffer(int idx) override;
-    SimpleTensorContainer& get_v_buffer(int idx) override;
 };
 
 #endif //LLMQ_SRC_MODELS_LLAMA_OPTIMIZER_H

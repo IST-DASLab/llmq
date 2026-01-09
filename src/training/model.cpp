@@ -8,6 +8,7 @@
 
 #include "transformer_config.h"
 #include "utilities/allocator.h"
+#include "utilities/tensor_container.h"
 
 cudnnHandle_t create_cudnn_handle();
 cublasLtHandle_t create_cublaslt_handle();
@@ -27,6 +28,13 @@ Tensor& IModel::get_target_buffer() {
     return get_run_state().Targets_CPU;
 }
 
+GenericTensorContainer IModel::create_block_container(const TransformerConfig& config, ETensorDType matrix_dtype,
+    ETensorDType other_dtype) const {
+    std::vector<Tensor> tensors(num_block_tensors());
+    GenericTensorContainer container(std::move(tensors));
+    fill_block_shapes(container, config, matrix_dtype, other_dtype);
+    return container;
+}
 
 IRunState::IRunState(TransformerConfig config, long batch_size, long seq_len, std::shared_ptr<TensorAllocator> alloc) : Config(config), B(batch_size), T(seq_len), Allocator(std::move(alloc)) {
     int did;

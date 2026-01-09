@@ -17,6 +17,7 @@
 class ITensorContainer;
 class NCCLCommunicator;
 class TensorAllocator;
+class GenericTensorContainer;
 class DataLoader;
 
 typedef struct cudnnContext* cudnnHandle_t;
@@ -101,6 +102,13 @@ public:
 
     //! Get a const reference to the model's RunState.
     virtual IRunState& get_run_state() const = 0;
+
+
+    // generic model param utilities
+    virtual std::size_t num_block_tensors() const = 0;
+    virtual void fill_block_shapes(GenericTensorContainer& target, const TransformerConfig& config, ETensorDType matrix_dtype, ETensorDType other_dtype) const = 0;
+
+    GenericTensorContainer create_block_container(const TransformerConfig& config, ETensorDType matrix_dtype, ETensorDType other_dtype) const;
 
 protected:
     ~IModel() = default;

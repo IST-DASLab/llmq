@@ -43,6 +43,7 @@ void visit(const std::function<void(Tensor&, Tensor&)>& func, SimpleTensorContai
 //! \brief `SimpleTensorContainer` that stores all tensors in a vector
 class GenericTensorContainer final : public SimpleTensorContainer {
 public:
+    GenericTensorContainer() = default;
     GenericTensorContainer(std::vector<Tensor> t) : mTensors( std::move(t) ) { };
 
     //! Get the total number of tensors in this container. This count includes empty tensors.
