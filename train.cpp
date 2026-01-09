@@ -82,6 +82,7 @@ struct TrainingRunner {
     int EvalEvery = 100;
     int EvalNumSteps = 100;
     int CkptEvery = 100;
+    bool SaveTrainingState = true;
     int CkptToKeep = -1;
     int MajorCkptEvery = -1;
     int LogGPUEvery = 25;
@@ -162,6 +163,7 @@ void TrainingRunner::load_training_config(int argc, const char** argv) {
     app.add_option("--eval-seed", EvalLoaderSeed, "Seed for the eval loader");
     app.add_option("--out-dir", OutDir, "Where to save the trained model");
     app.add_option("--checkpoint-dir", CkptDir, "Directory in which to save checkpoints.");
+    app.add_flag("--save-training-state", SaveTrainingState, "Saves the full training state (i.e., a checkpoint) at the end of the training run, not just the final model.");
     app.add_option("--ckpt-interval", CkptEvery, "How many optimizer steps between checkpoints");
     app.add_option("--ckpt-keep-n", CkptToKeep, "Clean up old checkpoints, only preserving the latest n.");
     app.add_option("--ckpt-major", MajorCkptEvery, "Make every nth checkpoint a major checkpoint, which does not get cleaned up.");
@@ -570,6 +572,11 @@ void TrainingRunner::run_training(int argc, const char** argv, NCCLCommunicator&
     std::filesystem::create_directories(p);
     save_transformer_config(config, (p / "config.json").c_str());
     model.export_weights((p / "model.safetensors").c_str(), comm);
+
+    // if we want to continue training, we need to save a full checkpoint at the end
+    if (SaveTrainingState) {
+        save_checkpoint(CkptDir, MaxSteps, model, &train_loader, comm);
+    }
 
     // copy config files from source model, if we have them and they don't exist already
     if (std::filesystem::exists(ModelRootPath)) {

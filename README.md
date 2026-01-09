@@ -228,6 +228,7 @@ The training script accepts numerous command-line arguments to configure model t
 - `--ckpt-interval <int>` - Save checkpoint every N optimizer steps (default: 100).
 - `--ckpt-keep-n <int>` - Number of recent checkpoints to keep.
 - `--ckpt-major <int>` - Save every Nth checkpoint as a "major" checkpoint (not deleted by cleanup).
+- `--save-training-state` - Saves the full training state (i.e., a checkpoint) at the end of the training run, not just the final model, to enable continual training.
 - `--continue [step]` - Continue training from the latest checkpoint, or a specific step if provided.
 - `--log-file <path>` - Path for training log in JSON format (default: `logs/%n-TIMESTAMP.json`).
 - `--log-gpu-util <int>` - Log GPU utilization every N steps (default: 25). Set to 0 to disable.
