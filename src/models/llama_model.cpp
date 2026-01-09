@@ -702,14 +702,15 @@ std::size_t LLamaModel::num_block_tensors() const {
 }
 
 void LLamaModel::fill_block_shapes(GenericTensorContainer& target, const TransformerConfig& config,
-    ETensorDType matrix_dtype, ETensorDType other_dtype) const {
+    ETensorDType matrix_dtype, ETensorDType other_dtype) const
+{
     long C = config.HiddenSize;
     long H = config.IntermediateSize;
     long HS = config.head_size();
 
-    auto create_matrix_shard = [&](Tensor& tgt, long rows, long cols) {
-        tgt.Rank = 2;
-        tgt.DType = matrix_dtype;
+    auto create = [&](Tensor& tgt, long rows, long cols, ETensorDType dtype) {
+        tgt.Rank = cols != 0 ? 2 : 1;
+        tgt.DType = dtype;
         tgt.Sizes[0] = rows;
         tgt.Sizes[1] = cols;
     };
@@ -721,14 +722,38 @@ void LLamaModel::fill_block_shapes(GenericTensorContainer& target, const Transfo
     };
 
     long attn_intermediate_size = (config.NumQueryHeads + 2 * config.NumKeyValHeads) * HS;
-    create_matrix_shard(target.get_tensor(LLamaWeightID::QKV_W), attn_intermediate_size, C);
-    create_matrix_shard(target.get_tensor(LLamaWeightID::ATTO_W), C, C);
-    create_matrix_shard(target.get_tensor(LLamaWeightID::UP_W), 2 * H, C);
-    create_matrix_shard(target.get_tensor(LLamaWeightID::DOWN_W), C, H);
+    create(target.get_tensor(LLamaWeightID::QKV_W), attn_intermediate_size, C, matrix_dtype);
+    create(target.get_tensor(LLamaWeightID::ATTO_W), C, C, matrix_dtype);
+    create(target.get_tensor(LLamaWeightID::UP_W), 2 * H, C, matrix_dtype);
+    create(target.get_tensor(LLamaWeightID::DOWN_W), C, H, matrix_dtype);
 
-    create_vector_shard(target.get_tensor(LLamaWeightID::LN1_W), C);
-    create_vector_shard(target.get_tensor(LLamaWeightID::LN2_W), C);
-    create_vector_shard(target.get_tensor(LLamaWeightID::QKV_B), config.UseQKVBias ? attn_intermediate_size : 0);
+    create(target.get_tensor(LLamaWeightID::LN1_W), C, 0, other_dtype);
+    create(target.get_tensor(LLamaWeightID::LN2_W), C, 0, other_dtype);
+    create(target.get_tensor(LLamaWeightID::QKV_B), config.UseQKVBias ? attn_intermediate_size : 0, 0, other_dtype);
+}
+
+std::size_t LLamaModel::num_non_block_tensors() const {
+    return 3;
+}
+
+void LLamaModel::fill_non_block_shapes(GenericTensorContainer& target, const TransformerConfig& config,
+    ETensorDType matrix_dtype, ETensorDType other_dtype) const
+{
+    long V = config.VocabSize;
+    long C = config.HiddenSize;
+
+    auto create = [&](Tensor& tgt, long rows, long cols, ETensorDType dtype) {
+        tgt.Rank = cols != 0 ? 2 : 1;
+        tgt.DType = dtype;
+        tgt.Sizes[0] = rows;
+        tgt.Sizes[1] = cols;
+    };
+
+    create(target.get_tensor(LLamaWeightID::EMBEDDING), V, C, matrix_dtype);
+    create(target.get_tensor(LLamaWeightID::LNF_W), C, 0, other_dtype);
+    if(!config.TiedWordEmbeddings) {
+        create(target.get_tensor(LLamaWeightID::LM_HEAD), V, C, matrix_dtype);
+    }
 }
 
 

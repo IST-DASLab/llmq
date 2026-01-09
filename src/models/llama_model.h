@@ -121,7 +121,8 @@ public:
 
     std::size_t num_block_tensors() const override;
     void fill_block_shapes(GenericTensorContainer& target, const TransformerConfig& config, ETensorDType matrix_dtype, ETensorDType other_dtype) const override;
-
+    std::size_t num_non_block_tensors() const override;
+    void fill_non_block_shapes(GenericTensorContainer& target, const TransformerConfig& config, ETensorDType matrix_dtype, ETensorDType other_dtype) const override;
 protected:
     void _calculate_gradient_norm(NCCLCommunicator& comm, float grad_clip, cudaStream_t stream);
     void _reduce_loss(LLamaRunState& acts, NCCLCommunicator& comm, int B, int T);

@@ -108,7 +108,11 @@ public:
     virtual std::size_t num_block_tensors() const = 0;
     virtual void fill_block_shapes(GenericTensorContainer& target, const TransformerConfig& config, ETensorDType matrix_dtype, ETensorDType other_dtype) const = 0;
 
+    virtual std::size_t num_non_block_tensors() const = 0;
+    virtual void fill_non_block_shapes(GenericTensorContainer& target, const TransformerConfig& config, ETensorDType matrix_dtype, ETensorDType other_dtype) const = 0;
+
     GenericTensorContainer create_block_container(const TransformerConfig& config, ETensorDType matrix_dtype, ETensorDType other_dtype) const;
+    GenericTensorContainer create_non_block_container(const TransformerConfig& config, ETensorDType matrix_dtype, ETensorDType other_dtype) const;
 
 protected:
     ~IModel() = default;
