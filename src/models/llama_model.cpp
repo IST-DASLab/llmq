@@ -715,12 +715,6 @@ void LLamaModel::fill_block_shapes(GenericTensorContainer& target, const Transfo
         tgt.Sizes[1] = cols;
     };
 
-    auto create_vector_shard = [&](Tensor& tgt, long elems) {
-        tgt.Rank = 1;
-        tgt.DType = other_dtype;
-        tgt.Sizes[0] = elems;
-    };
-
     long attn_intermediate_size = (config.NumQueryHeads + 2 * config.NumKeyValHeads) * HS;
     create(target.get_tensor(LLamaWeightID::QKV_W), attn_intermediate_size, C, matrix_dtype);
     create(target.get_tensor(LLamaWeightID::ATTO_W), C, C, matrix_dtype);
@@ -816,15 +810,15 @@ void LLamaModel::update(NCCLCommunicator& comm, float learning_rate, float beta_
                      learning_rate, beta_1, beta_2, t, epsilon, wd, grad_scale, scales, val.abs_max(), rng(), main_stream);
     };
 
-    auto& m_scales = OptimizerState->scales_m();
+    auto& nb_scales = OptimizerState->non_block_m_scales();
 
     using namespace LLamaWeightID;
     run_update(Parameters->get_master_embeddings(), Grads->get_embeddings_shard(main_stream),
                OptimizerState->non_block_m().get_tensor(EMBEDDING), OptimizerState->non_block_v().get_tensor(EMBEDDING),
-               m_scales.NonBlocks.Embeddings, weight_decay);
+               nb_scales.get_tensor(EMBEDDING), weight_decay);
     comm.reduce_max(Parameters->get_master_embeddings().abs_max());
     run_update(Parameters->get_master_lnf_w(), Grads->get_lnf_w_shard(main_stream),
-               OptimizerState->non_block_m().get_tensor(LNF_W), OptimizerState->non_block_v().get_tensor(LNF_W), m_scales.NonBlocks.LNF_w, 0.f);
+               OptimizerState->non_block_m().get_tensor(LNF_W), OptimizerState->non_block_v().get_tensor(LNF_W), nb_scales.get_tensor(LNF_W), 0.f);
     comm.reduce_max(Parameters->get_master_lnf_w().abs_max());
     CUDA_CHECK(cudaEventRecord(rs->OptEmbeddingsDone, main_stream));
 
@@ -866,7 +860,7 @@ void LLamaModel::update(NCCLCommunicator& comm, float learning_rate, float beta_
 
     if(!Config.TiedWordEmbeddings) {
         run_update(Parameters->get_master_lmhead(), Grads->get_lmhead_shard(main_stream),
-                   OptimizerState->non_block_m().get_tensor(LM_HEAD), OptimizerState->non_block_v().get_tensor(LM_HEAD), m_scales.NonBlocks.LMHead, weight_decay);
+                   OptimizerState->non_block_m().get_tensor(LM_HEAD), OptimizerState->non_block_v().get_tensor(LM_HEAD), nb_scales.get_tensor(LM_HEAD), weight_decay);
         comm.reduce_max(Parameters->get_master_lmhead().abs_max());
     }
     comm.wait_on_comms(main_stream);
@@ -894,7 +888,8 @@ void LLamaModel::allocate_run_state(const LLamaOptions& options, NCCLCommunicato
         acts = ::allocate_run_state(Config, options, B, T, stack, Allocator);
     }
 
-    OptimizerState = std::make_unique<LLamaOptimizerStateManager>(Config, *this, options, acts.MainStream, comm, *Allocator);
+    OptimizerState = std::make_unique<LLamaOptimizerStateManager>(Config, *this, options, comm);
+    OptimizerState->allocate_state(*this, acts.MainStream, options.offload_alloc(), *Allocator);
 
     Parameters->begin_optimizer(stack, comm.stream());
     OptimizerState->begin_optimizer(stack, comm.stream());
@@ -922,16 +917,8 @@ ITensorContainer& LLamaModel::weights() {
     return *Parameters;
 }
 
-ITensorContainer& LLamaModel::opt_momentum() {
-    return OptimizerState->full_m();
-}
-
-ITensorContainer& LLamaModel::opt_momentum_scales() {
-    return OptimizerState->scales_m();
-}
-
-ITensorContainer& LLamaModel::opt_variance() {
-    return OptimizerState->full_v();
+AdamWStateManager& LLamaModel::optimizer() {
+    return *OptimizerState;
 }
 
 std::vector<std::byte> LLamaModel::rng_state() const {

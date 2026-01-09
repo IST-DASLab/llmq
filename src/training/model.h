@@ -14,6 +14,7 @@
 #include "utilities/tensor.h"
 #include "training/transformer_config.h"
 
+class AdamWStateManager;
 class ITensorContainer;
 class NCCLCommunicator;
 class TensorAllocator;
@@ -69,13 +70,7 @@ public:
     virtual ITensorContainer& weights() = 0;
 
     //! (First order) momentum. Sharded.
-    virtual ITensorContainer& opt_momentum() = 0;
-
-    //! (First order) momentum. Sharded.
-    virtual ITensorContainer& opt_momentum_scales() = 0;
-
-    //! Second order moments. Sharded.
-    virtual ITensorContainer& opt_variance() = 0;
+    virtual AdamWStateManager& optimizer() = 0;
 
     //! Get the current RNG state
     virtual std::vector<std::byte> rng_state() const = 0;

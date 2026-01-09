@@ -104,9 +104,7 @@ public:
     void calculate_gradient_norm(NCCLCommunicator& comm, float grad_clip);
 
     ITensorContainer& weights() override;
-    ITensorContainer& opt_momentum() override;
-    ITensorContainer& opt_momentum_scales() override;
-    ITensorContainer& opt_variance() override;
+    AdamWStateManager& optimizer() override;
     std::vector<std::byte> rng_state() const override;
     void set_rng_state(const std::vector<std::byte>& state) override;
     std::string_view model_type() const override;
