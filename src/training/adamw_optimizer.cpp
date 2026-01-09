@@ -3,11 +3,41 @@
 //
 
 #include "adamw_optimizer.h"
+
+#include "model.h"
 #include "utilities/utils.h"
 #include "utilities/tensor.h"
 #include "utilities/stack.h"
 #include "utilities/lazy_allocator.h"
 
+static GenericTensorContainer& shard_container(GenericTensorContainer&& c, int world) {
+    visit([world](Tensor& t) {
+        if (!t.empty()) { throw std::logic_error("shard_container called with non-empty tensor"); }
+        t.Sizes[0] = div_exact(t.Sizes[0], static_cast<long>(world));
+    }, c);
+    return c;
+}
+
+
+AdamWStateManager::AdamWStateManager(TransformerConfig cfg, IModel& model, bool offload_m, bool offload_v,
+    ETensorDType type_m, ETensorDType type_v, bool zero_copy, int rank, int world):
+    mConfig(cfg), mOffloadM(offload_m), mOffloadV(offload_v), mUseZeroCopy(zero_copy), mRank(rank), mWorld(world), mMType(type_m), mVType(type_v) {
+
+    if(mOffloadM && !mUseZeroCopy) {
+        mOptMBuffer[0] = shard_container(model.create_block_container(mConfig, mMType, mMType), mWorld);
+        mOptMBuffer[1] = shard_container(model.create_block_container(mConfig, mMType, mMType), mWorld);
+    }
+
+    if(mOffloadV && !mUseZeroCopy) {
+        mOptVBuffer[0] = shard_container(model.create_block_container(mConfig, mVType, mVType), mWorld);
+        mOptVBuffer[1] = shard_container(model.create_block_container(mConfig, mVType, mVType), mWorld);
+    }
+
+    if((mOffloadM || mOffloadV) && !mUseZeroCopy) {
+        mStatus[0] = sBufferStatus{-1, create_named_event("opt_fetch_0"), false, true};
+        mStatus[1] = sBufferStatus{-1, create_named_event("opt_fetch_1"), false, true};
+    }
+}
 
 void AdamWStateManager::begin_optimizer(DeviceMemoryStack& memory, cudaStream_t main_stream) {
     LazyAllocator alloc;
@@ -18,16 +48,16 @@ void AdamWStateManager::begin_optimizer(DeviceMemoryStack& memory, cudaStream_t 
     }
 
     if(mOffloadM && !mUseZeroCopy) {
-        alloc.allocate(get_m_buffer(0));
+        alloc.allocate(mOptMBuffer.at(0));
         mMBufferStorage[0] = alloc.commit(memory, "opt_m_a");
-        alloc.allocate(get_m_buffer(1));
+        alloc.allocate(mOptMBuffer.at(1));
         mMBufferStorage[1] = alloc.commit(memory, "opt_m_b");
     }
 
     if(mOffloadV && !mUseZeroCopy) {
-        alloc.allocate(get_v_buffer(0));
+        alloc.allocate(mOptVBuffer.at(0));
         mVBufferStorage[0] = alloc.commit(memory, "opt_v_a");
-        alloc.allocate(get_v_buffer(1));
+        alloc.allocate(mOptVBuffer.at(1));
         mVBufferStorage[1] = alloc.commit(memory, "opt_v_b");
     }
 }

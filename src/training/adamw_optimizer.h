@@ -10,14 +10,14 @@
 #include "utilities/tensor_container.h"
 #include "utilities/tensor.h"
 
+class IModel;
 typedef struct CUstream_st *cudaStream_t;
 
 class DeviceMemoryStack;
 
 class AdamWStateManager {
 public:
-    AdamWStateManager(TransformerConfig cfg, bool offload_m, bool offload_v, bool zero_copy, int rank, int world) :
-        mConfig(cfg), mOffloadM(offload_m), mOffloadV(offload_v), mUseZeroCopy(zero_copy), mRank(rank), mWorld(world) {}
+    AdamWStateManager(TransformerConfig cfg, IModel& model, bool offload_m, bool offload_v, ETensorDType type_m, ETensorDType type_v, bool zero_copy, int rank, int world);
     virtual ~AdamWStateManager() = default;
     virtual void begin_optimizer(DeviceMemoryStack& memory, cudaStream_t main_stream);
     virtual void end_optimizer(DeviceMemoryStack& memory);
@@ -33,9 +33,6 @@ public:
 
 protected:
     SimpleTensorContainer& get_block_from(int layer_idx, cudaStream_t stream, SimpleTensorContainer& buf);
-
-    virtual SimpleTensorContainer& get_m_buffer(int idx) = 0;
-    virtual SimpleTensorContainer& get_v_buffer(int idx) = 0;
 
     TransformerConfig mConfig;
 
@@ -62,6 +59,8 @@ protected:
     std::array<Tensor, 2> mMBufferStorage;
     std::array<Tensor, 2> mVBufferStorage;
     std::array<sBufferStatus, 2> mStatus;
+    std::array<GenericTensorContainer, 2> mOptMBuffer;
+    std::array<GenericTensorContainer, 2> mOptVBuffer;
 };
 
 #endif //LLMQ_ADAMW_OPTIMIZER_H

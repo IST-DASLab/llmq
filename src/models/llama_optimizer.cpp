@@ -93,12 +93,9 @@ std::vector<Tensor> allocate_weights_opt(sLLamaWeights& weights, const Transform
 }
 
 
-LLamaOptimizerStateManager::LLamaOptimizerStateManager(TransformerConfig cfg, LLamaOptions options, cudaStream_t stream, NCCLCommunicator& comm, TensorAllocator& alloc):
-        AdamWStateManager(cfg, options.OffloadOptM, options.OffloadOptV, options.UseZeroCopy, comm.rank(), comm.world_size())
+LLamaOptimizerStateManager::LLamaOptimizerStateManager(TransformerConfig cfg, IModel& model, LLamaOptions options, cudaStream_t stream, NCCLCommunicator& comm, TensorAllocator& alloc):
+        AdamWStateManager(cfg, model, options.OffloadOptM, options.OffloadOptV, options.OptMomentumType, options.OptVarianceType, options.UseZeroCopy, comm.rank(), comm.world_size())
 {
-    mMType = options.OptMomentumType;
-    mVType = options.OptVarianceType;
-
     {
         auto ctx = alloc.with_context("Adam M");
         EAllocationType alloc_type = options.OffloadOptM ? options.offload_alloc() : EAllocationType::ON_DEVICE;
@@ -124,36 +121,8 @@ LLamaOptimizerStateManager::LLamaOptimizerStateManager(TransformerConfig cfg, LL
         }
         zero_opt_non_block(mOptV, stream);
     }
-
-    if((options.OffloadOptM || options.OffloadOptV) && !mUseZeroCopy) {
-        mStatus[0] = sBufferStatus{-1, create_named_event("opt_fetch_0"), false, true};
-        mStatus[1] = sBufferStatus{-1, create_named_event("opt_fetch_1"), false, true};
-    }
-
-    if(mOffloadM && !mUseZeroCopy) {
-        fill_matrix_shapes(mOptMBuffer[0], mConfig, mMType, mRank, mWorld);
-        fill_non_matrix_shapes(mOptMBuffer[0], mConfig, mMType, mRank, mWorld);
-        fill_matrix_shapes(mOptMBuffer[1], mConfig, mMType, mRank, mWorld);
-        fill_non_matrix_shapes(mOptMBuffer[1], mConfig, mMType, mRank, mWorld);
-    }
-
-    if(mOffloadV && !mUseZeroCopy) {
-        fill_matrix_shapes(mOptVBuffer[0], mConfig, mVType, mRank, mWorld);
-        fill_non_matrix_shapes(mOptVBuffer[0], mConfig, mVType, mRank, mWorld);
-        fill_matrix_shapes(mOptVBuffer[1], mConfig, mVType, mRank, mWorld);
-        fill_non_matrix_shapes(mOptVBuffer[1], mConfig, mVType, mRank, mWorld);
-
-    }
 }
 
 SimpleTensorContainer& LLamaOptimizerStateManager::get_block_scales_m(int layer_idx) {
     return mOptMScales.Blocks.at(layer_idx);
-}
-
-SimpleTensorContainer& LLamaOptimizerStateManager::get_m_buffer(int idx) {
-    return mOptMBuffer.at(idx);
-}
-
-SimpleTensorContainer& LLamaOptimizerStateManager::get_v_buffer(int idx) {
-    return mOptVBuffer.at(idx);
 }

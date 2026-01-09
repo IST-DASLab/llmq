@@ -697,6 +697,41 @@ IRunState& LLamaModel::get_run_state() const {
     return *RunState;
 }
 
+std::size_t LLamaModel::num_block_tensors() const {
+    return 7;
+}
+
+void LLamaModel::fill_block_shapes(GenericTensorContainer& target, const TransformerConfig& config,
+    ETensorDType matrix_dtype, ETensorDType other_dtype) const {
+    long C = config.HiddenSize;
+    long H = config.IntermediateSize;
+    long HS = config.head_size();
+
+    auto create_matrix_shard = [&](Tensor& tgt, long rows, long cols) {
+        tgt.Rank = 2;
+        tgt.DType = matrix_dtype;
+        tgt.Sizes[0] = rows;
+        tgt.Sizes[1] = cols;
+    };
+
+    auto create_vector_shard = [&](Tensor& tgt, long elems) {
+        tgt.Rank = 1;
+        tgt.DType = other_dtype;
+        tgt.Sizes[0] = elems;
+    };
+
+    long attn_intermediate_size = (config.NumQueryHeads + 2 * config.NumKeyValHeads) * HS;
+    create_matrix_shard(target.get_tensor(LLamaWeightID::QKV_W), attn_intermediate_size, C);
+    create_matrix_shard(target.get_tensor(LLamaWeightID::ATTO_W), C, C);
+    create_matrix_shard(target.get_tensor(LLamaWeightID::UP_W), 2 * H, C);
+    create_matrix_shard(target.get_tensor(LLamaWeightID::DOWN_W), C, H);
+
+    create_vector_shard(target.get_tensor(LLamaWeightID::LN1_W), C);
+    create_vector_shard(target.get_tensor(LLamaWeightID::LN2_W), C);
+    create_vector_shard(target.get_tensor(LLamaWeightID::QKV_B), config.UseQKVBias ? attn_intermediate_size : 0);
+}
+
+
 void LLamaModel::_calculate_gradient_norm(NCCLCommunicator& comm, float grad_clip, cudaStream_t stream) {
     auto& rs = RunState;
 
@@ -834,7 +869,7 @@ void LLamaModel::allocate_run_state(const LLamaOptions& options, NCCLCommunicato
         acts = ::allocate_run_state(Config, options, B, T, stack, Allocator);
     }
 
-    OptimizerState = std::make_unique<LLamaOptimizerStateManager>(Config, options, acts.MainStream, comm, *Allocator);
+    OptimizerState = std::make_unique<LLamaOptimizerStateManager>(Config, *this, options, acts.MainStream, comm, *Allocator);
 
     Parameters->begin_optimizer(stack, comm.stream());
     OptimizerState->begin_optimizer(stack, comm.stream());
