@@ -8,28 +8,13 @@
 
 #include "llama_weights.h"
 #include "training/adamw_optimizer.h"
-#include <array>
 
 class LLamaOptimizerStateManager : public AdamWStateManager {
 public:
-    LLamaOptimizerStateManager(TransformerConfig cfg, IModel& model, LLamaOptions options, cudaStream_t stream, NCCLCommunicator& comm, TensorAllocator& alloc);
-    SimpleTensorContainer& non_block_m() override;
-    SimpleTensorContainer& non_block_v() override;
+    LLamaOptimizerStateManager(TransformerConfig cfg, IModel& model, LLamaOptions options, NCCLCommunicator& comm);
 
-    ITensorContainer& full_m() { return mOptM; }
-    ITensorContainer& full_v() { return mOptV; }
-    sLLamaWeights& scales_m() { return mOptMScales; }
-
-    SimpleTensorContainer& get_block_m(int layer_idx, cudaStream_t stream) override;
-    SimpleTensorContainer& get_block_v(int layer_idx, cudaStream_t stream) override;
-    SimpleTensorContainer& get_block_scales_m(int layer_idx) override;
-private:
-    // mOptM.Blocks[i] and mMBlockStorage[i] alias the same memory.
-    // mOptM provides convenient access to the individual tensors of a block, whereas
-    // mMBlockStorage has just one large, byte-typed buffer for bulk transfers.
-    sLLamaWeights mOptM;
-    sLLamaWeights mOptV;
-    sLLamaWeights mOptMScales;
+    void safe_to_checkpoint(const std::string& checkpoint_dir) override;
+    void load_from_checkpoint(const std::string& checkpoint_dir) override;
 };
 
 #endif //LLMQ_SRC_MODELS_LLAMA_OPTIMIZER_H

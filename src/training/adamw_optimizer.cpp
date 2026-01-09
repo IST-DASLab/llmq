@@ -5,12 +5,14 @@
 #include "adamw_optimizer.h"
 
 #include "model.h"
+#include "kernels/kernels.h"
+#include "utilities/allocator.h"
 #include "utilities/utils.h"
 #include "utilities/tensor.h"
 #include "utilities/stack.h"
 #include "utilities/lazy_allocator.h"
 
-static GenericTensorContainer& shard_container(GenericTensorContainer&& c, int world) {
+static GenericTensorContainer shard_container(GenericTensorContainer&& c, int world) {
     visit([world](Tensor& t) {
         if (!t.empty()) { throw std::logic_error("shard_container called with non-empty tensor"); }
         t.Sizes[0] = div_exact(t.Sizes[0], static_cast<long>(world));
@@ -18,19 +20,18 @@ static GenericTensorContainer& shard_container(GenericTensorContainer&& c, int w
     return c;
 }
 
-
 AdamWStateManager::AdamWStateManager(TransformerConfig cfg, IModel& model, bool offload_m, bool offload_v,
     ETensorDType type_m, ETensorDType type_v, bool zero_copy, int rank, int world):
     mConfig(cfg), mOffloadM(offload_m), mOffloadV(offload_v), mUseZeroCopy(zero_copy), mRank(rank), mWorld(world), mMType(type_m), mVType(type_v) {
 
     if(mOffloadM && !mUseZeroCopy) {
-        mOptMBuffer[0] = shard_container(model.create_block_container(mConfig, mMType, mMType), mWorld);
-        mOptMBuffer[1] = shard_container(model.create_block_container(mConfig, mMType, mMType), mWorld);
+        mMDeviceBuffer[0] = shard_container(model.create_block_container(mConfig, mMType, mMType), mWorld);
+        mMDeviceBuffer[1] = shard_container(model.create_block_container(mConfig, mMType, mMType), mWorld);
     }
 
     if(mOffloadV && !mUseZeroCopy) {
-        mOptVBuffer[0] = shard_container(model.create_block_container(mConfig, mVType, mVType), mWorld);
-        mOptVBuffer[1] = shard_container(model.create_block_container(mConfig, mVType, mVType), mWorld);
+        mVDeviceBuffer[0] = shard_container(model.create_block_container(mConfig, mVType, mVType), mWorld);
+        mVDeviceBuffer[1] = shard_container(model.create_block_container(mConfig, mVType, mVType), mWorld);
     }
 
     if((mOffloadM || mOffloadV) && !mUseZeroCopy) {
@@ -48,16 +49,16 @@ void AdamWStateManager::begin_optimizer(DeviceMemoryStack& memory, cudaStream_t 
     }
 
     if(mOffloadM && !mUseZeroCopy) {
-        alloc.allocate(mOptMBuffer.at(0));
+        alloc.allocate(mMDeviceBuffer.at(0));
         mMBufferStorage[0] = alloc.commit(memory, "opt_m_a");
-        alloc.allocate(mOptMBuffer.at(1));
+        alloc.allocate(mMDeviceBuffer.at(1));
         mMBufferStorage[1] = alloc.commit(memory, "opt_m_b");
     }
 
     if(mOffloadV && !mUseZeroCopy) {
-        alloc.allocate(mOptVBuffer.at(0));
+        alloc.allocate(mVDeviceBuffer.at(0));
         mVBufferStorage[0] = alloc.commit(memory, "opt_v_a");
-        alloc.allocate(mOptVBuffer.at(1));
+        alloc.allocate(mVDeviceBuffer.at(1));
         mVBufferStorage[1] = alloc.commit(memory, "opt_v_b");
     }
 }
@@ -94,20 +95,47 @@ void AdamWStateManager::fetch_block(int layer_idx, cudaStream_t fetch_stream) {
 
     if(mOffloadM) {
         auto& buf = mMBufferStorage.at(buffer);
-        auto& ref = mMBlockStorage.at(layer_idx);
+        auto& ref = mStorageM.at(layer_idx);
 
         fetch(buf, ref);
     }
 
     if(mOffloadV) {
         auto& buf = mVBufferStorage.at(buffer);
-        auto& ref = mVBlockStorage.at(layer_idx);
+        auto& ref = mStorageV.at(layer_idx);
 
         fetch(buf, ref);
     }
 
     CUDA_CHECK(cudaEventRecord(stat.DoneEvent, fetch_stream));
 }
+
+SimpleTensorContainer& AdamWStateManager::get_block_m(int layer_idx, cudaStream_t stream) {
+    if(!mOffloadM || mUseZeroCopy) return mBlocksM.at(layer_idx);
+    return get_block_from(layer_idx, stream, mMDeviceBuffer.at(layer_idx % 2));
+}
+
+SimpleTensorContainer& AdamWStateManager::get_block_v(int layer_idx, cudaStream_t stream) {
+    if(!mOffloadV || mUseZeroCopy) return mBlocksV.at(layer_idx);
+    return get_block_from(layer_idx, stream, mVDeviceBuffer.at(layer_idx % 2));
+}
+
+SimpleTensorContainer& AdamWStateManager::get_block_scales_m(int layer_idx) {
+    return mBlocksMScales.at(layer_idx);
+}
+
+SimpleTensorContainer& AdamWStateManager::non_block_m() {
+    return mNonBlockM;
+}
+
+SimpleTensorContainer& AdamWStateManager::non_block_m_scales() {
+    return mNonBlockMScales;
+}
+
+SimpleTensorContainer& AdamWStateManager::non_block_v() {
+    return mNonBlockV;
+}
+
 
 void AdamWStateManager::store_block(int layer_idx, cudaStream_t stream, cudaStream_t put_stream)  {
     if (mUseZeroCopy) return;
@@ -121,11 +149,11 @@ void AdamWStateManager::store_block(int layer_idx, cudaStream_t stream, cudaStre
     }
 
     if(mOffloadM) {
-        CUDA_CHECK(cudaMemcpyAsync(mMBlockStorage.at(layer_idx).Data, mMBufferStorage.at(buffer).Data, mMBlockStorage.at(layer_idx).bytes(), cudaMemcpyDeviceToHost, put_stream));
+        CUDA_CHECK(cudaMemcpyAsync(mStorageM.at(layer_idx).Data, mMBufferStorage.at(buffer).Data, mStorageM.at(layer_idx).bytes(), cudaMemcpyDeviceToHost, put_stream));
     }
 
     if(mOffloadV) {
-        CUDA_CHECK(cudaMemcpyAsync(mVBlockStorage.at(layer_idx).Data, mVBufferStorage.at(buffer).Data, mVBlockStorage.at(layer_idx).bytes(), cudaMemcpyDeviceToHost, put_stream));
+        CUDA_CHECK(cudaMemcpyAsync(mStorageV.at(layer_idx).Data, mVBufferStorage.at(buffer).Data, mStorageV.at(layer_idx).bytes(), cudaMemcpyDeviceToHost, put_stream));
     }
 
     if(mOffloadM || mOffloadV) {
@@ -134,6 +162,68 @@ void AdamWStateManager::store_block(int layer_idx, cudaStream_t stream, cudaStre
         }
         CUDA_CHECK(cudaEventRecord(stat.DoneEvent, put_stream));
         stat.Done = true;
+    }
+}
+
+void AdamWStateManager::allocate_state(IModel& model, cudaStream_t stream, EAllocationType kind, TensorAllocator& alloc) {
+    {
+        auto ctx = alloc.with_context("Adam M");
+        LazyAllocator alloc_lazy;
+        mBlocksM.resize(mConfig.NumLayers);
+        for (int i = 0; i < mConfig.NumLayers; ++i) {
+            mBlocksM[i] = shard_container(model.create_block_container(mConfig, mMType, mMType), mWorld);
+            alloc_lazy.allocate(mBlocksM[i]);
+            mStorageM.push_back(alloc_lazy.commit(alloc, mOffloadM ? kind : EAllocationType::ON_DEVICE, "m_block_shard"));
+        }
+        mNonBlockM = shard_container(model.create_non_block_container(mConfig, mMType, mMType), mWorld);
+        alloc_lazy.allocate(mNonBlockM);
+        mStorageM.push_back(alloc_lazy.commit(alloc, mOffloadM ? kind : EAllocationType::ON_DEVICE, "m_nonblock_shard"));
+
+        for (auto& t : mStorageM) {
+            fill_zero(t, stream);
+        }
+
+        mBlocksMScales.resize(mConfig.NumLayers);
+        if(mMType == ETensorDType::FP8_E4M3) {
+            // we "shard" for 128 as many GPUs, so that we get 1 scale per 128 weights.
+            for (int i = 0; i < mConfig.NumLayers; ++i) {
+                mBlocksMScales[i] = shard_container(model.create_block_container(mConfig, ETensorDType::FP32, ETensorDType::FP32), 128 * mWorld);
+                alloc_lazy.allocate(mBlocksMScales[i]);
+                alloc_lazy.commit(alloc, EAllocationType::ON_DEVICE, "m_block_scales");
+                visit([stream](Tensor& t){
+                    fill_constant(t, 1.f, t.nelem(), stream);
+                }, mBlocksMScales[i]);
+            }
+            mNonBlockMScales = shard_container(model.create_non_block_container(mConfig, ETensorDType::FP32, ETensorDType::FP32), 128 * mWorld);
+            alloc_lazy.allocate(mNonBlockMScales);
+            alloc_lazy.commit(alloc, EAllocationType::ON_DEVICE, "m_nonblock_scales");
+            visit([stream](Tensor& t){
+                    fill_constant(t, 1.f, t.nelem(), stream);
+                }, mNonBlockMScales);
+        } else {
+            for (int i = 0; i < mConfig.NumLayers; ++i) {
+                mBlocksMScales[i] = GenericTensorContainer(std::vector<Tensor>(model.num_block_tensors()));
+            }
+            mNonBlockMScales = GenericTensorContainer(std::vector<Tensor>(model.num_non_block_tensors()));
+        }
+    }
+
+    {
+        auto ctx = alloc.with_context("Adam V");
+        LazyAllocator alloc_lazy;
+        mBlocksV.resize(mConfig.NumLayers);
+        for (int i = 0; i < mConfig.NumLayers; ++i) {
+            mBlocksV[i] = shard_container(model.create_block_container(mConfig, mVType, mVType), mWorld);
+            alloc_lazy.allocate(mBlocksV[i]);
+            mStorageV.push_back(alloc_lazy.commit(alloc, mOffloadV ? kind : EAllocationType::ON_DEVICE, "v_block_shard"));
+        }
+        mNonBlockV = shard_container(model.create_non_block_container(mConfig, mVType, mVType), mWorld);
+        alloc_lazy.allocate(mNonBlockV);
+        mStorageV.push_back(alloc_lazy.commit(alloc, mOffloadV ? kind : EAllocationType::ON_DEVICE, "v_nonblock_shard"));
+
+        for (auto& t : mStorageV) {
+            fill_zero(t, stream);
+        }
     }
 }
 

@@ -142,3 +142,14 @@ void visit(const std::function<void(Tensor&, Tensor&)>& func, SimpleTensorContai
         }
     }
 }
+
+GenericTensorContainer::GenericTensorContainer(std::vector<Tensor> t): mTensors( std::move(t) ) {
+}
+
+std::size_t GenericTensorContainer::num_tensors() const noexcept {
+    return mTensors.size();
+}
+
+const Tensor& GenericTensorContainer::get_tensor(std::size_t idx) const {
+    return mTensors.at(idx);
+}
