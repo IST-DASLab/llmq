@@ -29,10 +29,20 @@ Tensor& IModel::get_target_buffer() {
 }
 
 GenericTensorContainer IModel::create_block_container(const TransformerConfig& config, ETensorDType matrix_dtype,
-    ETensorDType other_dtype) const {
+    ETensorDType other_dtype) const
+{
     std::vector<Tensor> tensors(num_block_tensors());
     GenericTensorContainer container(std::move(tensors));
     fill_block_shapes(container, config, matrix_dtype, other_dtype);
+    return container;
+}
+
+GenericTensorContainer IModel::create_non_block_container(const TransformerConfig& config, ETensorDType matrix_dtype,
+    ETensorDType other_dtype) const
+{
+    std::vector<Tensor> tensors(num_non_block_tensors());
+    GenericTensorContainer container(std::move(tensors));
+    fill_non_block_shapes(container, config, matrix_dtype, other_dtype);
     return container;
 }
 
