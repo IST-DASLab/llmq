@@ -38,8 +38,10 @@ __device__ Float subWarpReduceMax(Float val) {
 // uses template to decide whether to write logits and probs
 // split both loops in "multiple-of-x128-size" and "bounds-checked remainder" parts
 template <class floatX>
-//__global__ void __block_size__((1024, 1, 1), (8, 1, 1))
-__global__ void __cluster_dims__(8, 1, 1) __launch_bounds__(128, 2)
+__global__ void
+#if __CUDA_ARCH__ >= 900
+__cluster_dims__(8, 1, 1) __launch_bounds__(128, 2)
+#endif
     fused_classifier_tma_kernel(floatX* logits, float* losses, float* lse_out,
                              const float dloss, const int* targets, float z_reg,
                              int V, int P) {
@@ -105,12 +107,13 @@ __global__ void __cluster_dims__(8, 1, 1) __launch_bounds__(128, 2)
     }
     barrier::arrival_token token_b = bar.arrive();
 
-    // hande the first part of the block. By construction, this is a multiple of 2 x128 * block
+    // handle the first part of the block. By construction, this is a multiple of 2 x128 * block
     for (int i = threadIdx.x * x128::size; i < (block_middle_idx - block_start_ix); i += 2 * x128::size * BLOCK_SIZE) {
         x128 v1 = x128::load(smem_logits + i);
         x128 v2 = x128::load(smem_logits + i + x128::size * BLOCK_SIZE);
         float old_maxval = thread_max;
         thread_max = static_cast<float>(dispatch_max(vecReduceMax(v1), vecReduceMax(v2)));
+        thread_max = fmaxf(thread_max, old_maxval);
 
         // write this as a two-level reduction. this does not require any additional instructions (we change FMUL to
         // FMA, but that costs the same), but could give slightly less rounding error accumulation.
@@ -135,6 +138,7 @@ __global__ void __cluster_dims__(8, 1, 1) __launch_bounds__(128, 2)
             x128 v2 = x128::load(smem_logits + i + x128::size * BLOCK_SIZE);
             float old_maxval = thread_max;
             thread_max = static_cast<float>(dispatch_max(vecReduceMax(v1), vecReduceMax(v2)));
+            thread_max = fmaxf(thread_max, old_maxval);
 
             // write this as a two-level reduction. this does not require any additional instructions (we change FMUL to
             // FMA, but that costs the same), but could give slightly less rounding error accumulation.
@@ -200,14 +204,17 @@ __global__ void __cluster_dims__(8, 1, 1) __launch_bounds__(128, 2)
     float scale = 1.f / cluster_sum;
     float lse = logf(cluster_sum) + cluster_max;
 
+    // is this block responsible for the ground-truth index
+    bool block_has_ix = block_start_ix <= ix && ix < block_end_ix;
+
     // calculate the probability needed for the loss and update (single-threaded)
     // warp 0 gets all the extra work during reductions, so we let this be handled by warp 1
-    if(threadIdx.x == 32 && block_start_ix < ix && ix < block_end_ix) {
+    if(threadIdx.x == 32 && block_has_ix) {
         losses[idx] -= (float)(smem_logits[ix - block_start_ix]) - lse;
         lse_out[idx] = lse;
     }
 
-    // figure out which warp will encounter the groud-truth token
+    // figure out which warp will encounter the ground-truth token
     float shift = (logf((dloss + z_reg * lse) * scale) - cluster_max) * kLog2e;
 
     // treat all classes as if they are negative. This allows us to avoid any conditionals inside this loop.
@@ -221,8 +228,6 @@ __global__ void __cluster_dims__(8, 1, 1) __launch_bounds__(128, 2)
     }
 
     // write the correct dlogit for the true class
-    // is this block responsible for the ground-truth index
-    bool block_has_ix = block_start_ix < ix && ix < block_end_ix;
     int thread_with_ix = -1;
     if (block_has_ix) {
         thread_with_ix = ((ix - block_start_ix) / x128::size) % BLOCK_SIZE;
