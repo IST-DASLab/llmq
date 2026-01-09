@@ -40,6 +40,23 @@ void visit(const std::function<void(Tensor&)>& func, SimpleTensorContainer& cont
 //! in both containers.
 void visit(const std::function<void(Tensor&, Tensor&)>& func, SimpleTensorContainer& a, SimpleTensorContainer& b);
 
+//! \brief `SimpleTensorContainer` that stores all tensors in a vector
+class GenericTensorContainer final : public SimpleTensorContainer {
+public:
+    GenericTensorContainer(std::vector<Tensor> t) : mTensors( std::move(t) ) { };
+
+    //! Get the total number of tensors in this container. This count includes empty tensors.
+    std::size_t num_tensors() const noexcept { return mTensors.size(); };
+
+    //! Return a constant reference to the tensor at the given index.
+    const Tensor& get_tensor(std::size_t idx) const { return mTensors.at(idx); }
+
+    using SimpleTensorContainer::get_tensor;
+private:
+    std::vector<Tensor> mTensors;
+};
+
+
 class ITensorContainer {
   public:
     virtual void iterate_tensors(const std::function<void(std::string, const TensorShard&)>& callback) = 0;
