@@ -4,6 +4,7 @@
 // Based on llm.c https://github.com/karpathy/llm.c
 
 #include <cassert>
+#include <cuda_pipeline_primitives.h>
 
 #include "kernel_utils.cuh"
 #include "utilities/utils.h"
@@ -452,6 +453,13 @@ rmsnorm_backward_smem_small_kernel(floatX* dinp, std::byte* scratch,
     __shared__ float block_abs_max;
     extern __shared__ AlignedSmem smem[];
     float* wd_cache = reinterpret_cast<float*>(smem);
+    floatX* w_cache = reinterpret_cast<floatX*>(wd_cache + BLOCK_SIZE / WARP_SIZE * C);
+
+
+    for (int i = threadIdx.x * x128::size; i < C; i += BLOCK_SIZE * x128::size) {
+        __pipeline_memcpy_async(w_cache + i, weight + i, x128::bytes);
+    }
+    __pipeline_commit();
 
     if (threadIdx.x == BLOCK_SIZE - WARP_SIZE) {
         block_abs_max = 0.f;
@@ -459,6 +467,7 @@ rmsnorm_backward_smem_small_kernel(floatX* dinp, std::byte* scratch,
     for (int i = threadIdx.x * f128::size; i < C * WarpsPerBlock; i += BLOCK_SIZE * f128::size) {
         f128::zeros().store(wd_cache + i);
     }
+    __pipeline_wait_prior(0);
     __syncthreads();
 
     const int warp_id = threadIdx.x / WARP_SIZE;
@@ -479,7 +488,7 @@ rmsnorm_backward_smem_small_kernel(floatX* dinp, std::byte* scratch,
         for (int i = lane_id * x128::size; i < C; i += WARP_SIZE * x128::size) {
             x128 o = x128::load(dout_bt + i);
             x128 x = x128::load(inp_bt  + i);
-            x128 w = x128::load(weight  + i);
+            x128 w = x128::load(w_cache + i);
             for (int k = 0; k < x128::size; k++) {
                 sum_xow += (float)w[k] * (float)o[k] * (float)x[k];
             }
@@ -488,11 +497,10 @@ rmsnorm_backward_smem_small_kernel(floatX* dinp, std::byte* scratch,
         sum_xow = warpReduceSum(sum_xow);
         const float xow_norm = sum_xow / C * rstd_bt;
 
-        // start naive again, fix indexing later
         for (int i = lane_id * x128::size; i < C; i += WARP_SIZE * x128::size) {
             x128 o = x128::load_cs(dout_bt + i);
             x128 x = x128::load_cs(inp_bt + i);
-            x128 w = x128::load(weight + i);
+            x128 w = x128::load(w_cache + i);
             x128 dx = x128::load(dinp_bt + i);
 
             fvec dw;
@@ -578,11 +586,11 @@ rmsnorm_backward_smem_small_final_kernel(floatX* dweight, std::byte* scratch, in
     }
 }
 
-
+// TODO: this really should be a template
 int get_block_per_sm_small(int C, const cudaDeviceProp& dp) {
     const int block_size = 512;
     int blocks_per_sm;
-    size_t shared_mem_size =  block_size / WARP_SIZE * C * sizeof(float);
+    size_t shared_mem_size =  block_size / WARP_SIZE * C * sizeof(float) + C * 2;
     if (shared_mem_size > dp.sharedMemPerBlockOptin) {
         return 0;
     }
@@ -609,7 +617,7 @@ void rmsnorm_backward_small_imp(floatX* dinp, floatX* dweight, std::byte* scratc
                                 int B, int T, int C, const cudaDeviceProp& dp, cudaStream_t stream) {
     const int block_size = 512;
     int blocks_per_sm = get_block_per_sm_small(C, dp);
-    size_t shared_mem_size = block_size / WARP_SIZE * C * sizeof(float);
+    size_t shared_mem_size = block_size / WARP_SIZE * C * sizeof(float) + C * sizeof(floatX);
     CUDA_CHECK(cudaFuncSetAttribute(rmsnorm_backward_smem_small_kernel<floatX>, cudaFuncAttributeMaxDynamicSharedMemorySize, shared_mem_size));
     const int grid_size = blocks_per_sm * dp.multiProcessorCount;
     if(dresidual != dinp) {
