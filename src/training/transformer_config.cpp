@@ -1,4 +1,4 @@
-// Copyright (c) 2025, IST Austria, developed by Erik Schultheis
+// Copyright (c) 2025-2026, IST Austria, developed by Erik Schultheis
 // SPDX-License-Identifier: Apache-2.0
 //
 
@@ -160,7 +160,7 @@ static TransformerConfig create_llama2_config(int hidden_size, int intermediate_
     };
 }
 
-static TransformerConfig create_llama3_config(int hidden_size, int intermediate_size, int q_heads, int kv_heads, int depth, ETensorDType dtype) {
+static TransformerConfig create_llama3_config(int hidden_size, int intermediate_size, int q_heads, int kv_heads, int depth, bool tied, ETensorDType dtype) {
     return {
         .Architecture = TransformerConfig::LLAMA,
         .BosTokenId = 128000,
@@ -175,7 +175,7 @@ static TransformerConfig create_llama3_config(int hidden_size, int intermediate_
         .MaxPositionEmbeddings = 4096,
         .RopeTheta = 500000.f,
         .RmsNormEps = 1e-05f,
-        .TiedWordEmbeddings = false,
+        .TiedWordEmbeddings = tied,
         .UseQKVBias = false,
         .DType = dtype
     };
@@ -200,8 +200,12 @@ TransformerConfig create_config_from_name(std::string_view name, ETensorDType dt
         return create_llama2_config(4096, 11008, 32, 32, dtype);
     } else if (iequals(name, "llama-2-13b")) {
         return create_llama2_config(5120, 13824, 40, 40, dtype);
-    } else if (iequals(name, "llama-3-8b")) {
-        return create_llama3_config(4096, 14336, 32, 8, 32, dtype);
+    } else if (iequals(name, "llama-3-1b") || iequals(name, "llama-3.2-1b")) {
+        return create_llama3_config(2048, 8192, 32, 8, 16, true, dtype);
+    } else if (iequals(name, "llama-3-3b") || iequals(name, "llama-3.2-3b")) {
+        return create_llama3_config(3072, 8192, 24, 8, 28, true, dtype);
+    } else if (iequals(name, "llama-3-8b") || iequals(name, "llama-3.1-8b")) {
+        return create_llama3_config(4096, 14336, 32, 8, 32, false, dtype);
     }
     throw std::runtime_error(fmt::format("unknown model name {}", name));
 }

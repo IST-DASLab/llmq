@@ -1,4 +1,4 @@
-// Copyright (c) 2025, IST Austria, developed by Erik Schultheis
+// Copyright (c) 2025-2026, IST Austria, developed by Erik Schultheis
 // SPDX-License-Identifier: Apache-2.0
 //
 
@@ -9,8 +9,9 @@
 
 #include "utilities/dtype.h"
 
-// Struct that contains the basic configuration for the model.
-// This includes both architecture and run configurations
+//! Struct that contains the basic configuration for the model.
+//! This includes both architecture and some run configurations.
+//! Maps to `config.json` in huggingface.
 struct TransformerConfig {
     enum EArchitecture {
         LLAMA,
