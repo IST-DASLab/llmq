@@ -251,6 +251,7 @@ if (BUILD_TESTS)
             src/testing/test-swiglu.cu
             src/testing/test-rope.cu
             src/testing/test-classifier.cu
+            src/testing/test-rmsnorm-backward.cu
     )
     target_link_libraries(unit-tests PRIVATE llmq-common Catch2::Catch2 CLI11::CLI11)
     target_compile_options(unit-tests PUBLIC $<$<COMPILE_LANGUAGE:CUDA>:--expt-relaxed-constexpr> $<$<COMPILE_LANGUAGE:CUDA>:-lineinfo>)

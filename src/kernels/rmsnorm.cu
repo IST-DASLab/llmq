@@ -277,7 +277,6 @@ rmsnorm_backward_kernel10(floatX* dinp, floatX* dweight, std::byte* scratch,
         floatX* dinp_bt = dinp + bt * C;
 
         // first: two reduce operations
-        float dnorm_mean = 0.0f;
         float dnorm_norm_mean = 0.0f;
         for (int i = warpThreadIdx * x128::size; i < C; i += WARP_SIZE * x128::size) {
             x128 dout128_i   = x128::load(dout_bt + i);
@@ -285,7 +284,6 @@ rmsnorm_backward_kernel10(floatX* dinp, floatX* dweight, std::byte* scratch,
             x128 weight128_i = x128::load(weight  + i);
             for (int k = 0; k < x128::size; k++) {
                 float dnorm_i = (float)weight128_i[k] * (float)dout128_i[k];
-                dnorm_mean += dnorm_i;
                 dnorm_norm_mean += dnorm_i * (float)inp128_i[k];
             }
         }
@@ -418,9 +416,212 @@ rmsnorm_backward_kernel10(floatX* dinp, floatX* dweight, std::byte* scratch,
     }
 }
 
+namespace {
+    // dummy struct to imbue dynamic smem with 128 byte alignment
+    struct alignas(128) AlignedSmem  {
+        std::byte content[128];
+    };
+}
+
+template<class floatX>
+__global__ void __launch_bounds__(512, 2)
+rmsnorm_backward_smem_small_kernel(floatX* dinp, std::byte* scratch,
+                          const floatX* dout, const floatX* inp, const floatX* weight,
+                          const float* rstd, float* abs_max_ptr, int BT, int C) {
+    // formulas:
+    //   rms = sqrt(sum x_j^2 / C + eps)
+    //   y_i = w_i x_i / rms
+    //
+    //   o_i := dL/dy_i
+    //   dw_i = sum (x_i o_i / rms)
+    //   xow := sum x_i o_i w_i
+    //   dy_j/drms = - w_j x_j / rms²
+    //   drms/dx_j = x_j/(C rms)
+    //   dx_i = dL/dy_j (dy_j/dx_i + dy_j/drms drms/dx_i)
+    //        = o_i w_i / rms - sum_j o_j w_j x_j / rms² x_i/(C rms)
+    //        = o_i w_i / rms - x_i (xow/C) / rms³
+    // assert(C < 2048)
+    constexpr int BLOCK_SIZE = 512;
+    constexpr int WarpsPerBlock = BLOCK_SIZE / WARP_SIZE;
+
+    // size of scratch: sizeof(float) * C + 128
+    using x128 = GenericVector<floatX, 16/sizeof(floatX)>;
+    using f128 = GenericVector<float, 16/sizeof(float)>;
+    using fvec = GenericVector<float, x128::size>;
+
+    __shared__ float block_abs_max;
+    extern __shared__ AlignedSmem smem[];
+    float* wd_cache = reinterpret_cast<float*>(smem);
+
+    if (threadIdx.x == BLOCK_SIZE - WARP_SIZE) {
+        block_abs_max = 0.f;
+    }
+    for (int i = threadIdx.x * f128::size; i < C * WarpsPerBlock; i += BLOCK_SIZE * f128::size) {
+        f128::zeros().store(wd_cache + i);
+    }
+    __syncthreads();
+
+    const int warp_id = threadIdx.x / WARP_SIZE;
+    const int lane_id = threadIdx.x % WARP_SIZE;
+    const int base_idx = blockIdx.x * WarpsPerBlock + warp_id;
+    const int warps_in_grid = gridDim.x * WarpsPerBlock;
+    float thread_abs_max = 0.f;
+
+    constexpr int XF_STRIDE = div_exact(x128::size, f128::size);
+
+    for (int bt = base_idx; bt < BT; bt += warps_in_grid) {
+        const floatX* const dout_bt = dout + bt * C;
+        const floatX* const inp_bt = inp + bt * C;
+        floatX* const dinp_bt = dinp + bt * C;
+        const float rstd_bt = rstd[bt];
+
+        float sum_xow = 0.0f;
+        for (int i = lane_id * x128::size; i < C; i += WARP_SIZE * x128::size) {
+            x128 o = x128::load(dout_bt + i);
+            x128 x = x128::load(inp_bt  + i);
+            x128 w = x128::load(weight  + i);
+            for (int k = 0; k < x128::size; k++) {
+                sum_xow += (float)w[k] * (float)o[k] * (float)x[k];
+            }
+        }
+
+        sum_xow = warpReduceSum(sum_xow);
+        const float xow_norm = sum_xow / C * rstd_bt;
+
+        // start naive again, fix indexing later
+        for (int i = lane_id * x128::size; i < C; i += WARP_SIZE * x128::size) {
+            x128 o = x128::load_cs(dout_bt + i);
+            x128 x = x128::load_cs(inp_bt + i);
+            x128 w = x128::load(weight + i);
+            x128 dx = x128::load(dinp_bt + i);
+
+            fvec dw;
+            for(int j = 0; j < x128::size / f128::size; ++j) {
+                f128 dw_128 = f128::load(wd_cache + i / XF_STRIDE + j * C / XF_STRIDE + warp_id * C);
+                for (int k = 0; k < f128::size; k++) {
+                    dw[j * f128::size + k] = dw_128[k];
+                }
+            }
+
+            for (int k = 0; k < x128::size; k++) {
+                float xn = (float)x[k] * rstd_bt;
+                dw[k] += xn * (float)o[k];
+                float dx_k = ((float)o[k] * (float)w[k] - xn * xow_norm) * rstd_bt + (float)dx[k];
+                thread_abs_max = fmaxf(thread_abs_max, fabsf(dx_k));
+                dx[k] = static_cast<floatX>(dx_k);
+            }
+
+            dx.store(dinp_bt + i);
+
+            // Cache per-warp partial dweight in shared memory, addressed by absolute feature index
+            for(int j = 0; j < x128::size / f128::size; ++j) {
+                f128 dw_128;
+                for (int k = 0; k < f128::size; k++) {
+                    dw_128[k] = dw[j * f128::size + k];
+                }
+                dw_128.store(wd_cache + i / XF_STRIDE + j * C / XF_STRIDE + warp_id * C);
+            }
+        }
+    }
+
+    // ok, at this point, dx is done, and each warp has partial dw results. Now we need to reduce across warps.
+    // now we reduce across warps
+    __syncthreads();
+    float* scratch_dweight = reinterpret_cast<float*>(scratch) + C*blockIdx.x;
+    for (int i = threadIdx.x * f128::size; i < C; i += BLOCK_SIZE * f128::size) {
+        f128 dw_sum = f128::zeros();
+        for (int w = 0; w < BLOCK_SIZE / WARP_SIZE; ++w) {
+            // Sum contributions from all warps for this absolute feature index range
+            f128 dw_other = f128::load(wd_cache + w * C + i);
+            for (int k = 0; k < f128::size; k++) {
+                dw_sum[k] += dw_other[k];
+            }
+        }
+        dw_sum.store(scratch_dweight + i);
+    }
+
+    handle_absmax_reduction(abs_max_ptr, &block_abs_max, thread_abs_max);
+}
+
+
+template<class floatX>
+__global__ void __launch_bounds__(512, 1)
+rmsnorm_backward_smem_small_final_kernel(floatX* dweight, std::byte* scratch, int blocks, int C) {
+    using x128 = GenericVector<floatX, 16/sizeof(floatX)>;
+    using f128 = GenericVector<float, 16/sizeof(float)>;
+    using fvec = GenericVector<float, x128::size>;
+    constexpr int XF_STRIDE = div_exact(x128::size, f128::size);
+
+    float* scratch_dweight = reinterpret_cast<float*>(scratch);
+
+    for (int b = 0; b < blocks; ++b) {
+        for (int i = threadIdx.x * x128::size; i < C; i += blockDim.x * x128::size) {
+            x128 old_dw = x128::load(dweight + i);
+            fvec summed;
+            for (int k = 0; k < x128::size; k++) {
+                summed[k] = static_cast<float>(old_dw[k]);
+            }
+
+            for(int j = 0; j < x128::size / f128::size; ++j) {
+                f128 dw_f = f128::load(scratch_dweight + i / XF_STRIDE + j * C / XF_STRIDE + b * C);
+                for (int k = 0; k < f128::size; k++) {
+                    summed[k + j * f128::size] += dw_f[k];
+                }
+            }
+
+            for (int k = 0; k < x128::size; k++) {
+                old_dw[k] = static_cast<floatX>(summed[k]);
+            }
+
+            old_dw.store(dweight + i);
+        }
+    }
+}
+
+
+int get_block_per_sm_small(int C, const cudaDeviceProp& dp) {
+    const int block_size = 512;
+    int blocks_per_sm;
+    size_t shared_mem_size =  block_size / WARP_SIZE * C * sizeof(float);
+    if (shared_mem_size > dp.sharedMemPerBlockOptin) {
+        return 0;
+    }
+    CUDA_CHECK(cudaFuncSetAttribute(rmsnorm_backward_smem_small_kernel<float>, cudaFuncAttributeMaxDynamicSharedMemorySize, shared_mem_size));
+    CUDA_CHECK(cudaOccupancyMaxActiveBlocksPerMultiprocessor(&blocks_per_sm, rmsnorm_backward_smem_small_kernel<float>, block_size, shared_mem_size));
+    return blocks_per_sm;
+}
+
 int get_rmsnorm_backward_scratch_size(int C, const cudaDeviceProp& dp) {
-    int per_block = 128 + C * sizeof(float);
-    return per_block * dp.multiProcessorCount * 2;
+    int small_bpsm = get_block_per_sm_small(C, dp);
+    if (small_bpsm > 0) {
+        int per_block = (512 / WARP_SIZE) * C * sizeof(float);
+        return per_block * dp.multiProcessorCount * small_bpsm;
+    } else {
+        int per_block = 128 + C * sizeof(float);
+        return per_block * dp.multiProcessorCount * 2;
+    }
+}
+
+template<class floatX>
+void rmsnorm_backward_small_imp(floatX* dinp, floatX* dweight, std::byte* scratch,
+                                const floatX* dresidual, const floatX* dout, const floatX* inp, const floatX* weight, const float* rstd,
+                                float* abs_max_ptr,
+                                int B, int T, int C, const cudaDeviceProp& dp, cudaStream_t stream) {
+    const int block_size = 512;
+    int blocks_per_sm = get_block_per_sm_small(C, dp);
+    size_t shared_mem_size = block_size / WARP_SIZE * C * sizeof(float);
+    CUDA_CHECK(cudaFuncSetAttribute(rmsnorm_backward_smem_small_kernel<floatX>, cudaFuncAttributeMaxDynamicSharedMemorySize, shared_mem_size));
+    const int grid_size = blocks_per_sm * dp.multiProcessorCount;
+    if(dresidual != dinp) {
+        CUDA_CHECK(cudaMemcpyAsync(dinp, dresidual, B*T*C * sizeof(floatX), cudaMemcpyDeviceToDevice, stream));
+    }
+    if (abs_max_ptr) {
+        CUDA_CHECK(cudaMemsetAsync(abs_max_ptr, 0, sizeof(float), stream));
+    }
+    rmsnorm_backward_smem_small_kernel<<<grid_size, block_size, shared_mem_size, stream>>>(dinp, scratch, dout, inp, weight, rstd, abs_max_ptr, B*T, C);
+    CUDA_CHECK(cudaGetLastError());
+    rmsnorm_backward_smem_small_final_kernel<<<1, 512, 0, stream>>>(dweight, scratch, grid_size, C);
+    CUDA_CHECK(cudaGetLastError());
 }
 
 template<class floatX>
@@ -447,14 +648,26 @@ void rmsnorm_backward_imp(floatX* dinp, floatX* dweight, std::byte* scratch,
     CUDA_CHECK(cudaGetLastError());
 }
 
+template<class floatX>
+void rmsnorm_backward_dispatch(floatX* dinp, floatX* dweight, std::byte* scratch,
+                               const floatX* dresidual, const floatX* dout, const floatX* inp, const floatX* weight, const float* rstd,
+                               float* abs_max_ptr,
+                               int B, int T, int C, const cudaDeviceProp& dp, cudaStream_t stream) {
+    if (get_block_per_sm_small(C, dp) > 0) {
+        rmsnorm_backward_small_imp(dinp, dweight, scratch, dresidual, dout, inp, weight, rstd, abs_max_ptr, B, T, C, dp, stream);
+    } else {
+        rmsnorm_backward_imp(dinp, dweight, scratch, dresidual, dout, inp, weight, rstd, abs_max_ptr, B, T, C, dp, stream);
+    }
+}
+
 void rmsnorm_backward(float* dinp, float* dweight, std::byte* scratch,
                       const float* dresidual, const float* dout, const float* inp, const float* weight, const float* rstd, float* abs_max_ptr,
                       int B, int T, int C, const cudaDeviceProp& dp, cudaStream_t stream) {
-    rmsnorm_backward_imp(dinp, dweight, scratch, dresidual, dout, inp, weight, rstd, abs_max_ptr, B, T, C, dp, stream);
+    rmsnorm_backward_dispatch(dinp, dweight, scratch, dresidual, dout, inp, weight, rstd, abs_max_ptr, B, T, C, dp, stream);
 }
 
 void rmsnorm_backward(nv_bfloat16* dinp, nv_bfloat16* dweight, std::byte* scratch,
                       const nv_bfloat16* dresidual, const nv_bfloat16* dout, const nv_bfloat16* inp, const nv_bfloat16* weight, const float* rstd, float* abs_max_ptr,
                       int B, int T, int C, const cudaDeviceProp& dp, cudaStream_t stream) {
-    rmsnorm_backward_imp(dinp, dweight, scratch, dresidual, dout, inp, weight, rstd, abs_max_ptr, B, T, C, dp, stream);
+    rmsnorm_backward_dispatch(dinp, dweight, scratch, dresidual, dout, inp, weight, rstd, abs_max_ptr, B, T, C, dp, stream);
 }
