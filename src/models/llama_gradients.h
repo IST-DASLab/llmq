@@ -7,31 +7,13 @@
 
 #include "llama_weights.h"
 #include "utilities/philox.h"
+#include "training/gradients.h"
 
-class LLamaGradsManager {
+class LLamaGradsManager : public IGradientManager {
 public:
     virtual ~LLamaGradsManager() = default;
 
-    void start_micro_step(cudaStream_t stream, int micro_step, int total_steps);
-    virtual void end_micro_step(cudaStream_t stream, NCCLCommunicator& comm) = 0;
-
-    // Get references to full gradient accumulators for use in the backward pass
-    virtual Tensor& get_embeddings_full(cudaStream_t stream, NCCLCommunicator& comm, bool& accumulate) = 0;
-    virtual Tensor& get_lmhead_full(cudaStream_t stream, NCCLCommunicator& comm, bool& accumulate) = 0;
-    virtual Tensor& get_lnf_w_full(cudaStream_t stream, NCCLCommunicator& comm, bool& accumulate) = 0;
-    virtual sLLamaBlockWeights<Tensor>& get_block_full(int layer_idx, cudaStream_t stream, NCCLCommunicator& comm, bool& accumulate) = 0;
-
-    // Get references to sharded gradients for use in the optimizer
-    virtual TensorShard& get_embeddings_shard(cudaStream_t stream) = 0;
-    virtual TensorShard& get_lmhead_shard(cudaStream_t stream) = 0;
-    virtual TensorShard& get_lnf_w_shard(cudaStream_t stream) = 0;
-    virtual SimpleTensorContainer& get_block_shard(int layer_idx, cudaStream_t stream) = 0;
-
-    // notify that gradient calculations have been completed
-    virtual void notify_embeddings(cudaStream_t stream, NCCLCommunicator& comm) = 0;
-    virtual void notify_lmhead(cudaStream_t stream, NCCLCommunicator& comm) = 0;
-    virtual void notify_lnf_w(cudaStream_t stream, NCCLCommunicator& comm) = 0;
-    virtual void notify_block(int layer_idx, cudaStream_t stream, NCCLCommunicator& comm) = 0;
+    void start_micro_step(cudaStream_t stream, int micro_step, int total_steps) override;
 
     static std::unique_ptr<LLamaGradsManager> create(std::uint64_t seed, int step, const TransformerConfig& config,
                                                      const LLamaOptions& options, int rank, int world,
