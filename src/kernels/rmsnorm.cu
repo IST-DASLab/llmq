@@ -614,7 +614,7 @@ template<class floatX>
 void rmsnorm_backward_small_imp(floatX* dinp, floatX* dweight, std::byte* scratch,
                                 const floatX* dresidual, const floatX* dout, const floatX* inp, const floatX* weight, const float* rstd,
                                 float* abs_max_ptr,
-                                int B, int T, int C, const cudaDeviceProp& dp, cudaStream_t stream) {
+                                int B, int T, int C, const cudaDeviceProp& dp, cudaStream_t stream, cudaStream_t leaf_stream, cudaEvent_t leaf_event) {
     const int block_size = 512;
     int blocks_per_sm = get_block_per_sm_small(C, dp);
     size_t shared_mem_size = block_size / WARP_SIZE * C * sizeof(float) + C * sizeof(floatX);
@@ -624,11 +624,19 @@ void rmsnorm_backward_small_imp(floatX* dinp, floatX* dweight, std::byte* scratc
         CUDA_CHECK(cudaMemcpyAsync(dinp, dresidual, B*T*C * sizeof(floatX), cudaMemcpyDeviceToDevice, stream));
     }
     if (abs_max_ptr) {
-        CUDA_CHECK(cudaMemsetAsync(abs_max_ptr, 0, sizeof(float), stream));
+        CUDA_CHECK(cudaMemsetAsync(abs_max_ptr, 0, sizeof(float), leaf_stream));
     }
+    // scratch is reused across rmsnorm calls, so conservatively we need to make sure that all leaf calculations are done.
+    CUDA_CHECK(cudaEventRecord(leaf_event, leaf_stream));
+    CUDA_CHECK(cudaStreamWaitEvent(stream, leaf_event, 0));
+
     rmsnorm_backward_smem_small_kernel<<<grid_size, block_size, shared_mem_size, stream>>>(dinp, scratch, dout, inp, weight, rstd, abs_max_ptr, B*T, C);
     CUDA_CHECK(cudaGetLastError());
-    rmsnorm_backward_smem_small_final_kernel<<<1, 512, 0, stream>>>(dweight, scratch, grid_size, C);
+
+    // wait for the main kernel to finish before we start the reduction kernel
+    CUDA_CHECK(cudaEventRecord(leaf_event, stream));
+    CUDA_CHECK(cudaStreamWaitEvent(leaf_stream, leaf_event, 0));
+    rmsnorm_backward_smem_small_final_kernel<<<1, 512, 0, leaf_stream>>>(dweight, scratch, grid_size, C);
     CUDA_CHECK(cudaGetLastError());
 }
 
@@ -636,7 +644,7 @@ template<class floatX>
 void rmsnorm_backward_imp(floatX* dinp, floatX* dweight, std::byte* scratch,
                           const floatX* dresidual, const floatX* dout, const floatX* inp, const floatX* weight, const float* rstd,
                           float* abs_max_ptr,
-                          int B, int T, int C, const cudaDeviceProp& dp, cudaStream_t stream) {
+                          int B, int T, int C, const cudaDeviceProp& dp, cudaStream_t stream, cudaStream_t leaf_stream, cudaEvent_t leaf_event) {
     using x128 = GenericVector<floatX, 16/sizeof(floatX)>;
     using f128 = GenericVector<float, 16/sizeof(float)>;
     const int block_size = 512;
@@ -649,7 +657,9 @@ void rmsnorm_backward_imp(floatX* dinp, floatX* dweight, std::byte* scratch,
         CUDA_CHECK(cudaMemcpyAsync(dinp, dresidual, B*T*C * sizeof(floatX), cudaMemcpyDeviceToDevice, stream));
     }
     if (abs_max_ptr) {
-        CUDA_CHECK(cudaMemsetAsync(abs_max_ptr, 0, sizeof(float), stream));
+        CUDA_CHECK(cudaMemsetAsync(abs_max_ptr, 0, sizeof(float), leaf_stream));
+        CUDA_CHECK(cudaEventRecord(leaf_event, leaf_stream));
+        CUDA_CHECK(cudaStreamWaitEvent(stream, leaf_event, 0));
     }
     CUDA_CHECK(cudaMemsetAsync(scratch, 0, 1 * sizeof(float), stream)); // only need to reset the flag to 0
     rmsnorm_backward_kernel10<<<grid_size, block_size, shared_mem_size, stream>>>(dinp, dweight, scratch, dout, inp, weight, rstd, abs_max_ptr, B, T, C);
@@ -660,22 +670,22 @@ template<class floatX>
 void rmsnorm_backward_dispatch(floatX* dinp, floatX* dweight, std::byte* scratch,
                                const floatX* dresidual, const floatX* dout, const floatX* inp, const floatX* weight, const float* rstd,
                                float* abs_max_ptr,
-                               int B, int T, int C, const cudaDeviceProp& dp, cudaStream_t stream) {
+                               int B, int T, int C, const cudaDeviceProp& dp, cudaStream_t stream, cudaStream_t leaf_stream, cudaEvent_t leaf_event) {
     if (get_block_per_sm_small(C, dp) > 0) {
-        rmsnorm_backward_small_imp(dinp, dweight, scratch, dresidual, dout, inp, weight, rstd, abs_max_ptr, B, T, C, dp, stream);
+        rmsnorm_backward_small_imp(dinp, dweight, scratch, dresidual, dout, inp, weight, rstd, abs_max_ptr, B, T, C, dp, stream, leaf_stream, leaf_event);
     } else {
-        rmsnorm_backward_imp(dinp, dweight, scratch, dresidual, dout, inp, weight, rstd, abs_max_ptr, B, T, C, dp, stream);
+        rmsnorm_backward_imp(dinp, dweight, scratch, dresidual, dout, inp, weight, rstd, abs_max_ptr, B, T, C, dp, stream, leaf_stream, leaf_event);
     }
 }
 
 void rmsnorm_backward(float* dinp, float* dweight, std::byte* scratch,
                       const float* dresidual, const float* dout, const float* inp, const float* weight, const float* rstd, float* abs_max_ptr,
-                      int B, int T, int C, const cudaDeviceProp& dp, cudaStream_t stream) {
-    rmsnorm_backward_dispatch(dinp, dweight, scratch, dresidual, dout, inp, weight, rstd, abs_max_ptr, B, T, C, dp, stream);
+                      int B, int T, int C, const cudaDeviceProp& dp, cudaStream_t main_stream, cudaStream_t leaf_stream, cudaEvent_t leaf_event) {
+    rmsnorm_backward_dispatch(dinp, dweight, scratch, dresidual, dout, inp, weight, rstd, abs_max_ptr, B, T, C, dp, main_stream, leaf_stream, leaf_event);
 }
 
 void rmsnorm_backward(nv_bfloat16* dinp, nv_bfloat16* dweight, std::byte* scratch,
                       const nv_bfloat16* dresidual, const nv_bfloat16* dout, const nv_bfloat16* inp, const nv_bfloat16* weight, const float* rstd, float* abs_max_ptr,
-                      int B, int T, int C, const cudaDeviceProp& dp, cudaStream_t stream) {
-    rmsnorm_backward_dispatch(dinp, dweight, scratch, dresidual, dout, inp, weight, rstd, abs_max_ptr, B, T, C, dp, stream);
+                      int B, int T, int C, const cudaDeviceProp& dp, cudaStream_t main_stream, cudaStream_t leaf_stream, cudaEvent_t leaf_event) {
+    rmsnorm_backward_dispatch(dinp, dweight, scratch, dresidual, dout, inp, weight, rstd, abs_max_ptr, B, T, C, dp, main_stream, leaf_stream, leaf_event);
 }

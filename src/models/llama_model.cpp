@@ -385,10 +385,13 @@ void LLamaModel::backward(Tensor inputs, Tensor targets, NCCLCommunicator& comm,
     // backward the final layernorm
     rmsnorm_backward(rs->DActs[L-1].DResFFN.Value, d_lnf_w, rs->RMSNormScratch, rs->DActs[L - 1].DResFFN.Value, rs->DLNF,
                      rs->get_res_ffn(L-1, main_stream), Parameters->get_lnf(main_stream), rs->LNF_Rstd,
-                     rs->DActs[L-1].DResFFN.Quant.abs_max(), B, T, C, rs->DeviceProp, main_stream);
+                     rs->DActs[L-1].DResFFN.Quant.abs_max(), B, T, C, rs->DeviceProp, main_stream, rs->GradLeafStream, rs->GradLeafEvent);
     rs->release_res_ffn(L-1, main_stream);
 
     Parameters->release_lnf(main_stream);
+    // make sure all leaf computations are done before we attempt to communicate gradients
+    CUDA_CHECK(cudaEventRecord(rs->GradLeafEvent, rs->GradLeafStream));
+    CUDA_CHECK(cudaStreamWaitEvent(main_stream, rs->GradLeafEvent, 0));
     Grads->notify_lnf_w(main_stream, comm);
     rs->fetch_res_ffn(L-2, comm.stream());
     Parameters->gather_block(L - 1, comm, *rs);
@@ -422,13 +425,17 @@ void LLamaModel::backward(Tensor inputs, Tensor targets, NCCLCommunicator& comm,
             auto& prev_dacts = rs->DActs.at(l - 1);
             rmsnorm_backward(prev_dacts.DResFFN.Value, dw.LN1_w, rs->RMSNormScratch, prev_dacts.DResAtt.Value, d_acts.DLN1,
                              rs->get_res_ffn(l-1, main_stream), weights.LN1_w, rs->Acts[l].LN1_Rstd, prev_dacts.DResFFN.Quant.abs_max(),
-                             B, T, C, rs->DeviceProp, main_stream);
+                             B, T, C, rs->DeviceProp, main_stream, rs->GradLeafStream, rs->GradLeafEvent);
             rs->release_res_ffn(l - 1, main_stream);
         } else {
             rmsnorm_backward(rs->DEmb, dw.LN1_w, rs->RMSNormScratch, d_acts.DResAtt.Value, d_acts.DLN1,
-                             rs->Encoded, weights.LN1_w, rs->Acts[l].LN1_Rstd, nullptr, B, T, C, rs->DeviceProp, main_stream);
+                             rs->Encoded, weights.LN1_w, rs->Acts[l].LN1_Rstd, nullptr, B, T, C, rs->DeviceProp, main_stream, rs->GradLeafStream, rs->GradLeafEvent);
         }
         Parameters->release_block(l, main_stream);
+
+        // make sure all leaf computations are done before we attempt to communicate gradients
+        CUDA_CHECK(cudaEventRecord(rs->GradLeafEvent, rs->GradLeafStream));
+        CUDA_CHECK(cudaStreamWaitEvent(main_stream, rs->GradLeafEvent, 0));
         Grads->notify_block(l, main_stream, comm);
     }
 
@@ -439,7 +446,10 @@ void LLamaModel::backward(Tensor inputs, Tensor targets, NCCLCommunicator& comm,
 
     // make sure all gradients are communicated before we go to the update step.
     Grads->end_micro_step(main_stream, comm);
+    CUDA_CHECK(cudaEventRecord(rs->GradLeafEvent, rs->GradLeafStream));
+    CUDA_CHECK(cudaStreamWaitEvent(main_stream, rs->GradLeafEvent, 0));
     CUDA_CHECK(cudaEventRecord(rs->BackwardDone, main_stream));
+
 
     // do not return before inputs can be accessed again.
     CUDA_CHECK(cudaEventSynchronize(rs->TransferDone));
@@ -634,7 +644,8 @@ void LLamaModel::_backward_block(bool accumulate, sLLamaBlockWeights<Tensor>& we
 
     // rmsnorm backward does += to the dresidual, so it correctly accumulates grad from the MLP block above
     rmsnorm_backward(d_acts.DResAtt.Value, d_weights.LN2_w, rs->RMSNormScratch, d_acts.DResFFN.Value, d_acts.DLN2,
-                     acts.ResidualAtt, weights.LN2_w, acts.LN2_Rstd, d_acts.DResAtt.Quant.abs_max(), B, T, C, rs->DeviceProp, main_stream);
+                     acts.ResidualAtt, weights.LN2_w, acts.LN2_Rstd, d_acts.DResAtt.Quant.abs_max(), B, T, C, rs->DeviceProp,
+                     main_stream, rs->GradLeafStream, rs->GradLeafEvent);
 
     bool recompute_ln1 = rs->Options.RecomputeRMSNorm || rs->Options.RecomputeAtt;
     backward_qmm(d_acts.DAttY, d_weights.Attn_Out_w, Tensor{}, d_acts.DResAtt, acts.Att, weights.Attn_Out_w, Tensor{},

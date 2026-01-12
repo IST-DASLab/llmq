@@ -17,13 +17,13 @@ void rmsnorm_forward(Tensor& out, Tensor& rms, const Tensor& inp, const Tensor& 
 }
 
 void rmsnorm_backward(Tensor& dinp, Tensor& dweight, Tensor& scratch, const Tensor& dresidual, const Tensor& dout, const Tensor& inp, const Tensor& weight, const Tensor& rstd, float* abs_max_ptr,
-                      int B, int T, int C, const cudaDeviceProp& dp, cudaStream_t stream) {
+                      int B, int T, int C, const cudaDeviceProp& dp, cudaStream_t main_stream, cudaStream_t leaf_stream, cudaEvent_t leaf_event) {
     if(dinp.DType == ETensorDType::BF16) {
         rmsnorm_backward(dinp.get<nv_bfloat16>(), dweight.get<nv_bfloat16>(), scratch.Data, dresidual.get<nv_bfloat16>(),
-            dout.get<nv_bfloat16>(), inp.get<nv_bfloat16>(), weight.get<nv_bfloat16>(), rstd.get<float>(), abs_max_ptr, B, T, C, dp, stream);
+            dout.get<nv_bfloat16>(), inp.get<nv_bfloat16>(), weight.get<nv_bfloat16>(), rstd.get<float>(), abs_max_ptr, B, T, C, dp, main_stream, leaf_stream,  leaf_event);
     } else if (dinp.DType == ETensorDType::FP32) {
         rmsnorm_backward(dinp.get<float>(), dweight.get<float>(), scratch.Data, dresidual.get<float>(),
-            dout.get<float>(), inp.get<float>(), weight.get<float>(), rstd.get<float>(), abs_max_ptr, B, T, C, dp, stream);
+            dout.get<float>(), inp.get<float>(), weight.get<float>(), rstd.get<float>(), abs_max_ptr, B, T, C, dp, main_stream, leaf_stream, leaf_event);
     } else {
         throw std::logic_error("rmsnorm_backward: unsupported dtype");
     }

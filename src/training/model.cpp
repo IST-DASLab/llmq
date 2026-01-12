@@ -48,6 +48,8 @@ IRunState::IRunState(TransformerConfig config, long batch_size, long seq_len, st
     CuBlasWorkspace = Allocator->allocate(ETensorDType::BYTE, "cublas_ws", {32*1024*1024});
 
     MainStream = create_named_stream("main stream");
+    GradLeafStream = create_named_stream("grad leaves");
+    GradLeafEvent = create_named_event("grad leaf event");
 
     ForwardDone = create_named_event("forward_done");
     BackwardDone = create_named_event("backward_done");

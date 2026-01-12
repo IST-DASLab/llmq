@@ -47,11 +47,11 @@ void rmsnorm_forward(Tensor& out, Tensor& rms, const Tensor& inp, const Tensor& 
 
 int get_rmsnorm_backward_scratch_size(int C, const cudaDeviceProp& dp);
 void rmsnorm_backward(float* dinp, float* dweight, std::byte* scratch, const float* dresidual, const float* dout, const float* inp, const float* weight, const float* rstd, float* abs_max_ptr,
-                      int B, int T, int C, const cudaDeviceProp& dp, cudaStream_t stream);
+                      int B, int T, int C, const cudaDeviceProp& dp, cudaStream_t main_stream, cudaStream_t leaf_stream, cudaEvent_t leaf_event);
 void rmsnorm_backward(nv_bfloat16* dinp, nv_bfloat16* dweight, std::byte* scratch, const nv_bfloat16* dresidual, const nv_bfloat16* dout, const nv_bfloat16* inp, const nv_bfloat16* weight, const float* rstd, float* abs_max_ptr,
-                      int B, int T, int C, const cudaDeviceProp& dp, cudaStream_t stream);
+                      int B, int T, int C, const cudaDeviceProp& dp, cudaStream_t main_stream, cudaStream_t leaf_stream, cudaEvent_t leaf_event);
 void rmsnorm_backward(Tensor& dinp, Tensor& dweight, Tensor& scratch, const Tensor& dresidual, const Tensor& dout, const Tensor& inp, const Tensor& weight, const Tensor& rstd, float* abs_max_ptr,
-                      int B, int T, int C,  const cudaDeviceProp& dp, cudaStream_t stream);
+                      int B, int T, int C,  const cudaDeviceProp& dp, cudaStream_t main_stream, cudaStream_t leaf_stream, cudaEvent_t leaf_event);
 
 void fused_residual_rmsnorm_forward(float* residual, float* normed, float* rrms, const float* inp1, const float* inp2, const float* weight, float* abs_max_ptr,
                                     float epsilon, int N, int C, cudaStream_t stream);

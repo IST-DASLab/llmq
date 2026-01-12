@@ -165,6 +165,8 @@ public:
     cudaDeviceProp DeviceProp;
 
     cudaStream_t MainStream = nullptr;
+    cudaStream_t GradLeafStream = nullptr;     //!< stream for tiny leaf operations (typically reductions) in backward
+    cudaEvent_t GradLeafEvent = nullptr;       //!< even to sync main and grad leaf
 
     cudaEvent_t ForwardDone   = nullptr;       //!< recorded at the end of the forward pass
     cudaEvent_t BackwardDone  = nullptr;       //!< recorded at the end of the backward pass
