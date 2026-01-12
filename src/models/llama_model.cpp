@@ -389,7 +389,7 @@ void LLamaModel::backward(Tensor inputs, Tensor targets, NCCLCommunicator& comm,
     }
 
     bool accumulate;
-    auto& d_lnf_w = Grads->get_lnf_w_full(main_stream, comm, accumulate);
+    auto& d_lnf_w = Grads->get_non_block_full(LLamaWeightID::LNF_W, main_stream, comm, accumulate);
     Parameters->gather_lnf(comm);
     // backward the final layernorm
     rmsnorm_backward(rs->DActs[L-1].DResFFN.Value, d_lnf_w, rs->RMSNormScratch, rs->DActs[L - 1].DResFFN.Value, rs->DLNF,
@@ -398,7 +398,7 @@ void LLamaModel::backward(Tensor inputs, Tensor targets, NCCLCommunicator& comm,
     rs->release_res_ffn(L-1, main_stream);
 
     Parameters->release_lnf(main_stream);
-    Grads->notify_lnf_w(main_stream, comm);
+    Grads->notify_non_block(LLamaWeightID::LNF_W, main_stream, comm);
     rs->fetch_res_ffn(L-2, comm.stream());
     Parameters->gather_block(L - 1, comm, *rs);
     // now backward all the layers
@@ -429,22 +429,22 @@ void LLamaModel::backward(Tensor inputs, Tensor targets, NCCLCommunicator& comm,
 
         if(l > 0) {
             auto& prev_dacts = rs->DActs.at(l - 1);
-            rmsnorm_backward(prev_dacts.DResFFN.Value, dw.LN1_w, rs->RMSNormScratch, prev_dacts.DResAtt.Value, d_acts.DLN1,
+            rmsnorm_backward(prev_dacts.DResFFN.Value, dw.get_tensor(LLamaWeightID::LN1_W), rs->RMSNormScratch, prev_dacts.DResAtt.Value, d_acts.DLN1,
                              rs->get_res_ffn(l-1, main_stream), weights.LN1_w, rs->Acts[l].LN1_Rstd, prev_dacts.DResFFN.Quant.abs_max(),
                              B, T, C, rs->DeviceProp, main_stream);
             rs->release_res_ffn(l - 1, main_stream);
         } else {
-            rmsnorm_backward(rs->DEmb, dw.LN1_w, rs->RMSNormScratch, d_acts.DResAtt.Value, d_acts.DLN1,
+            rmsnorm_backward(rs->DEmb, dw.get_tensor(LLamaWeightID::LN1_W), rs->RMSNormScratch, d_acts.DResAtt.Value, d_acts.DLN1,
                              rs->Encoded, weights.LN1_w, rs->Acts[l].LN1_Rstd, nullptr, B, T, C, rs->DeviceProp, main_stream);
         }
         Parameters->release_block(l, main_stream);
         Grads->notify_block(l, main_stream, comm);
     }
 
-    auto& d_emb = Grads->get_embeddings_full(main_stream, comm, accumulate);
+    auto& d_emb = Grads->get_non_block_full(LLamaWeightID::EMBEDDING, main_stream, comm, accumulate);
     encoder_backward(d_emb, rs->EncoderBwdScratch, rs->EncoderBwdIndices, rs->EncoderBwdInfo,
                      rs->DEmb, rs->Inputs, inputs, B, T, C, OptimizerRNG(), main_stream, rs->SideStreamEvent, rs->SideStream);
-    Grads->notify_embeddings(main_stream, comm);
+    Grads->notify_non_block(LLamaWeightID::EMBEDDING, main_stream, comm);
 
     // make sure all gradients are communicated before we go to the update step.
     Grads->end_micro_step(main_stream, comm);
@@ -509,12 +509,12 @@ void LLamaModel::_backward_lmhead(long B, long T, float z_loss, int micro_step, 
 
         // handle the LM-head. We run the d_lmhead matmul first, so that the gradient reduction can overlap with the DLNF matmul.
         bool accumulate;
-        auto& d_lmhead = Grads->get_lmhead_full(main_stream, comm, accumulate);
+        auto& d_lmhead = Grads->get_non_block_full(LLamaWeightID::LM_HEAD, main_stream, comm, accumulate);
         accumulate |= nano_step != 0;
         matmul(d_lmhead, lnf_slice, rs->Output, Tensor{}, nullptr, nullptr,
                rs->CublasLtHandle, rs->CuBlasWorkspace, C, V, nano_batch_size, EMMTranspose::NT, accumulate, main_stream, rs->MatmulBackend);
-        if (nano_step == nano_batches - 1) {
-            Grads->notify_lmhead(main_stream, comm);
+        if (nano_step == nano_batches - 1 && !Config.TiedWordEmbeddings) {
+            Grads->notify_non_block(LLamaWeightID::LM_HEAD, main_stream, comm);
         }
 
         matmul(dlnf_slice, Parameters->get_head(main_stream), rs->Output, Tensor{}, nullptr, nullptr,
@@ -610,8 +610,9 @@ void LLamaModel::_recompute_block(sLLamaBlockWeights<Tensor>& weights, sLLamaLay
     }
 }
 
-void LLamaModel::_backward_block(bool accumulate, sLLamaBlockWeights<Tensor>& weights, sLLamaGradBlock& d_weights,
+void LLamaModel::_backward_block(bool accumulate, sLLamaBlockWeights<Tensor>& weights, SimpleTensorContainer& d_weights,
                                  sLLamaLayerActivations& acts, sLLamaLayerGradients& d_acts) {
+    using namespace LLamaWeightID;
     auto& rs = RunState;
     cudaStream_t main_stream = rs->MainStream;
     // convenience shortcuts, size_t instead of int so that pointer arithmetics don't overflow
@@ -626,7 +627,7 @@ void LLamaModel::_backward_block(bool accumulate, sLLamaBlockWeights<Tensor>& we
     // backward the 2nd matmul of MLP
     // note that _recompute_block guarantees that if SwiGLu is already quantized (if necessary)
     rs->temp_acquire(d_acts.DSwiGLU);
-    backward_qmm(d_acts.DSwiGLU, d_weights.MLP_Down_w, Tensor{}, d_acts.DResFFN, acts.SwiGLu, weights.MLP_Down_w, Tensor{},
+    backward_qmm(d_acts.DSwiGLU, d_weights.get_tensor(DOWN_W), Tensor{}, d_acts.DResFFN, acts.SwiGLu, weights.MLP_Down_w, Tensor{},
                  accumulate, *rs, B, T, D, C, true, main_stream);
 
     swiglu_backward(d_acts.DMlpUp.Value, d_acts.DSwiGLU, acts.MlpUp, d_acts.DMlpUp.Quant.abs_max(), B, T, D, main_stream);
@@ -635,18 +636,18 @@ void LLamaModel::_backward_block(bool accumulate, sLLamaBlockWeights<Tensor>& we
     if(Options.grad_dtype() != d_acts.DMlpUp.Value.DType) {
         rs->temp_acquire(d_acts.DMlpUp.Quant);
     }
-    backward_qmm(d_acts.DLN2, d_weights.MLP_Up_w, Tensor{}, d_acts.DMlpUp, acts.LN2, weights.MLP_Up_w, Tensor{},
+    backward_qmm(d_acts.DLN2, d_weights.get_tensor(UP_W), Tensor{}, d_acts.DMlpUp, acts.LN2, weights.MLP_Up_w, Tensor{},
                  accumulate, *rs, B, T, C, 2 * D, !rs->Options.RecomputeRMSNorm, main_stream);
     if(Options.grad_dtype() != d_acts.DMlpUp.Value.DType) {
         rs->temp_free(d_acts.DMlpUp.Quant);
     }
 
     // rmsnorm backward does += to the dresidual, so it correctly accumulates grad from the MLP block above
-    rmsnorm_backward(d_acts.DResAtt.Value, d_weights.LN2_w, rs->RMSNormScratch, d_acts.DResFFN.Value, d_acts.DLN2,
+    rmsnorm_backward(d_acts.DResAtt.Value, d_weights.get_tensor(LN2_W), rs->RMSNormScratch, d_acts.DResFFN.Value, d_acts.DLN2,
                      acts.ResidualAtt, weights.LN2_w, acts.LN2_Rstd, d_acts.DResAtt.Quant.abs_max(), B, T, C, rs->DeviceProp, main_stream);
 
     bool recompute_ln1 = rs->Options.RecomputeRMSNorm || rs->Options.RecomputeAtt;
-    backward_qmm(d_acts.DAttY, d_weights.Attn_Out_w, Tensor{}, d_acts.DResAtt, acts.Att, weights.Attn_Out_w, Tensor{},
+    backward_qmm(d_acts.DAttY, d_weights.get_tensor(ATTO_W), Tensor{}, d_acts.DResAtt, acts.Att, weights.Attn_Out_w, Tensor{},
                  accumulate, *rs, B, T, C, C, false, main_stream);
 
     rs->temp_acquire(d_acts.DQKV.Value);
@@ -664,7 +665,7 @@ void LLamaModel::_backward_block(bool accumulate, sLLamaBlockWeights<Tensor>& we
     rs->temp_free(rs->CuDNNWorkspace);
     rope_backward(d_acts.DQKV.Value, d_acts.DQKV.Value, rs->FreqCis, d_acts.DQKV.Quant.abs_max(), B, T, Hq, Hkv, Hs, main_stream);
 
-    backward_qmm(d_acts.DLN1, d_weights.Attn_QKV_w, d_weights.Attn_QKV_b, d_acts.DQKV, acts.LN1, weights.Attn_QKV_w, rs->MatmulBiasScratch,
+    backward_qmm(d_acts.DLN1, d_weights.get_tensor(QKV_W), d_weights.get_tensor(QKV_B), d_acts.DQKV, acts.LN1, weights.Attn_QKV_w, rs->MatmulBiasScratch,
                  accumulate, *rs, B, T, C, Config.qkv_channels(), !recompute_ln1, main_stream);
     rs->temp_free(d_acts.DQKV.Value);
 }
@@ -768,12 +769,12 @@ void LLamaModel::_calculate_gradient_norm(NCCLCommunicator& comm, float grad_cli
         global_norm_squared(rs->NormBuffer, grad, grad.nelem(), rs->DeviceProp, stream);
     };
 
-    norm_squared(Grads->get_embeddings_shard(stream));
+    norm_squared(Grads->get_non_block_shard(LLamaWeightID::EMBEDDING, stream));
 
     if(!Config.TiedWordEmbeddings) {
-        norm_squared(Grads->get_lmhead_shard(stream));
+        norm_squared(Grads->get_non_block_shard(LLamaWeightID::LM_HEAD, stream));
     }
-    norm_squared(Grads->get_lnf_w_shard(stream));
+    norm_squared(Grads->get_non_block_shard(LLamaWeightID::LNF_W, stream));
 
     for(int i = 0; i < Config.NumLayers; i++) {
         auto& block = Grads->get_block_shard(i, stream);
@@ -822,11 +823,11 @@ void LLamaModel::update(NCCLCommunicator& comm, float learning_rate, float beta_
     auto& nb_scales = OptimizerState->non_block_m_scales();
 
     using namespace LLamaWeightID;
-    run_update(Parameters->get_master_embeddings(), Grads->get_embeddings_shard(main_stream),
+    run_update(Parameters->get_master_embeddings(), Grads->get_non_block_shard(EMBEDDING, main_stream),
                OptimizerState->non_block_m().get_tensor(EMBEDDING), OptimizerState->non_block_v().get_tensor(EMBEDDING),
                nb_scales.get_tensor(EMBEDDING), weight_decay);
     comm.reduce_max(Parameters->get_master_embeddings().abs_max());
-    run_update(Parameters->get_master_lnf_w(), Grads->get_lnf_w_shard(main_stream),
+    run_update(Parameters->get_master_lnf_w(), Grads->get_non_block_shard(LNF_W, main_stream),
                OptimizerState->non_block_m().get_tensor(LNF_W), OptimizerState->non_block_v().get_tensor(LNF_W), nb_scales.get_tensor(LNF_W), 0.f);
     comm.reduce_max(Parameters->get_master_lnf_w().abs_max());
     CUDA_CHECK(cudaEventRecord(rs->OptEmbeddingsDone, main_stream));
@@ -868,7 +869,7 @@ void LLamaModel::update(NCCLCommunicator& comm, float learning_rate, float beta_
     }
 
     if(!Config.TiedWordEmbeddings) {
-        run_update(Parameters->get_master_lmhead(), Grads->get_lmhead_shard(main_stream),
+        run_update(Parameters->get_master_lmhead(), Grads->get_non_block_shard(LM_HEAD, main_stream),
                    OptimizerState->non_block_m().get_tensor(LM_HEAD), OptimizerState->non_block_v().get_tensor(LM_HEAD), nb_scales.get_tensor(LM_HEAD), weight_decay);
         comm.reduce_max(Parameters->get_master_lmhead().abs_max());
     }

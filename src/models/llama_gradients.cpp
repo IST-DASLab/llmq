@@ -40,20 +40,13 @@ public:
     void on_first_micro_step(cudaStream_t stream) override;
     void end_micro_step(cudaStream_t stream, NCCLCommunicator& comm) override;
 
-    Tensor& get_embeddings_full(cudaStream_t stream, NCCLCommunicator& comm, bool& accumulate) override;
-    Tensor& get_lmhead_full(cudaStream_t stream, NCCLCommunicator& comm, bool& accumulate) override;
-    Tensor& get_lnf_w_full(cudaStream_t stream, NCCLCommunicator& comm, bool& accumulate) override;
+    Tensor& get_non_block_full(std::size_t index, cudaStream_t stream, NCCLCommunicator& comm, bool& accumulate) override;
     sLLamaBlockWeights<Tensor>& get_block_full(int layer_idx, cudaStream_t stream, NCCLCommunicator& comm, bool& accumulate) override;
 
-    TensorShard& get_embeddings_shard(cudaStream_t stream) override;
-    TensorShard& get_lmhead_shard(cudaStream_t stream) override;
-    TensorShard& get_lnf_w_shard(cudaStream_t stream) override;
+    Tensor& get_non_block_shard(std::size_t index, cudaStream_t stream) override;
     sLLamaBlockWeights<TensorShard>& get_block_shard(int layer_idx, cudaStream_t stream) override;
 
-    void notify_embeddings(cudaStream_t stream, NCCLCommunicator& comm) override;
-    void notify_lmhead(cudaStream_t stream, NCCLCommunicator& comm) override;
-    void notify_lnf_w(cudaStream_t stream, NCCLCommunicator& comm) override;
-
+    void notify_non_block(std::size_t index, cudaStream_t stream, NCCLCommunicator& comm) override;
     void notify_block(int layer_idx, cudaStream_t stream, NCCLCommunicator& comm) override;
 private:
     sLLamaWeightsSet<Tensor> mFullGradient;
@@ -98,57 +91,29 @@ void LLamaGradientsUnsharded::end_micro_step(cudaStream_t stream, NCCLCommunicat
 }
 
 
-Tensor& LLamaGradientsUnsharded::get_embeddings_full(cudaStream_t stream, NCCLCommunicator& comm, bool& accumulate) {
+Tensor& LLamaGradientsUnsharded::get_non_block_full(std::size_t index, cudaStream_t stream, NCCLCommunicator& comm, bool& accumulate) {
     accumulate = !mIsFirstMicroStep;
-    return mFullGradient.NonBlocks.Embeddings;
+    return mFullGradient.NonBlocks.get_tensor(index);
 }
-Tensor& LLamaGradientsUnsharded::get_lmhead_full(cudaStream_t stream, NCCLCommunicator& comm, bool& accumulate) {
-    accumulate = !mIsFirstMicroStep;
-    return mFullGradient.NonBlocks.LMHead;
-}
-Tensor& LLamaGradientsUnsharded::get_lnf_w_full(cudaStream_t stream, NCCLCommunicator& comm, bool& accumulate) {
-    accumulate = !mIsFirstMicroStep;
-    return mFullGradient.NonBlocks.LNF_w;
-}
+
 sLLamaBlockWeights<Tensor>& LLamaGradientsUnsharded::get_block_full(int layer_idx, cudaStream_t stream, NCCLCommunicator& comm, bool& accumulate) {
     accumulate = !mIsFirstMicroStep;
     return mFullGradient.Blocks.at(layer_idx);
 }
 
-TensorShard& LLamaGradientsUnsharded::get_embeddings_shard(cudaStream_t stream) {
-    return mShardView.NonBlocks.Embeddings;
+Tensor& LLamaGradientsUnsharded::get_non_block_shard(std::size_t index, cudaStream_t stream) {
+    return mShardView.NonBlocks.get_tensor(index);
 }
-TensorShard& LLamaGradientsUnsharded::get_lmhead_shard(cudaStream_t stream) {
-    return mShardView.NonBlocks.LMHead;
-}
-TensorShard& LLamaGradientsUnsharded::get_lnf_w_shard(cudaStream_t stream) {
-    return mShardView.NonBlocks.LNF_w;
-}
+
 sLLamaBlockWeights<TensorShard>& LLamaGradientsUnsharded::get_block_shard(int layer_idx, cudaStream_t stream) {
     return mShardView.Blocks.at(layer_idx);
 }
 
-void LLamaGradientsUnsharded::notify_embeddings(cudaStream_t stream, NCCLCommunicator& comm) {
+void LLamaGradientsUnsharded::notify_non_block(std::size_t index, cudaStream_t stream, NCCLCommunicator& comm) {
     if(!mIsLastMicroStep) return;
     if (comm.world_size() != 1) {
         NvtxRange r{"notify_embeddings"};
-        scatter_reduce(mFullGradient.NonBlocks.Embeddings, stream, mGradEvent, comm);
-    }
-}
-
-void LLamaGradientsUnsharded::notify_lmhead(cudaStream_t stream, NCCLCommunicator& comm) {
-    if(!mIsLastMicroStep) return;
-    if(mFullGradient.NonBlocks.LMHead.Data == mFullGradient.NonBlocks.Embeddings.Data) return;    // sync lmhead with embeddings
-    if (comm.world_size() != 1) {
-        NvtxRange r{"notify_lmhead"};
-        scatter_reduce(mFullGradient.NonBlocks.LMHead, stream, mGradEvent, comm);
-    }
-}
-
-void LLamaGradientsUnsharded::notify_lnf_w(cudaStream_t stream, NCCLCommunicator& comm) {
-    if(!mIsLastMicroStep) return;
-    if (comm.world_size() != 1) {
-        scatter_reduce(mFullGradient.NonBlocks.LNF_w, stream, mGradEvent, comm);
+        scatter_reduce(mFullGradient.NonBlocks.get_tensor(index), stream, mGradEvent, comm);
     }
 }
 
@@ -170,20 +135,14 @@ public:
     void on_first_micro_step(cudaStream_t stream) override;
     void end_micro_step(cudaStream_t stream, NCCLCommunicator& comm) override;
 
-    Tensor& get_embeddings_full(cudaStream_t stream, NCCLCommunicator& comm, bool& accumulate) override;
-    Tensor& get_lmhead_full(cudaStream_t stream, NCCLCommunicator& comm, bool& accumulate) override;
-    Tensor& get_lnf_w_full(cudaStream_t stream, NCCLCommunicator& comm, bool& accumulate) override;
+    Tensor& get_non_block_full(std::size_t index, cudaStream_t stream, NCCLCommunicator& comm, bool& accumulate) override;
     sLLamaBlockWeights<Tensor>& get_block_full(int layer_idx, cudaStream_t stream, NCCLCommunicator& comm, bool& accumulate) override;
 
-    void notify_embeddings(cudaStream_t stream, NCCLCommunicator& comm) override;
-    void notify_lmhead(cudaStream_t stream, NCCLCommunicator& comm) override;
-    void notify_lnf_w(cudaStream_t stream, NCCLCommunicator& comm) override;
-    void notify_block(int layer_idx, cudaStream_t stream, NCCLCommunicator& comm) override;
-
-    TensorShard& get_embeddings_shard(cudaStream_t stream) override;
-    TensorShard& get_lmhead_shard(cudaStream_t stream) override;
-    TensorShard& get_lnf_w_shard(cudaStream_t stream) override;
+    Tensor& get_non_block_shard(std::size_t index, cudaStream_t stream) override;
     sLLamaBlockWeights<TensorShard>& get_block_shard(int layer_idx, cudaStream_t stream) override;
+
+    void notify_non_block(std::size_t index, cudaStream_t stream, NCCLCommunicator& comm) override;
+    void notify_block(int layer_idx, cudaStream_t stream, NCCLCommunicator& comm) override;
 private:
     virtual void sr_accumulate_layer(int layer_idx,
                                      SimpleTensorContainer& dw,
@@ -248,19 +207,9 @@ void LLamaGradientsBlockShardedBase::end_micro_step(cudaStream_t stream, NCCLCom
         CUDA_CHECK(cudaStreamWaitEvent(stream, mNonBlockEvent, 0));
 }
 
-Tensor& LLamaGradientsBlockShardedBase::get_embeddings_full(cudaStream_t stream, NCCLCommunicator& comm, bool& accumulate) {
+Tensor& LLamaGradientsBlockShardedBase::get_non_block_full(std::size_t index, cudaStream_t stream, NCCLCommunicator& comm, bool& accumulate) {
     accumulate = !mIsFirstMicroStep;
-    return mFullNonBlock.Embeddings;
-}
-
-Tensor& LLamaGradientsBlockShardedBase::get_lmhead_full(cudaStream_t stream, NCCLCommunicator& comm, bool& accumulate) {
-    accumulate = !mIsFirstMicroStep;
-    return mFullNonBlock.LMHead;
-}
-
-Tensor& LLamaGradientsBlockShardedBase::get_lnf_w_full(cudaStream_t stream, NCCLCommunicator& comm, bool& accumulate) {
-    accumulate = !mIsFirstMicroStep;
-    return mFullNonBlock.LNF_w;
+    return mFullNonBlock.get_tensor(index);
 }
 
 sLLamaBlockWeights<Tensor>& LLamaGradientsBlockShardedBase::get_block_full(int layer_idx, cudaStream_t stream, NCCLCommunicator& comm, bool& accumulate) {
@@ -282,21 +231,10 @@ sLLamaBlockWeights<Tensor>& LLamaGradientsBlockShardedBase::get_block_full(int l
     return dw;
 }
 
-void LLamaGradientsBlockShardedBase::notify_embeddings(cudaStream_t stream, NCCLCommunicator& comm) {
+void LLamaGradientsBlockShardedBase::notify_non_block(std::size_t index, cudaStream_t stream, NCCLCommunicator& comm) {
     if(!mIsLastMicroStep) return;
-    scatter_reduce(mFullNonBlock.Embeddings, stream, mNonBlockEvent, comm);
-}
-
-void LLamaGradientsBlockShardedBase::notify_lmhead(cudaStream_t stream, NCCLCommunicator& comm) {
-    if(!mIsLastMicroStep) return;
-    if(mFullNonBlock.LMHead.Data == mFullNonBlock.Embeddings.Data) return;    // sync lmhead with embeddings
-    NvtxRange r{"notify_lmhead"};
-    scatter_reduce(mFullNonBlock.LMHead, stream, mNonBlockEvent, comm);
-}
-
-void LLamaGradientsBlockShardedBase::notify_lnf_w(cudaStream_t stream, NCCLCommunicator& comm) {
-    if(!mIsLastMicroStep) return;
-    scatter_reduce(mFullNonBlock.LNF_w, stream, mNonBlockEvent, comm);
+    NvtxRange r{"notify"};
+    scatter_reduce(mFullNonBlock.get_tensor(index), stream, mNonBlockEvent, comm);
 }
 
 void LLamaGradientsBlockShardedBase::notify_block(int layer_idx, cudaStream_t stream, NCCLCommunicator& comm) {
@@ -313,16 +251,9 @@ void LLamaGradientsBlockShardedBase::notify_block(int layer_idx, cudaStream_t st
     state.NeedsAccumulation = true;
 }
 
-TensorShard& LLamaGradientsBlockShardedBase::get_embeddings_shard(cudaStream_t stream) {
-    return mNonBlockShards.Embeddings;
-}
 
-TensorShard& LLamaGradientsBlockShardedBase::get_lmhead_shard(cudaStream_t stream) {
-    return mNonBlockShards.LMHead;
-}
-
-TensorShard& LLamaGradientsBlockShardedBase::get_lnf_w_shard(cudaStream_t stream) {
-    return mNonBlockShards.LNF_w;
+Tensor& LLamaGradientsBlockShardedBase::get_non_block_shard(std::size_t index, cudaStream_t stream) {
+    return mNonBlockShards.get_tensor(index);
 }
 
 sLLamaBlockWeights<TensorShard>& LLamaGradientsBlockShardedBase::get_block_shard(int layer_idx, cudaStream_t stream) {

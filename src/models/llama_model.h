@@ -129,7 +129,7 @@ protected:
     void _forward_block(sLLamaBlockWeights<Tensor>& weights, sLLamaLayerActivations& activations, Tensor& residual);
     void _backward_lmhead(long B, long T, float z_loss, int micro_step, int grad_accum_steps, NCCLCommunicator& comm);
     void _recompute_block(sLLamaBlockWeights<Tensor>& weights, sLLamaLayerActivations& activations, Tensor& residual);
-    void _backward_block(bool accumulate, sLLamaBlockWeights<Tensor>& weights, sLLamaGradBlock& grads,
+    void _backward_block(bool accumulate, sLLamaBlockWeights<Tensor>& weights, SimpleTensorContainer& grads,
                          sLLamaLayerActivations& activations, sLLamaLayerGradients& d_activations);
 private:
     TransformerConfig Config;
