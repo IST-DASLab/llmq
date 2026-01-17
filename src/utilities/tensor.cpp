@@ -157,3 +157,11 @@ std::size_t GenericTensorContainer::num_tensors() const noexcept {
 const Tensor& GenericTensorContainer::get_tensor(std::size_t idx) const {
     return mTensors.at(idx);
 }
+
+GenericTensorContainer shard_container(GenericTensorContainer&& c, int world) {
+    visit([world](Tensor& t) {
+        if (!t.empty()) { throw std::logic_error("shard_container called with non-empty tensor"); }
+        t.Sizes[0] = div_exact(t.Sizes[0], static_cast<long>(world));
+    }, c);
+    return c;
+}

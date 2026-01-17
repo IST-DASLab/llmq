@@ -17,6 +17,8 @@
 
 // ---------------------------------------------------------------------------------------------------------------------
 
+class IGradientManager;
+
 struct LLamaOptions {
     bool KeepAllActivations = false;
     bool RecomputeSwiGLu = false;
@@ -113,7 +115,7 @@ public:
     const TensorAllocator& get_allocator() const { return *Allocator; }
 
     const TransformerConfig& config() { return Config; }
-    LLamaGradsManager& grads() { return *Grads; }
+    IGradientManager& grads() { return *Grads; }
     LLamaRunState& run_state() { return *RunState; }
 
     IRunState& get_run_state() const override;
@@ -137,7 +139,7 @@ private:
     std::shared_ptr<TensorAllocator> Allocator;
     std::unique_ptr<LLamaWeightsManager> Parameters;
     std::unique_ptr<LLamaOptimizerStateManager> OptimizerState;
-    std::unique_ptr<LLamaGradsManager> Grads;
+    std::unique_ptr<IGradientManager> Grads;
     std::unique_ptr<LLamaRunState> RunState;
 
     std::minstd_rand OptimizerRNG;  //!< Seed generator for stochastic rounding in the optimizer
