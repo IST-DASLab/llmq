@@ -57,6 +57,7 @@ private:
     std::vector<Tensor> mTensors;
 };
 
+GenericTensorContainer shard_container(GenericTensorContainer&& c, int world);
 
 class ITensorContainer {
   public:

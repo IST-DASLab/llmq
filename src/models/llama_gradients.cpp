@@ -8,7 +8,7 @@
 #include "llama_model.h"
 #include "utilities/comm.h"
 
-LLamaGradsManager::LLamaGradsManager(std::uint64_t seed, int step) : mRng(seed), mStepCounter(step) {
+LLamaGradsManager::LLamaGradsManager(std::uint64_t seed, int step) : IGradientManager(seed, step) {
 
 }
 
@@ -24,104 +24,32 @@ void LLamaGradsManager::scatter_reduce(int layer_idx, SimpleTensorContainer& blo
     comm.execute_transaction(signal);
 }
 
-void LLamaGradsManager::start_micro_step(cudaStream_t stream, int micro_step, int total_steps) {
-    mIsFirstMicroStep = micro_step == 0;
-    mIsLastMicroStep = micro_step == total_steps - 1;
-    if (micro_step == 0) {
-        ++mStepCounter;
-        on_first_micro_step(stream);
-    }
-}
-
-class LLamaGradientsUnsharded : public LLamaGradsManager {
+class LLamaGradientsUnsharded : public UnshardedGradientManager {
 public:
-    LLamaGradientsUnsharded(std::uint64_t seed, int step, const TransformerConfig& config, int rank, int world, const std::shared_ptr<TensorAllocator>& alloc);
+    LLamaGradientsUnsharded(const TransformerConfig& cfg, IModel& model, std::uint64_t seed, int step, int rank,
+        int world, const std::shared_ptr<TensorAllocator>& alloc)
+        : UnshardedGradientManager(cfg, model, seed, step, rank, world, alloc) {
+    }
 
     void on_first_micro_step(cudaStream_t stream) override;
-    void end_micro_step(cudaStream_t stream, NCCLCommunicator& comm) override;
-
-    Tensor& get_non_block_full(std::size_t index, cudaStream_t stream, NCCLCommunicator& comm, bool& accumulate) override;
-    sLLamaBlockWeights<Tensor>& get_block_full(int layer_idx, cudaStream_t stream, NCCLCommunicator& comm, bool& accumulate) override;
-
-    Tensor& get_non_block_shard(std::size_t index, cudaStream_t stream) override;
-    sLLamaBlockWeights<TensorShard>& get_block_shard(int layer_idx, cudaStream_t stream) override;
-
-    void notify_non_block(std::size_t index, cudaStream_t stream, NCCLCommunicator& comm) override;
-    void notify_block(int layer_idx, cudaStream_t stream, NCCLCommunicator& comm) override;
-private:
-    sLLamaWeightsSet<Tensor> mFullGradient;
-    sLLamaWeightsSet<TensorShard> mShardView;
-    cudaEvent_t mGradEvent;
 };
 
-LLamaGradientsUnsharded::LLamaGradientsUnsharded(std::uint64_t seed, int step, const TransformerConfig& config, int rank, int world, const std::shared_ptr<TensorAllocator>& alloc) :
-    LLamaGradsManager(seed, step)
-{
-    mFullGradient = allocate_full_weights(config, EAllocationType::ON_DEVICE, *alloc);
-    mShardView.NonBlocks = shard_non_block(mFullGradient.NonBlocks, rank, world);
-    mShardView.Blocks.reserve(config.NumLayers);
-    for(int i = 0; i < config.NumLayers; ++i) {
-        mShardView.Blocks.push_back(shard_block(mFullGradient.Blocks[i], rank, world));
-    }
-    mGradEvent = create_named_event("grad_event");
-}
-
 void LLamaGradientsUnsharded::on_first_micro_step(cudaStream_t stream) {
-    fill_zero(mFullGradient.NonBlocks.LNF_w, stream);
-    if(mFullGradient.NonBlocks.LMHead.Data != mFullGradient.NonBlocks.Embeddings.Data) {
-        fill_zero(mFullGradient.NonBlocks.Embeddings, stream);
-        fill_zero(mFullGradient.NonBlocks.LMHead, stream);
+    using namespace LLamaWeightID;
+    fill_zero(mNonBlockGradients.get_tensor(LNF_W), stream);
+    if(mNonBlockGradients.get_tensor(LM_HEAD).Data != mNonBlockGradients.get_tensor(EMBEDDING).Data) {
+        fill_zero(mNonBlockGradients.get_tensor(LM_HEAD), stream);// TODO superfluous?
+        fill_zero(mNonBlockGradients.get_tensor(EMBEDDING), stream);
     } else {
         // embedding backward comes after LMHead backward; and LMHead backward *sets* the gradient
         // on the first backward call, so no need to zero anything.
     }
-    for(auto& layer: mFullGradient.Blocks) {
-        fill_zero(layer.LN1_w, stream);
-        fill_zero(layer.LN2_w, stream);
-        fill_zero(layer.Attn_QKV_b, stream);
+    for(auto& layer: mBlockGradients) {
+        fill_zero(layer.get_tensor(LN1_W), stream);
+        fill_zero(layer.get_tensor(LN2_W), stream);
+        fill_zero(layer.get_tensor(QKV_B), stream);
         // no need to zero out the matrix weights, we'll just overwrite them on the first
         // grad accumulation step
-    }
-}
-
-void LLamaGradientsUnsharded::end_micro_step(cudaStream_t stream, NCCLCommunicator& comm) {
-    if (mIsLastMicroStep) {
-        CUDA_CHECK(cudaStreamWaitEvent(stream, mGradEvent, 0));
-    }
-}
-
-
-Tensor& LLamaGradientsUnsharded::get_non_block_full(std::size_t index, cudaStream_t stream, NCCLCommunicator& comm, bool& accumulate) {
-    accumulate = !mIsFirstMicroStep;
-    return mFullGradient.NonBlocks.get_tensor(index);
-}
-
-sLLamaBlockWeights<Tensor>& LLamaGradientsUnsharded::get_block_full(int layer_idx, cudaStream_t stream, NCCLCommunicator& comm, bool& accumulate) {
-    accumulate = !mIsFirstMicroStep;
-    return mFullGradient.Blocks.at(layer_idx);
-}
-
-Tensor& LLamaGradientsUnsharded::get_non_block_shard(std::size_t index, cudaStream_t stream) {
-    return mShardView.NonBlocks.get_tensor(index);
-}
-
-sLLamaBlockWeights<TensorShard>& LLamaGradientsUnsharded::get_block_shard(int layer_idx, cudaStream_t stream) {
-    return mShardView.Blocks.at(layer_idx);
-}
-
-void LLamaGradientsUnsharded::notify_non_block(std::size_t index, cudaStream_t stream, NCCLCommunicator& comm) {
-    if(!mIsLastMicroStep) return;
-    if (comm.world_size() != 1) {
-        NvtxRange r{"notify_embeddings"};
-        scatter_reduce(mFullGradient.NonBlocks.get_tensor(index), stream, mGradEvent, comm);
-    }
-}
-
-void LLamaGradientsUnsharded::notify_block(int layer_idx, cudaStream_t stream, NCCLCommunicator& comm) {
-    if(!mIsLastMicroStep) return;
-    auto& dw = mFullGradient.Blocks[layer_idx];
-    if (comm.world_size() != 1) {
-        scatter_reduce(layer_idx, dw, stream, mGradEvent, comm);
     }
 }
 
@@ -203,12 +131,12 @@ void LLamaGradientsBlockShardedBase::end_micro_step(cudaStream_t stream, NCCLCom
             state.NeedsAccumulation = false;
         }
     }
-    if (mIsLastMicroStep)
+    if (is_last_micro_step())
         CUDA_CHECK(cudaStreamWaitEvent(stream, mNonBlockEvent, 0));
 }
 
 Tensor& LLamaGradientsBlockShardedBase::get_non_block_full(std::size_t index, cudaStream_t stream, NCCLCommunicator& comm, bool& accumulate) {
-    accumulate = !mIsFirstMicroStep;
+    accumulate = !is_first_micro_step();
     return mFullNonBlock.get_tensor(index);
 }
 
@@ -232,7 +160,7 @@ sLLamaBlockWeights<Tensor>& LLamaGradientsBlockShardedBase::get_block_full(int l
 }
 
 void LLamaGradientsBlockShardedBase::notify_non_block(std::size_t index, cudaStream_t stream, NCCLCommunicator& comm) {
-    if(!mIsLastMicroStep) return;
+    if(!is_last_micro_step()) return;
     NvtxRange r{"notify"};
     scatter_reduce(mFullNonBlock.get_tensor(index), stream, mNonBlockEvent, comm);
 }
@@ -280,7 +208,7 @@ void LLamaGradientsBlockSharded_ScatterReduce::sr_accumulate_layer(int layer_idx
                                                                    NCCLCommunicator& comm) {
     NvtxRange range("accumulate_layer", layer_idx);
     std::array<std::uint32_t, 8> rng;
-    mRng.generate(std::span(rng), 2*mStepCounter, layer_idx);
+    generate_rng(std::span(rng), 2*get_step_counter(), layer_idx);
 
     int rank = comm.rank();
     int world = comm.world_size();
@@ -288,7 +216,7 @@ void LLamaGradientsBlockSharded_ScatterReduce::sr_accumulate_layer(int layer_idx
     int i = 0;
     visit([&](Tensor& dst, Tensor& src){
         Tensor local_slice = shard_view(src, rank, world);
-        if(mIsFirstMicroStep) {
+        if(is_first_micro_step()) {
             CUDA_CHECK(cudaMemcpyAsync(dst.Data, local_slice.Data, local_slice.bytes(), cudaMemcpyDeviceToDevice, stream));
         } else {
             vector_add_sr(dst, dst, local_slice, 1.f, local_slice.nelem(), rng.at(i), stream);
@@ -320,11 +248,11 @@ void LLamaGradientsBlockSharded_AllToAll::scatter_reduce(int layer_idx, SimpleTe
     {
         NvtxRange range("accumulate-own-shard", layer_idx);
         std::array<std::uint32_t, 8> rng;
-        mRng.generate(std::span(rng), 2*mStepCounter, layer_idx);
+        generate_rng(std::span(rng), 2*get_step_counter(), layer_idx);
         int i = 0;
         visit([&](Tensor& dst, Tensor& src){
             Tensor local_slice = shard_view(src, rank, world);
-            if(mIsFirstMicroStep) {
+            if(is_first_micro_step()) {
                 CUDA_CHECK(cudaMemcpyAsync(dst.Data, local_slice.Data, local_slice.bytes(), cudaMemcpyDeviceToDevice, stream));
             } else {
                 vector_add_sr(dst, dst, local_slice, 1.f, local_slice.nelem(), rng.at(i), stream);
@@ -353,12 +281,12 @@ void LLamaGradientsBlockSharded_AllToAll::sr_accumulate_layer(int layer_idx,
     int rank = comm.rank();
     int world = comm.world_size();
     float scale = 1.f;
-    if (mIsLastMicroStep) {
+    if (is_last_micro_step()) {
         scale = 1.f / world;
     }
 
     std::array<std::uint32_t, 8> rng;
-    mRng.generate(std::span(rng), 2*mStepCounter, layer_idx);
+    generate_rng(std::span(rng), 2*get_step_counter(), layer_idx);
 
     int i = 0;
     visit([&](Tensor& s, Tensor& d){
@@ -367,7 +295,7 @@ void LLamaGradientsBlockSharded_AllToAll::sr_accumulate_layer(int layer_idx,
     }, sw, dw);
 }
 
-std::unique_ptr<LLamaGradsManager> LLamaGradsManager::create(std::uint64_t seed, int step, const TransformerConfig& config, const LLamaOptions& options, int rank, int world, const std::shared_ptr<TensorAllocator>& alloc) {
+std::unique_ptr<IGradientManager> LLamaGradsManager::create(std::uint64_t seed, int step, LLamaModel& model, const TransformerConfig& config, const LLamaOptions& options, int rank, int world, const std::shared_ptr<TensorAllocator>& alloc) {
     if (options.ShardGradients) {
         if(options.UseAllToAllReduce) {
             return std::make_unique<LLamaGradientsBlockSharded_AllToAll>(seed, step, config, options, rank, world, alloc);
@@ -379,6 +307,6 @@ std::unique_ptr<LLamaGradsManager> LLamaGradsManager::create(std::uint64_t seed,
         if(options.OffloadGrads) {
             throw std::logic_error("Offloading gradients is not supported for unsharded gradients");
         }
-        return std::make_unique<LLamaGradientsUnsharded>(seed, step, config, rank, world, alloc);
+        return std::make_unique<LLamaGradientsUnsharded>(config, model, seed, step, rank, world, alloc);
     }
 }

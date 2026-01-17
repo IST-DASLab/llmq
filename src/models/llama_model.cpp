@@ -915,7 +915,7 @@ void LLamaModel::allocate_run_state(const LLamaOptions& options, NCCLCommunicato
 
     {
         auto ctx = Allocator->with_context("Gradients");
-        Grads = LLamaGradsManager::create(42, 0, Config, options, comm.rank(), comm.world_size(), Allocator);
+        Grads = LLamaGradsManager::create(42, 0, *this, Config, options, comm.rank(), comm.world_size(), Allocator);
     }
 
     OptimizerRNG = std::minstd_rand{42};
