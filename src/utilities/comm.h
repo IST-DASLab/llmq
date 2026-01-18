@@ -13,6 +13,8 @@
 
 #include <cuda_bf16.h>
 
+class SimpleTensorContainer;
+
 namespace std
 {
     class jthread;
@@ -49,6 +51,9 @@ public:
     // like all-to-all, except the local shard will *not* be preserved, and results will be shifted cyclically
     void schedule_destructive_all_to_all(Tensor& tensor);
     void execute_transaction(cudaEvent_t signal);
+
+    void reduce_scatter(Tensor& tensor, cudaStream_t stream, cudaEvent_t signal);
+    void reduce_scatter(SimpleTensorContainer& container, cudaStream_t stream, cudaEvent_t signal);
 
     void reduce_mean(float* values, int n, cudaStream_t stream);
     void reduce_norm(float* norm_squared, cudaStream_t stream);
