@@ -15,6 +15,7 @@
 #include "gpu_info.h"
 #include "kernels/kernels.h"
 #include "tensor.h"
+#include "tensor_container.h"
 #include "utils.h"
 
 void nccl_check(ncclResult_t status, const char* file, int line) {
@@ -162,6 +163,18 @@ void NCCLCommunicator::execute_transaction(cudaEvent_t signal) {
     _launch_queue_throttle_sync();
 
     mCmdBuf->Commands.clear();
+}
+
+void NCCLCommunicator::reduce_scatter(Tensor& tensor, cudaStream_t stream, cudaEvent_t signal) {
+    begin_transaction(stream);
+    schedule_reduce_scatter(tensor);
+    execute_transaction(signal);
+}
+
+void NCCLCommunicator::reduce_scatter(SimpleTensorContainer& container, cudaStream_t stream, cudaEvent_t signal) {
+    begin_transaction(stream);
+    visit([&](Tensor& t){ schedule_reduce_scatter(t); }, container);
+    execute_transaction(signal);
 }
 
 void NCCLCommunicator::schedule_reduce_scatter(Tensor& tensor) {

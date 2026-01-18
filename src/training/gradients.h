@@ -137,4 +137,45 @@ protected:
     GenericTensorContainer mNonBlockShards;
 };
 
+/// Gradient manager where the transformer blocks are sharded across
+/// workers, but the non-block weights are replicated.
+class ShardedBlocksGradientManager : public IGradientManager {
+public:
+    ShardedBlocksGradientManager(const TransformerConfig& cfg, IModel& model, std::uint64_t seed, int step, int rank, int world, bool offload, const std::shared_ptr<TensorAllocator>& alloc);
+
+    void end_micro_step(cudaStream_t stream, NCCLCommunicator& comm) override;
+
+    Tensor& get_non_block_full(std::size_t index, cudaStream_t stream, NCCLCommunicator& comm, bool& accumulate) override;
+    SimpleTensorContainer& get_block_full(int layer_idx, cudaStream_t stream, NCCLCommunicator& comm, bool& accumulate) override;
+
+    Tensor& get_non_block_shard(std::size_t index, cudaStream_t stream) override;
+    SimpleTensorContainer& get_block_shard(int layer_idx, cudaStream_t stream) override;
+
+    void notify_non_block(std::size_t index, cudaStream_t stream, NCCLCommunicator& comm) override;
+    void notify_block(int layer_idx, cudaStream_t stream, NCCLCommunicator& comm) override;
+protected:
+    virtual void sr_accumulate_layer(int layer_idx,
+                                     SimpleTensorContainer& dw,
+                                     SimpleTensorContainer& sw,
+                                     cudaStream_t stream,
+                                     NCCLCommunicator& comm) = 0;
+
+    virtual void on_get_block(SimpleTensorContainer& block, cudaStream_t stream) = 0;
+    virtual void on_notify_block(int layer_idx, SimpleTensorContainer& block, cudaStream_t stream, cudaEvent_t signal, NCCLCommunicator& comm) = 0;
+
+    GenericTensorContainer mFullNonBlock;
+    GenericTensorContainer mNonBlockShards;
+
+    std::array<GenericTensorContainer, 2> mGradBuffers;
+    struct sBlockState {
+        cudaEvent_t Event;
+        int LayerIdx = -1;
+        bool NeedsAccumulation = false;
+    };
+    std::array<sBlockState, 2> mGradStates;
+    std::vector<GenericTensorContainer> mGradShards;
+    cudaEvent_t mNonBlockEvent;
+};
+
+
 #endif //LLMQ_TRAINING_GRADIENTS_H
