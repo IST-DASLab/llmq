@@ -439,11 +439,11 @@ NB_MODULE(_pyllmq, m) {
         .def("log_dataset", &TrainingRunLogger::log_dataset, nb::arg("train_loader"), nb::arg("eval_loader"),
              "Log dataset information")
         .def("log_step", &TrainingRunLogger::log_step,
-             nb::arg("step"), nb::arg("epoch"), nb::arg("step_tokens"), nb::arg("duration_ms"),
+             nb::arg("step"), nb::arg("step_tokens"), nb::arg("duration_ms"),
              nb::arg("norm"), nb::arg("loss"), nb::arg("logit_lse_max"), nb::arg("logit_lse_mean"), nb::arg("lr"),
              "Log a training step")
         .def("log_eval", &TrainingRunLogger::log_eval,
-             nb::arg("step"), nb::arg("epoch"), nb::arg("eval_tokens"), nb::arg("duration_ms"), nb::arg("loss"),
+             nb::arg("step"), nb::arg("eval_tokens"), nb::arg("duration_ms"), nb::arg("loss"),
              "Log an evaluation step")
         .def("log_gpu_state", &TrainingRunLogger::log_gpu_state,
              nb::arg("step"), nb::arg("gpu_id"), nb::arg("gpu_util"),

@@ -143,18 +143,19 @@ std::string format_time(int duration_ms) {
     }
 }
 
-void TrainingRunLogger::log_step(int step, float epoch, int step_tokens, int duration_ms, float norm, float loss, float logit_lse_max, float logit_lse_mean, float lr)
+void TrainingRunLogger::log_step(int step, int step_tokens, int duration_ms, float norm, float loss, float logit_lse_max, float logit_lse_mean, float lr)
 {
     if(mRank != 0) return;
     mTotalTrainingLoss += loss;
     ++mTotalTrainingSteps;
 
     if(mVerbosity >= 0) {
-        float iptr;
-        float progress = 100.f * std::modf(epoch,  &iptr);
         std::string tps_msg = format_tps(step_tokens, duration_ms);
         std::string time_str = format_time(duration_ms);
         std::string sol_msg = "";
+        float progress = 0.f;
+        if (mFinalStep > 0)
+            progress = 100.f * step / static_cast<float>(mFinalStep);
 
         // speed-of-light
         if (mExpectedTimePerToken > 0) {
@@ -163,29 +164,30 @@ void TrainingRunLogger::log_step(int step, float epoch, int step_tokens, int dur
             sol_msg = fmt::format(" | sol {:.1f}%", ratio * 100.0);
         }
 
-        printf("[T] step %5d [%5.1f%%] | time: %s | norm %10f | loss %10f | tps %s%s\n", step, progress, time_str.c_str(), norm, loss, tps_msg.c_str(), sol_msg.c_str());
+        printf("[T] step %5d [%4.1f%%] | time: %s | norm %10f | loss %10f | tps %s%s\n", step, progress, time_str.c_str(), norm, loss, tps_msg.c_str(), sol_msg.c_str());
         fflush(stdout);
     }
-    log_line(fmt::format(R"(  {{"log": "step", "time": "{}", "step": {}, "epoch": {}, "step_tokens": {}, "duration_ms": {}, "norm": {}, "loss": {}, "lr": {}, "lse_max": {}, "lse_mean": {}}})",
-        std::chrono::system_clock::now(), step, epoch, step_tokens, duration_ms, norm, loss, lr, logit_lse_max, logit_lse_mean ));
+    log_line(fmt::format(R"(  {{"log": "step", "time": "{}", "step": {}, "step_tokens": {}, "duration_ms": {}, "norm": {}, "loss": {}, "lr": {}, "lse_max": {}, "lse_mean": {}}})",
+        std::chrono::system_clock::now(), step, step_tokens, duration_ms, norm, loss, lr, logit_lse_max, logit_lse_mean ));
 }
 
-void TrainingRunLogger::log_eval(int step, float epoch, int eval_tokens, int duration_ms, float loss)
+void TrainingRunLogger::log_eval(int step, int eval_tokens, int duration_ms, float loss)
 {
     if(mRank != 0) return;
     if(mVerbosity >= -1) {
-        float iptr;
-        float progress = 100.f * std::modf(epoch,  &iptr);
+        float progress = 0.f;
+        if (mFinalStep > 0)
+            progress = 100.f * step / static_cast<float>(mFinalStep);
         float train_avg = static_cast<float>(mTotalTrainingLoss / std::max(mTotalTrainingSteps, 1));
         std::string tps_msg = format_tps(eval_tokens, duration_ms);
         std::string time_str = format_time(duration_ms);
-        printf("\x1b[1m[V] step %5d [%5.1f%%] | time: %s | eval %10f | train %9f | tps %s\x1b[22m\n", step, progress, time_str.c_str(), loss, train_avg, tps_msg.c_str());
+        printf("\x1b[1m[V] step %5d [%4.1f%%] | time: %s | eval %10f | train %9f | tps %s\x1b[22m\n", step, progress, time_str.c_str(), loss, train_avg, tps_msg.c_str());
         fflush(stdout);
     }
     mTotalTrainingLoss = 0;
     mTotalTrainingSteps = 0;
-    log_line(fmt::format(R"(  {{"log": "eval", "time": "{}", "step": {}, "epoch": {}, "eval_tokens": {}, "duration_ms": {}, "loss": {}}})",
-        std::chrono::system_clock::now(), step, epoch, eval_tokens, duration_ms, loss ));
+    log_line(fmt::format(R"(  {{"log": "eval", "time": "{}", "step": {}, "eval_tokens": {}, "duration_ms": {}, "loss": {}}})",
+        std::chrono::system_clock::now(), step, eval_tokens, duration_ms, loss ));
 }
 
 void TrainingRunLogger::log_gpu_state(int step, int gpu_id, const GPUUtilInfo& gpu_util)
@@ -417,6 +419,10 @@ void TrainingRunLogger::log_abs_maxes(int step, const std::vector<std::pair<std:
 
 void TrainingRunLogger::set_callback(std::function<void(std::string_view)> cb) {
     mCallback = std::move(cb);
+}
+
+void TrainingRunLogger::set_final_step(int step) {
+    mFinalStep = step;
 }
 
 void TrainingRunLogger::log_message(int step, const std::string& msg) {
