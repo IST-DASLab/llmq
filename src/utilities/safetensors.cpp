@@ -171,8 +171,12 @@ const SafeTensorEntry& SafeTensorsReader::find_entry(std::string_view name) cons
 }
 
 void load_safetensors(const std::string& file_name, ITensorContainer& tensors, bool allow_cast) {
-    SafeTensorsReader reader(file_name);
-    reader.load_tensors(tensors, allow_cast);
+    try {
+        SafeTensorsReader reader(file_name);
+        reader.load_tensors(tensors, allow_cast);
+    } catch (std::exception& e) {
+        throw std::runtime_error(fmt::format("Error loading safetensors file '{}': {}", file_name, e.what()));
+    }
 }
 
 SafeTensorWriter::SafeTensorWriter(std::string file_name) : mFileName(file_name) {
