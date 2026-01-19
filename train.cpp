@@ -21,7 +21,7 @@
 #include <CLI/CLI.hpp>
 #include <fmt/chrono.h>
 
-float run_evaluation(DataLoader& test_loader, LLamaModel& model, TrainingRunLogger& logger, float epoch, int step,
+float run_evaluation(DataLoader& test_loader, LLamaModel& model, TrainingRunLogger& logger, int step,
                      NCCLCommunicator& comm, int max_steps, Tensor& inputs, Tensor& targets);
 
 bool lexical_cast(const std::string& input, ETensorDType& output) {
@@ -323,6 +323,7 @@ void TrainingRunner::run_training(int argc, const char** argv, NCCLCommunicator&
     if (MaxSteps == -1) {
         MaxSteps = steps_per_epoch * NumEpochs;
     }
+    logger.set_final_step(MaxSteps);
 
     logger.log_options({
         {"name",               RunName},
@@ -507,7 +508,7 @@ void TrainingRunner::run_training(int argc, const char** argv, NCCLCommunicator&
         }
 
         if (run_eval) {
-            run_evaluation(test_loader, model, logger, train_loader.epoch() + 0.01f * train_loader.progress(), step, comm, EvalNumSteps,
+            run_evaluation(test_loader, model, logger, step, comm, EvalNumSteps,
                            inputs, targets);
         }
 
@@ -547,7 +548,7 @@ void TrainingRunner::run_training(int argc, const char** argv, NCCLCommunicator&
             logger.log_message(step, fmt::format("Gradient norm outlier with z-score: {}", grad_z));
         }
 
-        logger.log_step(step, train_loader.epoch() + 0.01f*train_loader.progress(), B*T*GradAccSteps*comm.world_size(),
+        logger.log_step(step, B*T*GradAccSteps*comm.world_size(),
             narrow<int>(ms), step_norm, step_loss / (B*T*GradAccSteps), logit_lse_max, logit_lse_mean, lr);
 
         if (DebugLogAbsMaxes > 0 && step % DebugLogAbsMaxes == 0) {
@@ -564,7 +565,7 @@ void TrainingRunner::run_training(int argc, const char** argv, NCCLCommunicator&
         }
     }
 
-    float loss = run_evaluation(test_loader, model, logger, train_loader.epoch() + 0.01f*train_loader.progress(), MaxSteps, comm, test_loader.num_chunks(), inputs, targets);
+    float loss = run_evaluation(test_loader, model, logger, MaxSteps, comm, test_loader.num_chunks(), inputs, targets);
     logger.log_message(MaxSteps, fmt::format("Done. validation loss {:10f}", loss));
 
     auto log = logger.log_section_start(MaxSteps, fmt::format("Saving model to `{}`", OutDir.c_str()));
@@ -594,7 +595,7 @@ void TrainingRunner::run_training(int argc, const char** argv, NCCLCommunicator&
     }
 }
 
-float run_evaluation(DataLoader& test_loader, LLamaModel& model, TrainingRunLogger& logger, float epoch, int step,
+float run_evaluation(DataLoader& test_loader, LLamaModel& model, TrainingRunLogger& logger, int step,
                      NCCLCommunicator& comm, int max_steps, Tensor& inputs, Tensor& targets) {
     NvtxRange range("validate", step);
     std::chrono::high_resolution_clock::time_point start = std::chrono::high_resolution_clock::now();
@@ -615,7 +616,7 @@ float run_evaluation(DataLoader& test_loader, LLamaModel& model, TrainingRunLogg
     }
     std::chrono::high_resolution_clock::time_point end = std::chrono::high_resolution_clock::now();
     long ms = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
-    logger.log_eval(step, epoch, batches * targets.nelem(), narrow<int>(ms), loss / batches);
+    logger.log_eval(step, batches * targets.nelem(), narrow<int>(ms), loss / batches);
     return loss / batches;
 }
 

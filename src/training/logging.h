@@ -35,13 +35,14 @@ public:
 
     void log_sol_estimate(std::vector<std::pair<ETensorDType, long>> ops, int world_size);
     void set_callback(std::function<void(std::string_view)> cb);
+    void set_final_step(int step);
 
     void log_cmd(int argc, const char** argv);
     void log_options(const std::vector<std::pair<std::string_view, std::variant<bool, std::int64_t, float, std::string>>>& options);
     void log_gpu_model(NCCLCommunicator& comm);
     void log_dataset(const DataLoader& train_loader, const DataLoader& eval_loader);
-    void log_step(int step, float epoch, int step_tokens, int duration_ms, float norm, float loss, float logit_lse_max, float logit_lse_mean, float lr);
-    void log_eval(int step, float epoch, int eval_tokens, int duration_ms, float loss);
+    void log_step(int step, int step_tokens, int duration_ms, float norm, float loss, float logit_lse_max, float logit_lse_mean, float lr);
+    void log_eval(int step, int eval_tokens, int duration_ms, float loss);
     void log_gpu_state(int step, int gpu_id, const GPUUtilInfo& gpu_util);
     void log_allocator(
         const std::vector<std::pair<std::string, sSegmentMemory>>& stats,
@@ -84,7 +85,7 @@ private:
     int mTotalTrainingSteps = 0;
 
     // to estimate ETA
-    int mRemainingTokens = -1;
+    int mFinalStep = -1;
 
     // to estimate MFU
     long mExpectedTimePerToken = -1;
