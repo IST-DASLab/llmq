@@ -87,7 +87,7 @@ struct TrainingRunner {
     int MajorCkptEvery = -1;
     int LogGPUEvery = 25;
 
-    std::optional<int> ContinueFromCheckpoint;
+    std::optional<std::string> ContinueFromCheckpoint;
 
     int NGPUs = 0;
     bool MemcpyAllGather = false;
@@ -167,8 +167,8 @@ void TrainingRunner::load_training_config(int argc, const char** argv) {
     app.add_option("--ckpt-interval", CkptEvery, "How many optimizer steps between checkpoints");
     app.add_option("--ckpt-keep-n", CkptToKeep, "Clean up old checkpoints, only preserving the latest n.");
     app.add_option("--ckpt-major", MajorCkptEvery, "Make every nth checkpoint a major checkpoint, which does not get cleaned up.");
-    auto continue_from_checkpoint = app.add_option("--continue", ContinueFromCheckpoint,
-        "Continue from checkpoint. If no number is given, uses the latest checkpoint")->expected(0, 1)->default_str("-1");
+    app.add_option("--continue", ContinueFromCheckpoint,
+        "Continue from checkpoint. If no argument is given, continue from the latest checkpoint in the current run.")->expected(0, 1)->default_str("");
 
     app.add_option("--log-file", LogFile, "Where to save the training log");
     app.add_option("--gpus", NGPUs, "How many GPUs to use for training.");
@@ -436,14 +436,31 @@ void TrainingRunner::run_training(int argc, const char** argv, NCCLCommunicator&
 
 
     int latest_step = -1;
+    std::string load_ckp_from;
     if (ContinueFromCheckpoint.has_value()) {
-        if (ContinueFromCheckpoint.value() < 0) {
+        if (ContinueFromCheckpoint->empty()) {
             latest_step = find_latest_checkpoint(CkptDir);
+            load_ckp_from = CkptDir;
         } else {
-            latest_step = ContinueFromCheckpoint.value();
+            std::string arg_value = ContinueFromCheckpoint.value();
+            char* ptr;
+            long arg_value_long = strtol(arg_value.c_str(), &ptr, 10);
+            if (ptr == arg_value.c_str() + arg_value.size() && arg_value_long >= 0) {
+                latest_step = arg_value_long;
+                load_ckp_from = CkptDir;
+            } else {
+                std::string dir_name = std::filesystem::path(ContinueFromCheckpoint.value()).filename().string();
+                if (dir_name.starts_with("step_")) {
+                    latest_step = std::stoi(dir_name.substr(5));
+                    load_ckp_from = std::filesystem::path(ContinueFromCheckpoint.value()).parent_path().string();
+                } else {
+                    latest_step = find_latest_checkpoint(ContinueFromCheckpoint.value());
+                    load_ckp_from = ContinueFromCheckpoint.value();
+                }
+            }
         }
         if (latest_step < 0) {
-            std::cerr << "No checkpoint found in " << CkptDir << std::endl;
+            std::cerr << "No checkpoint found in " << load_ckp_from << std::endl;
             std::cerr << " starting from scratch" << std::endl;
         }
     }
@@ -451,8 +468,8 @@ void TrainingRunner::run_training(int argc, const char** argv, NCCLCommunicator&
     model.allocate_run_state(Options, comm, B, T);
 
     if (latest_step >= 0) {
-        auto log = logger.log_section_start(0, fmt::format("Loading checkpoint {} from `{}`", latest_step, CkptDir.c_str()));
-        load_checkpoint(CkptDir, latest_step, model, &train_loader, comm);
+        auto log = logger.log_section_start(0, fmt::format("Loading checkpoint {} from `{}`", latest_step, load_ckp_from.c_str()));
+        load_checkpoint(load_ckp_from, latest_step, model, &train_loader, comm);
     } else if (FromScratch) {
         auto log = logger.log_section_start(0, "Initializing model from scratch");
         model.init_weights(comm);
