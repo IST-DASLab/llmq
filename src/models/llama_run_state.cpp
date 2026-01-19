@@ -67,13 +67,17 @@ private:
 };
 
 Tensor RunStateBuilder::generate_frequencies() {
-    Tensor freq = allocate(Config.DType, "freqs", Config.MaxPositionEmbeddings, 2 * Config.head_size());
+    // cosine/sine are bounded [-1, 1], so it makes no sense to waste bits on large exponents here.
+    // so in a bf16 model, we still use half as the 16-bit dtype for frequencies; especially as there have
+    // been reports that bf16 precision can be problematic for rope.
+    ETensorDType dtype = Config.DType == ETensorDType::BF16 ? ETensorDType::FP16 : Config.DType;
+    Tensor freq = allocate(dtype, "freqs", Config.MaxPositionEmbeddings, 2 * Config.head_size());
     // Generate frequencies
-    if(Config.DType == ETensorDType::BF16) {
-        std::vector<nv_bfloat16> freq_cpu(Config.MaxPositionEmbeddings * 2 * Config.head_size());
+    if(dtype == ETensorDType::FP16) {
+        std::vector<half> freq_cpu(Config.MaxPositionEmbeddings * 2 * Config.head_size());
         precompute_freqs_cis(freq_cpu.data(), Config.head_size(), Config.MaxPositionEmbeddings, Config.RopeTheta);
-        CUDA_CHECK(cudaMemcpy(freq.Data, freq_cpu.data(), freq_cpu.size() * sizeof(nv_bfloat16), cudaMemcpyHostToDevice));
-    } else if (Config.DType == ETensorDType::FP32) {
+        CUDA_CHECK(cudaMemcpy(freq.Data, freq_cpu.data(), freq_cpu.size() * sizeof(half), cudaMemcpyHostToDevice));
+    } else if (dtype == ETensorDType::FP32) {
         std::vector<float> freq_cpu(Config.MaxPositionEmbeddings * 2 * Config.head_size());
         precompute_freqs_cis(freq_cpu.data(), Config.head_size(), Config.MaxPositionEmbeddings, Config.RopeTheta);
         CUDA_CHECK(cudaMemcpy(freq.Data, freq_cpu.data(), freq_cpu.size() * sizeof(float), cudaMemcpyHostToDevice));
