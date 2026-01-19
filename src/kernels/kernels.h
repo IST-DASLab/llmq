@@ -107,12 +107,12 @@ void backward_bias(Tensor& dbias, const Tensor& dout, const float* scale_a, cons
 
 
 void precompute_freqs_cis(float *freqs_cis, int dim, int end, float theta);
-void precompute_freqs_cis(nv_bfloat16 *freqs_cis, int dim, int end, float theta);
+void precompute_freqs_cis(half *freqs_cis, int dim, int end, float theta);
 void rope_forward(float* out, const float* in, const float *freqs_cis, float* abs_max_ptr, int B, int T, int Nq, int Nkv, int head_dim, cudaStream_t stream);
-void rope_forward(nv_bfloat16* out, const nv_bfloat16* in, const nv_bfloat16 *freqs_cis, float* abs_max_ptr, int B, int T, int Nq, int Nkv, int head_dim, cudaStream_t stream);
+void rope_forward(nv_bfloat16* out, const nv_bfloat16* in, const half *freqs_cis, float* abs_max_ptr, int B, int T, int Nq, int Nkv, int head_dim, cudaStream_t stream);
 void rope_forward(Tensor& out, const Tensor& in, const Tensor& freqs_cis, float* abs_max_ptr, int B, int T, int Nq, int Nkv, int head_dim, cudaStream_t stream);
 void rope_backward(float* dinp, const float* dout, const float *freqs_cis, float* abs_max_ptr, int B, int T, int Nq, int Nkv, int head_dim, cudaStream_t stream);
-void rope_backward(nv_bfloat16* dinp, const nv_bfloat16* dout, const nv_bfloat16 *freqs_cis, float* abs_max_ptr, int B, int T, int Nq, int Nkv, int head_dim, cudaStream_t stream);
+void rope_backward(nv_bfloat16* dinp, const nv_bfloat16* dout, const half *freqs_cis, float* abs_max_ptr, int B, int T, int Nq, int Nkv, int head_dim, cudaStream_t stream);
 void rope_backward(Tensor& dinp, const Tensor& dout, const Tensor& freqs_cis, float* abs_max_ptr, int B, int T, int Nq, int Nkv, int head_dim, cudaStream_t stream);
 
 // swiglu assumes that input is the concatenation of gate and up projection.

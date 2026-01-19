@@ -4,6 +4,7 @@
 // Based on llm.c https://github.com/karpathy/llm.c
 
 #include <cuda_bf16.h>
+#include <cuda_fp16.h>
 
 #include <cassert>
 
@@ -23,8 +24,8 @@ void precompute_freqs_cis_imp(floatX *freqs_cis, int dim, int end, float theta) 
         // iterate over all time steps, calculate the angle, and store the cos/sin
         for (int t = 0; t < end; t++) {
             float angle = (float)t * inv_freq;
-            freqs_cis[t * dim + 2 * i] = (floatX)cosf(angle);     // real part
-            freqs_cis[t * dim + 2 * i + 1] = (floatX)sinf(angle); // imaginary part
+            freqs_cis[t * dim + 2 * i] = static_cast<floatX>(cosf(angle));     // real part
+            freqs_cis[t * dim + 2 * i + 1] = static_cast<floatX>(sinf(angle)); // imaginary part
         }
     }
 }
@@ -33,15 +34,17 @@ void precompute_freqs_cis(float *freqs_cis, int dim, int end, float theta) {
     return precompute_freqs_cis_imp(freqs_cis, dim, end, theta);
 }
 
-void precompute_freqs_cis(nv_bfloat16 *freqs_cis, int dim, int end, float theta) {
+void precompute_freqs_cis(half *freqs_cis, int dim, int end, float theta) {
     return precompute_freqs_cis_imp(freqs_cis, dim, end, theta);
 }
 
-template<bool Backward, typename floatX>
-__global__ void rope_kernel(floatX *out, const floatX *inp, const floatX *freqs_cis, float* abs_max_ptr,
+template<bool Backward, typename FloatIO, typename FloatFreq>
+__global__ void rope_kernel(FloatIO *out, const FloatIO *inp, const FloatFreq *freqs_cis, float* abs_max_ptr,
                             int B, int T, int Nq, int Nkv, int head_dim, std::bool_constant<Backward> bw = {}) {
-    using x64 = GenericVector<floatX, 8/sizeof(floatX)>;
-    using x128 = GenericVector<floatX, 16/sizeof(floatX)>;
+    static_assert(sizeof(FloatIO) == sizeof(FloatFreq), "FloatIO and FloatFreq must have the same size");
+    using x64 = GenericVector<FloatIO, 8/sizeof(FloatIO)>;
+    using x128 = GenericVector<FloatIO, 16/sizeof(FloatIO)>;
+    using freq128 = GenericVector<FloatFreq, 16/sizeof(FloatFreq)>;
     __shared__ float block_abs_max;
     if (abs_max_ptr) {
         if(threadIdx.x == 0)
@@ -90,7 +93,7 @@ __global__ void rope_kernel(floatX *out, const floatX *inp, const floatX *freqs_
         int idx_bth = idx_bt + qkv * (Nq * head_dim) + h * head_dim;
         int idxi = idx_bth + d; // index in the input
 
-        x128 freqs_vec = x128::load_ldg(freqs_cis + t * head_dim + 2 * d);
+        freq128 freqs_vec = freq128::load_ldg(freqs_cis + t * head_dim + 2 * d);
         x64 v_real = x64::load(inp + idxi);
         x64 v_imag = x64::load(inp + idxi + head_dim_half);
         x64 o_real;
@@ -117,14 +120,15 @@ __global__ void rope_kernel(floatX *out, const floatX *inp, const floatX *freqs_
     handle_absmax_reduction(abs_max_ptr, &block_abs_max, thread_abs_max);
 }
 
-template<bool Backward, class floatX>
-void rope_imp(floatX* out, const floatX* in, const floatX *freqs_cis, float* abs_max_ptr, int B, int T, int Nq, int Nkv, int head_dim, cudaStream_t stream, std::bool_constant<Backward> bw = {}) {
+template<bool Backward, class FloatIO, class FloatFreq>
+void rope_imp(FloatIO* out, const FloatIO* in, const FloatFreq *freqs_cis, float* abs_max_ptr, int B, int T, int Nq, int Nkv, int head_dim, cudaStream_t stream, std::bool_constant<Backward> bw = {}) {
+    static_assert(sizeof(FloatIO) == sizeof(FloatFreq), "FloatIO and FloatFreq must have the same size");
     // the input and output to this kernel are (B, T, Nq + Nk + Nv, HD)
     if (abs_max_ptr)
         CUDA_CHECK(cudaMemsetAsync(abs_max_ptr, 0, sizeof(float), stream));
 
     const int block_size = 128;
-    using x64 = GenericVector<floatX, 8/sizeof(floatX)>;
+    using x64 = GenericVector<FloatIO, 8/sizeof(FloatIO)>;
     assert(head_dim % (2*x64::size) == 0);
     int total_threads = (B * T * (Nq + 2*Nkv) * head_dim / 2) / x64::size;
     int num_blocks = div_ceil(total_threads, block_size);
@@ -136,7 +140,7 @@ void rope_forward(float* out, const float* in, const float *freqs_cis, float* ab
     rope_imp(out, in, freqs_cis, abs_max_ptr, B, T, Nq, Nkv, head_dim, stream, std::bool_constant<false>());
 }
 
-void rope_forward(nv_bfloat16* out, const nv_bfloat16* in, const nv_bfloat16 *freqs_cis, float* abs_max_ptr, int B, int T, int Nq, int Nkv, int head_dim, cudaStream_t stream)  {
+void rope_forward(nv_bfloat16* out, const nv_bfloat16* in, const half *freqs_cis, float* abs_max_ptr, int B, int T, int Nq, int Nkv, int head_dim, cudaStream_t stream)  {
     rope_imp(out, in, freqs_cis,  abs_max_ptr, B, T, Nq, Nkv, head_dim, stream, std::bool_constant<false>());
 }
 
@@ -144,6 +148,6 @@ void rope_backward(float* dinp, const float* dout, const float *freqs_cis, float
     rope_imp(dinp, dout, freqs_cis, abs_max_ptr, B, T, Nq, Nkv, head_dim, stream, std::bool_constant<true>());
 }
 
-void rope_backward(nv_bfloat16* dinp, const nv_bfloat16* dout, const nv_bfloat16 *freqs_cis, float* abs_max_ptr, int B, int T, int Nq, int Nkv, int head_dim, cudaStream_t stream)  {
+void rope_backward(nv_bfloat16* dinp, const nv_bfloat16* dout, const half *freqs_cis, float* abs_max_ptr, int B, int T, int Nq, int Nkv, int head_dim, cudaStream_t stream)  {
     rope_imp(dinp, dout, freqs_cis, abs_max_ptr, B, T, Nq, Nkv, head_dim, stream, std::bool_constant<true>());
 }
