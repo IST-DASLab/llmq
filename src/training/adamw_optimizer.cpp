@@ -13,10 +13,12 @@
 #include "utilities/lazy_allocator.h"
 
 static GenericTensorContainer shard_container(GenericTensorContainer&& c, int world) {
-    visit([world](Tensor& t) {
+    // can't use visit here, because we explicitly want to iterate over empty tensors
+    for (int i = 0; i < c.num_tensors(); ++i) {
+        auto& t = c.get_tensor(i);
         if (!t.empty()) { throw std::logic_error("shard_container called with non-empty tensor"); }
         t.Sizes[0] = div_exact(t.Sizes[0], static_cast<long>(world));
-    }, c);
+    }
     return c;
 }
 
