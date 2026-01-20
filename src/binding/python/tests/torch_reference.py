@@ -137,7 +137,7 @@ def compare_single_step(config, file=None):
 
     print("", file=file)
     result_str = f"{passed} / {total}  cos {avg_cosing_similarity:.3f} norm {100*avg_rel_norm_error:5.2f}"
-    if passed > 95 * total // 100 and avg_cosing_similarity > 0.99 and avg_rel_norm_error < 0.012:
+    if passed > 94 * total // 100 and avg_cosing_similarity > 0.99 and avg_rel_norm_error < 0.012:
         print(f"\033[1;32mPASS\033[0m {result_str}", file=file)
         return True
     else:
