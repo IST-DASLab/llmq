@@ -88,6 +88,7 @@ struct TrainingRunner {
     int LogGPUEvery = 25;
 
     std::optional<std::string> ContinueFromCheckpoint;
+    bool NewData = false;
 
     int NGPUs = 0;
     bool MemcpyAllGather = false;
@@ -167,8 +168,10 @@ void TrainingRunner::load_training_config(int argc, const char** argv) {
     app.add_option("--ckpt-interval", CkptEvery, "How many optimizer steps between checkpoints");
     app.add_option("--ckpt-keep-n", CkptToKeep, "Clean up old checkpoints, only preserving the latest n.");
     app.add_option("--ckpt-major", MajorCkptEvery, "Make every nth checkpoint a major checkpoint, which does not get cleaned up.");
-    app.add_option("--continue", ContinueFromCheckpoint,
+    auto continue_option = app.add_option("--continue", ContinueFromCheckpoint,
         "Continue from checkpoint. If no argument is given, continue from the latest checkpoint in the current run.")->expected(0, 1)->default_str("");
+    app.add_flag("--new-data", NewData, "When `--continue`ing a training run, setting `--new-data` indicates that the dataset has changed and the dataloader "
+                                        "state should *not* be loaded from the checkpoint, but re-initialized.")->needs(continue_option);
 
     app.add_option("--log-file", LogFile, "Where to save the training log");
     app.add_option("--gpus", NGPUs, "How many GPUs to use for training.");
@@ -469,7 +472,7 @@ void TrainingRunner::run_training(int argc, const char** argv, NCCLCommunicator&
 
     if (latest_step >= 0) {
         auto log = logger.log_section_start(0, fmt::format("Loading checkpoint {} from `{}`", latest_step, load_ckp_from.c_str()));
-        load_checkpoint(load_ckp_from, latest_step, model, &train_loader, comm);
+        load_checkpoint(load_ckp_from, latest_step, model, NewData ? nullptr : &train_loader, comm);
     } else if (FromScratch) {
         auto log = logger.log_section_start(0, "Initializing model from scratch");
         model.init_weights(comm);
