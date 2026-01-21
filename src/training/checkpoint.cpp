@@ -25,6 +25,7 @@ std::string save_checkpoint(std::string target, int step, IModel& model, const D
     comm.barrier();
 
     nlohmann::json meta_data;
+    meta_data["version"] = 2026'01'20;
 
     target = get_checkpoint_path(std::move(target), step);
     std::filesystem::create_directories(target);
@@ -42,7 +43,8 @@ std::string save_checkpoint(std::string target, int step, IModel& model, const D
                   {"seed",        loader->seed()},
                   {"chunk_index", loader->chunk_index()},
                   {"file_index",  loader->file_index()},
-                  {"epoch",       loader->epoch()}
+                  {"epoch",       loader->epoch()},
+                  {"file_name",   loader->file_name(loader->file_index())},
             });
         }
 
@@ -110,6 +112,12 @@ void load_checkpoint(std::string source, int step, IModel& model, DataLoader* lo
     if (loader) {
         const auto& dl = meta_data["data-loader"];
         loader->set_state(dl["seed"].get<std::uint64_t>(), dl["epoch"].get<int>(), dl["file_index"].get<int>(), dl["chunk_index"].get<int>());
+        if (dl.contains("file_name")) {
+            std::string old_file_name = dl["file_name"].get<std::string>();
+            if (old_file_name != loader->file_name(loader->file_index())) {
+                throw std::runtime_error(fmt::format("Token file name changed from {} to {} in checkpoint", old_file_name, loader->file_name(loader->file_index())));
+            }
+        }
     }
 
     // weights
