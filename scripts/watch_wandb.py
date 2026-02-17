@@ -112,7 +112,7 @@ def convert_log(file_name: str, *, name: Optional[str], project: str, notes: str
             for i, entry in enumerate(log_data):
                 if i < entry_count:
                     continue
-                if entry["log"] == "message" and entry["message"].startswith("Done. validation loss"):
+                if entry["log"] == "info" and entry["type"] == 'message' and entry["message"].startswith("Done. validation loss"):
                     running = False
                 log_line(run, entry)
                 entry_count += 1
