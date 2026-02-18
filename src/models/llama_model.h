@@ -93,7 +93,7 @@ public:
 
     // main training loop
     void forward(Tensor inputs, NCCLCommunicator& comm, int micro_step) override;
-    float validate(Tensor inputs, Tensor targets, NCCLCommunicator& comm, int micro_step) override;
+    std::pair<float, float> validate(Tensor inputs, Tensor targets, NCCLCommunicator& comm, int micro_step) override;
     void backward(Tensor inputs, Tensor targets, NCCLCommunicator& comm, float z_loss, int grad_accum_steps, int micro_step) override;
     void update(NCCLCommunicator& comm, float learning_rate, float beta_1, float beta_2, int t, float epsilon, float weight_decay, float grad_clip) override;
 

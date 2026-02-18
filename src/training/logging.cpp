@@ -143,7 +143,7 @@ std::string format_time(int duration_ms) {
     }
 }
 
-void TrainingRunLogger::log_step(int step, int step_tokens, int duration_ms, float norm, float loss, float logit_lse_max, float logit_lse_mean, float lr)
+void TrainingRunLogger::log_step(int step, int step_tokens, int duration_ms, float norm, float loss, float loss_at_1k, float logit_lse_max, float logit_lse_mean, float lr)
 {
     if(mRank != 0) return;
     mTotalTrainingLoss += loss;
@@ -167,11 +167,11 @@ void TrainingRunLogger::log_step(int step, int step_tokens, int duration_ms, flo
         printf("[T] step %5d [%4.1f%%] | time: %s | norm %10f | loss %10f | tps %s%s\n", step, progress, time_str.c_str(), norm, loss, tps_msg.c_str(), sol_msg.c_str());
         fflush(stdout);
     }
-    log_line(fmt::format(R"(  {{"log": "step", "time": "{}", "step": {}, "step_tokens": {}, "duration_ms": {}, "norm": {}, "loss": {}, "lr": {}, "lse_max": {}, "lse_mean": {}}})",
-        std::chrono::system_clock::now(), step, step_tokens, duration_ms, norm, loss, lr, logit_lse_max, logit_lse_mean ));
+    log_line(fmt::format(R"(  {{"log": "step", "time": "{}", "step": {}, "step_tokens": {}, "duration_ms": {}, "norm": {}, "loss": {}, "lr": {}, "lse_max": {}, "lse_mean": {}, "loss_1k": {}}})",
+        std::chrono::system_clock::now(), step, step_tokens, duration_ms, norm, loss, lr, logit_lse_max, logit_lse_mean, loss_at_1k ));
 }
 
-void TrainingRunLogger::log_eval(int step, int eval_tokens, int duration_ms, float loss)
+void TrainingRunLogger::log_eval(int step, int eval_tokens, int duration_ms, float loss, float loss_at_1k)
 {
     if(mRank != 0) return;
     if(mVerbosity >= -1) {
@@ -186,8 +186,8 @@ void TrainingRunLogger::log_eval(int step, int eval_tokens, int duration_ms, flo
     }
     mTotalTrainingLoss = 0;
     mTotalTrainingSteps = 0;
-    log_line(fmt::format(R"(  {{"log": "eval", "time": "{}", "step": {}, "eval_tokens": {}, "duration_ms": {}, "loss": {}}})",
-        std::chrono::system_clock::now(), step, eval_tokens, duration_ms, loss ));
+    log_line(fmt::format(R"(  {{"log": "eval", "time": "{}", "step": {}, "eval_tokens": {}, "duration_ms": {}, "loss": {}, "loss_1k": {}}})",
+        std::chrono::system_clock::now(), step, eval_tokens, duration_ms, loss, loss_at_1k ));
 }
 
 void TrainingRunLogger::log_gpu_state(int step, int gpu_id, const GPUUtilInfo& gpu_util)

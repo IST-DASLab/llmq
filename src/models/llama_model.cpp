@@ -218,7 +218,7 @@ void LLamaModel::_forward_block(sLLamaBlockWeights<Tensor>& weights, sLLamaLayer
                 rs->DeviceProp, false, main_stream);
 }
 
-float LLamaModel::validate(Tensor inputs, Tensor targets, NCCLCommunicator& comm, int micro_step) {
+std::pair<float, float> LLamaModel::validate(Tensor inputs, Tensor targets, NCCLCommunicator& comm, int micro_step) {
     NVTX_RANGE_FN();
     // convenience shortcuts, size_t instead of int so that pointer arithmetics don't overflow
     auto& rs = RunState;
@@ -269,8 +269,9 @@ float LLamaModel::validate(Tensor inputs, Tensor targets, NCCLCommunicator& comm
     _reduce_loss(*rs, comm, B, T);
 
     CUDA_CHECK(cudaDeviceSynchronize());
-    *rs->LossHost /= B * T;
-    return *rs->LossHost;
+    float full_loss = rs->get_loss() / (B*T);
+    float loss_1k = rs->get_loss(1024) / (B*1024);
+    return {full_loss, loss_1k};
 }
 
 void backward_qmm(Tensor& dinp, Tensor& dweight, Tensor dbias,

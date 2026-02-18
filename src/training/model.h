@@ -40,7 +40,9 @@ public:
     virtual void forward(Tensor inputs, NCCLCommunicator& comm, int micro_step) = 0;
 
     //! \brief Runs the forward pass and calculates the loss w.r.t. `targets`.
-    virtual float validate(Tensor inputs, Tensor targets, NCCLCommunicator& comm, int micro_step) = 0;
+    //! \returns a pair containing the full loss, and the loss over the first 1k tokens.
+    // TODO fix this function and interface; make async with accumulation.
+    virtual std::pair<float, float> validate(Tensor inputs, Tensor targets, NCCLCommunicator& comm, int micro_step) = 0;
 
     //! \brief Runs the backward pass
     //! \details This function is asynchronous. You need to wait on `run_state.BackwardDone`
