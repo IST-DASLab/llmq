@@ -557,6 +557,7 @@ void TrainingRunner::run_training(int argc, const char** argv, NCCLCommunicator&
         std::chrono::high_resolution_clock::time_point end = std::chrono::high_resolution_clock::now();
         long ms = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
         float step_loss = model.get_loss();
+        float step_loss_1k = model.get_loss(1024);
         float step_norm = model.get_norm();
         float logit_lse_max = model.get_run_state().get_lse_max();
         float logit_lse_mean = model.get_run_state().get_lse_sum() / ( B * T * GradAccSteps );
@@ -569,7 +570,7 @@ void TrainingRunner::run_training(int argc, const char** argv, NCCLCommunicator&
         }
 
         logger.log_step(step, B*T*GradAccSteps*comm.world_size(),
-            narrow<int>(ms), step_norm, step_loss / (B*T*GradAccSteps), logit_lse_max, logit_lse_mean, lr);
+            narrow<int>(ms), step_norm, step_loss / (B*T*GradAccSteps), step_loss_1k / (B*1024*GradAccSteps), logit_lse_max, logit_lse_mean, lr);
 
         if (DebugLogAbsMaxes > 0 && step % DebugLogAbsMaxes == 0) {
             auto& rs = model.run_state();
@@ -620,11 +621,13 @@ float run_evaluation(DataLoader& test_loader, LLamaModel& model, TrainingRunLogg
     NvtxRange range("validate", step);
     std::chrono::high_resolution_clock::time_point start = std::chrono::high_resolution_clock::now();
     test_loader.set_state(test_loader.seed(), 0, 0, 0);
-    float loss = 0.f;
+    std::pair<float, float> loss{0.f, 0.f};
     int batches = 0;
     while (test_loader.has_next(div_exact((int)inputs.nelem(), test_loader.seq_len())) && batches < max_steps) {
         test_loader.load_batch(inputs, targets);
-        loss += model.validate(inputs, targets, comm, batches);
+        auto res = model.validate(inputs, targets, comm, batches);
+        loss.first += res.first;
+        loss.second += res.second;
         batches++;
     }
     static bool warning = true;
@@ -636,8 +639,8 @@ float run_evaluation(DataLoader& test_loader, LLamaModel& model, TrainingRunLogg
     }
     std::chrono::high_resolution_clock::time_point end = std::chrono::high_resolution_clock::now();
     long ms = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
-    logger.log_eval(step, batches * targets.nelem(), narrow<int>(ms), loss / batches);
-    return loss / batches;
+    logger.log_eval(step, batches * targets.nelem(), narrow<int>(ms), loss.first / batches, loss.second / batches);
+    return loss.first / batches;
 }
 
 int main(int argc, const char** argv) {
