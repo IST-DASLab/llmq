@@ -663,10 +663,10 @@ void LLamaModel::_backward_block(bool accumulate, sLLamaBlockWeights<Tensor>& we
 void LLamaModel::_reduce_loss(LLamaRunState& acts, NCCLCommunicator& comm, int B, int T) {
     NVTX_RANGE_FN();
     // reduce all the losses within the current GPU (across all microsteps)
-    deterministic_sum(acts.Losses.get<float>(), acts.Losses.get<float>(), B*T, acts.MainStream);
+    grouped_loss_sum(acts.GroupedLosses, acts.Losses, B, T, acts.MainStream);
     // reduce loss across GPUs to a single, final float across all GPUs
-    comm.reduce_loss(acts.Losses.get<float>(), acts.MainStream);
-    CUDA_CHECK(cudaMemcpyAsync(acts.LossHost, acts.Losses.get<float>(), sizeof(float), cudaMemcpyDeviceToHost, acts.MainStream));
+    comm.reduce_sum(acts.GroupedLosses.get<float>(), acts.GroupedLosses.nelem(), acts.MainStream);
+    CUDA_CHECK(cudaMemcpyAsync(acts.LossHost, acts.GroupedLosses.get<float>(), sizeof(float) * acts.GroupedLosses.nelem(), cudaMemcpyDeviceToHost, acts.MainStream));
 }
 
 void LLamaModel::calculate_gradient_norm(NCCLCommunicator& comm, float grad_clip) {

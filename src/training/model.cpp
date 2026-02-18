@@ -13,8 +13,8 @@
 cudnnHandle_t create_cudnn_handle();
 cublasLtHandle_t create_cublaslt_handle();
 
-float IModel::get_loss() const {
-    return get_run_state().get_loss();
+float IModel::get_loss(int max_pos) const {
+    return get_run_state().get_loss(max_pos);
 }
 float IModel::get_norm() const {
     return get_run_state().get_norm();
@@ -51,11 +51,14 @@ IRunState::IRunState(TransformerConfig config, long batch_size, long seq_len, st
     CUDA_CHECK(cudaGetDevice(&did));
     CUDA_CHECK(cudaGetDeviceProperties(&DeviceProp, did));
 
+    long n_loss_groups = div_ceil(T, 512l);
+
     Inputs = Allocator->allocate(ETensorDType::INT32, "inputs", {B, T});
     Targets = Allocator->allocate(ETensorDType::INT32, "targets", {B, T});
     Inputs_CPU = Allocator->allocate(ETensorDType::INT32, "inputs_cpu", EAllocationType::PINNED, {B, T});
     Targets_CPU = Allocator->allocate(ETensorDType::INT32, "targets_cpu", EAllocationType::PINNED, {B, T});
     Losses = Allocator->allocate(ETensorDType::FP32, "losses", {B, T});
+    GroupedLosses = Allocator->allocate(ETensorDType::FP32, "grouped_losses", {n_loss_groups});
     LSE = Allocator->allocate(ETensorDType::FP32, "lse", {B, T});
 
     CudnnHandle = create_cudnn_handle();
@@ -74,10 +77,10 @@ IRunState::IRunState(TransformerConfig config, long batch_size, long seq_len, st
     LSEDone = create_named_event("lse_done");
     OptimizerDone = create_named_event("optimizer_done");
 
-    Tensor host_buffer = Allocator->allocate(ETensorDType::FP32, "host_buffer", EAllocationType::PINNED, {4});
+    Tensor host_buffer = Allocator->allocate(ETensorDType::FP32, "host_buffer", EAllocationType::PINNED, {3 + n_loss_groups});
     NormHost = host_buffer.get<float>();
-    LossHost = host_buffer.get<float>() + 1;
-    LSEHost = host_buffer.get<float>() + 2;
+    LSEHost = host_buffer.get<float>() + 1;
+    LossHost = host_buffer.get<float>() + 2;
 }
 
 void IRunState::setup_timing_events(int micro_steps) {
@@ -93,9 +96,19 @@ void IRunState::setup_timing_events(int micro_steps) {
     }
 }
 
-float IRunState::get_loss() const {
+float IRunState::get_loss(int max_pos) const {
     CUDA_CHECK(cudaEventSynchronize(BackwardDone));
-    return LossHost[0];
+    if (max_pos % 512 != 0) {
+        throw std::logic_error("max_pos must be divisible by 512");
+    }
+    int avail_groups = GroupedLosses.nelem();
+    int max_group = max_pos < 0 ? avail_groups: max_pos / 512;
+    max_group = std::min(max_group, avail_groups);
+    float loss = 0;
+    for (int i = 0; i < max_group; ++i) {
+        loss += LossHost[i];
+    }
+    return loss;
 }
 
 float IRunState::get_norm() const {
