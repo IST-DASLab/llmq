@@ -185,7 +185,7 @@ void NCCLCommunicator::schedule_all_gather(const TensorShard& src, Tensor& tgt) 
     mCmdBuf->Commands.emplace_back(CommandBuffer::Gather{.Src = src.Data, .Dst = tgt.Data, .Bytes = tgt.bytes()});
 }
 
-void NCCLCommunicator::reduce_sum(float* values, int n, cudaStream_t stream) {
+void NCCLCommunicator::reduce_mean(float* values, int n, cudaStream_t stream) {
     ncclCheck(ncclAllReduce(values, values, n, ncclFloat, ncclAvg, mNcclComm, stream));
 }
 

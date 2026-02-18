@@ -270,7 +270,7 @@ std::pair<float, float> LLamaModel::validate(Tensor inputs, Tensor targets, NCCL
 
     CUDA_CHECK(cudaDeviceSynchronize());
     float full_loss = rs->get_loss() / (B*T);
-    float loss_1k = rs->get_loss(1024) / (B*1024);
+    float loss_1k = rs->get_loss(1024) / (B*std::min(1024l, T));
     return {full_loss, loss_1k};
 }
 
@@ -666,7 +666,7 @@ void LLamaModel::_reduce_loss(LLamaRunState& acts, NCCLCommunicator& comm, int B
     // reduce all the losses within the current GPU (across all microsteps)
     grouped_loss_sum(acts.GroupedLosses, acts.Losses, B, T, acts.MainStream);
     // reduce loss across GPUs to a single, final float across all GPUs
-    comm.reduce_sum(acts.GroupedLosses.get<float>(), acts.GroupedLosses.nelem(), acts.MainStream);
+    comm.reduce_mean(acts.GroupedLosses.get<float>(), acts.GroupedLosses.nelem(), acts.MainStream);
     CUDA_CHECK(cudaMemcpyAsync(acts.LossHost, acts.GroupedLosses.get<float>(), sizeof(float) * acts.GroupedLosses.nelem(), cudaMemcpyDeviceToHost, acts.MainStream));
 }
 

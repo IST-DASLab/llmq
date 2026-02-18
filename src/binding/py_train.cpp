@@ -153,19 +153,22 @@ std::tuple<float, float, float, float, float> MultiGPUPyTrainer::update(float lr
     });
     float step_loss, step_loss_1k, step_norm;
 
+    int ntoks = B * T * mGradAccumulation;
+    int ntoks_1k = B * std::min(T, 1024) * mGradAccumulation;
+
     auto& ctx = mContexts.at(0);
     step_loss = ctx.Model->get_loss();
     step_loss_1k = ctx.Model->get_loss(1024);
     step_norm = ctx.Model->get_norm();
     float logit_lse_max = ctx.Model->get_run_state().get_lse_max();
-    float logit_lse_mean = ctx.Model->get_run_state().get_lse_sum() / ( B * T * mGradAccumulation );
+    float logit_lse_mean = ctx.Model->get_run_state().get_lse_sum() / ntoks;
 
     // ensure we're re-gathering on next forward for eval and train
     mTrainMicroStep = 0;
     mEvalStep = 0;
 
-    return {step_loss / B / T / mGradAccumulation,
-            step_loss_1k / (B * 1024 * mGradAccumulation),
+    return {step_loss /  ntoks,
+            step_loss_1k / ntoks_1k,
             step_norm, logit_lse_max, logit_lse_mean};
 }
 

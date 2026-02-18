@@ -146,7 +146,7 @@ def run_training(config: TrainingConfig) -> RunResult:
         losses.append(result['loss'])
 
     # add one eval step
-    losses.append(trainer.validate(in_tokens, out_tokens))
+    losses.append(trainer.validate(in_tokens, out_tokens)[0])
 
     return RunResult(losses=losses, norms=norms)
 

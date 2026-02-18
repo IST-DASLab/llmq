@@ -80,7 +80,7 @@ IRunState::IRunState(TransformerConfig config, long batch_size, long seq_len, st
     Tensor host_buffer = Allocator->allocate(ETensorDType::FP32, "host_buffer", EAllocationType::PINNED, {3 + n_loss_groups});
     NormHost = host_buffer.get<float>();
     LSEHost = host_buffer.get<float>() + 1;
-    LossHost = host_buffer.get<float>() + 2;
+    LossHost = host_buffer.get<float>() + 3;
 }
 
 void IRunState::setup_timing_events(int micro_steps) {

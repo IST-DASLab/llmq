@@ -309,8 +309,8 @@ __global__ void grouped_loss_sum_kernel(float* out, const floatX* data, int B, i
     constexpr int GroupSize = 512;
     constexpr int PosPerWarp = 32 * VecSize;
     using vec_t = GenericVector<floatX, VecSize>;
-    int group_start = GroupSize * blockIdx.x;
-    int group_end = (group_start + GroupSize < T) ? (group_start + GroupSize) : T;
+    const int group_start = GroupSize * blockIdx.x;
+    const int group_end = (group_start + GroupSize < T) ? (group_start + GroupSize) : T;
     float thread_sum = 0;
     for (int t = group_start + VecSize * threadIdx.x; t < group_end; t += PosPerWarp) {
         for(int b = 0; b < B; ++b) {
@@ -331,6 +331,11 @@ __global__ void grouped_loss_sum_kernel(float* out, const floatX* data, int B, i
 }
 
 void grouped_loss_sum(float* out, const float* per_token_loss, int B, int T, cudaStream_t stream) {
+    constexpr int VecSize = 16 / sizeof(float);
+    if (T % VecSize != 0) {
+        throw std::runtime_error("grouped_loss_sum: T must be divisible by VecSize");
+    }
+
     int n_groups = div_ceil(T, 512);
     grouped_loss_sum_kernel<<<n_groups, 32, 0, stream>>>(out, per_token_loss, B, T);
     CUDA_CHECK(cudaGetLastError());
