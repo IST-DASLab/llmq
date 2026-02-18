@@ -132,9 +132,9 @@ float MultiGPUPyTrainer::validate(const std::int32_t* inputs, const std::int32_t
     run_work([micro_idx = mEvalStep, &loss](sThreadContext& ctx) {
         Tensor inputs = ctx.Model->get_input_buffer();
         Tensor targets = ctx.Model->get_target_buffer();
-        float calc_loss = ctx.Model->validate(inputs, targets, *ctx.Communicator, micro_idx);
+        auto calc_loss = ctx.Model->validate(inputs, targets, *ctx.Communicator, micro_idx);
         if (ctx.Communicator->rank() == 0) {
-            loss = calc_loss;
+            loss = calc_loss.first;
         }
     });
 
