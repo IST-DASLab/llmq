@@ -268,9 +268,14 @@ void TrainingRunLogger::log_cmd(int argc, const char** argv)
 }
 
 void TrainingRunLogger::log_sol_estimate(std::vector<std::pair<ETensorDType, long>> ops, int world_size) {
-    auto gpu_name = get_gpu_name();
-    long ns_per_token = estimate_speed_of_light(gpu_name.c_str(), ops) / world_size;
-    long tps = 1'000'000'000l / ns_per_token;
+    const auto gpu_name = get_gpu_name();
+    const long single_gpu_sol = estimate_speed_of_light(gpu_name.c_str(), ops);
+    if (single_gpu_sol <= 0) {
+        // no speed-of-light data available
+        return;
+    }
+    const long ns_per_token = single_gpu_sol / world_size;
+    const long tps = 1'000'000'000l / ns_per_token;
     if(mRank == 0 && mVerbosity >= 0 || mVerbosity >= 1) {
         printf("%s", "[Speed of Light]\n");
 
