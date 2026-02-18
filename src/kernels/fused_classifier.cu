@@ -1,4 +1,4 @@
-// Copyright (c) 2025, IST Austria, developed by Erik Schultheis
+// Copyright (c) 2025-2026, IST Austria, developed by Erik Schultheis
 // SPDX-License-Identifier: Apache-2.0
 //
 // Based on llm.c https://github.com/karpathy/llm.c
@@ -201,6 +201,14 @@ void fused_classifier_tma(nv_bfloat16* logits, float* losses, float* lse,
                           float dloss, const int* targets, float z_reg,
                           int BT, int V, int P, cudaStream_t stream);
 
+
+template <int... Archs>
+constexpr bool check_has_tma_kernels() {
+    return ((Archs >= 900) || ...);
+}
+
+constexpr bool has_tma_kernels = check_has_tma_kernels<__CUDA_ARCH_LIST__>();
+
 template <typename Type>
 void fused_classifier_dispatch(Type* logits, float* losses, float* lse,
                       const float dloss, const int* targets, float z_reg,
@@ -210,7 +218,7 @@ void fused_classifier_dispatch(Type* logits, float* losses, float* lse,
     CUDA_CHECK(cudaGetDevice(&device));
     int major;
     CUDA_CHECK(cudaDeviceGetAttribute(&major, cudaDevAttrComputeCapabilityMajor, device));
-    if ((major == 9 || major == 10) && write_dlogits == true && V % (8 * 16 / sizeof(Type)) == 0) {
+    if (has_tma_kernels && (major == 9 || major == 10) && write_dlogits == true && V % (8 * 16 / sizeof(Type)) == 0) {
         // while the TMA implementation also works on CC12, it doesn't seem to bring performance
         // benefits so far.
         fused_classifier_tma(logits, losses, lse, dloss, targets, z_reg, BT, V, P, stream);
