@@ -98,7 +98,7 @@ void IRunState::setup_timing_events(int micro_steps) {
 
 float IRunState::get_loss(int max_pos) const {
     CUDA_CHECK(cudaEventSynchronize(BackwardDone));
-    if (max_pos % 512 != 0) {
+    if (max_pos != -1 && max_pos % 512 != 0) {
         throw std::logic_error("max_pos must be divisible by 512");
     }
     int avail_groups = GroupedLosses.nelem();

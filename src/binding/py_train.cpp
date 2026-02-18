@@ -164,7 +164,9 @@ std::tuple<float, float, float, float, float> MultiGPUPyTrainer::update(float lr
     mTrainMicroStep = 0;
     mEvalStep = 0;
 
-    return {step_loss / B / T / mGradAccumulation, step_loss_1k / B / T / mGradAccumulation, step_norm, logit_lse_max, logit_lse_mean};
+    return {step_loss / B / T / mGradAccumulation,
+            step_loss_1k / (B * 1024 * mGradAccumulation),
+            step_norm, logit_lse_max, logit_lse_mean};
 }
 
 

@@ -296,8 +296,8 @@ void reduce_lse_stats(float* result, const float* in, long N, bool first_step, c
 }
 /*!
  * \brief Sums losses in groups of 512 positions
- * \details For better comparability, it is useful to know what the average loss is, e..g., on the first 1024
- * tokens vs the full sequence length. For example, when comparing a model trained with 1k context vd 2k context,
+ * \details For better comparability, it is useful to know what the average loss is, e.g., on the first 1024
+ * tokens vs the full sequence length. For example, when comparing a model trained with 1k context vs 2k context,
  * the 2k context will most likely have lower loss, because for tokens in [1k, 2k] there is more context to predict
  * them. For a fair comparison, then, we also need to know the loss on only the first 1k tokens in each sequence.
  *
@@ -310,11 +310,12 @@ __global__ void grouped_loss_sum_kernel(float* out, const floatX* data, int B, i
     constexpr int PosPerWarp = 32 * VecSize;
     using vec_t = GenericVector<floatX, VecSize>;
     int group_start = GroupSize * blockIdx.x;
+    int group_end = (group_start + GroupSize < T) ? (group_start + GroupSize) : T;
     float thread_sum = 0;
-    for (int t = group_start + VecSize * threadIdx.x; t < group_start + GroupSize; t += PosPerWarp) {
+    for (int t = group_start + VecSize * threadIdx.x; t < group_end; t += PosPerWarp) {
         for(int b = 0; b < B; ++b) {
             vec_t input = vec_t::load_cs(data + b*T + t);
-            for (int i = 0; i < 4; ++i) {
+            for (int i = 0; i < VecSize; ++i) {
                 thread_sum += (float)input[i];
             }
         }
