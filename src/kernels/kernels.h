@@ -165,6 +165,9 @@ void fused_classifier(Tensor& logits, Tensor& losses, Tensor& lse,
                       float dloss, const Tensor& targets, float z_reg,
                       int BT, int V, int P, bool write_dlogits, cudaStream_t stream);
 
+void grouped_loss_sum(float* out, const float* per_token_loss, int B, int T, cudaStream_t stream);
+void grouped_loss_sum(Tensor& out, const Tensor& per_token_loss, int B, int T, cudaStream_t stream);
+
 void reduce_lse_stats(float* result, const float* in, long N, bool first_step, cudaStream_t stream);
 
 int get_max_num_block_sums(const cudaDeviceProp& dp);

@@ -103,6 +103,10 @@ void fused_classifier(Tensor& logits, Tensor& losses, Tensor& lse,
     }
 }
 
+void grouped_loss_sum(Tensor& out, const Tensor& per_token_loss, int B, int T, cudaStream_t stream) {
+    grouped_loss_sum(out.get<float>(), per_token_loss.get<float>(), B, T, stream);
+}
+
 void encoder_forward(Tensor& out, const Tensor& inp, const Tensor& wte, const Tensor& wpe, int B, int T, int C, int V, cudaStream_t stream) {
     if(out.DType == ETensorDType::FP32) {
         encoder_forward(out.get<float>(), inp.get<std::int32_t>(), wte.get<float>(), wpe.get_optional<float>(), B, T, C, V, stream);
