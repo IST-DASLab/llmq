@@ -117,7 +117,7 @@ void MultiGPUPyTrainer::step(const std::int32_t* inputs, const std::int32_t* tar
     ++mTrainMicroStep;
 }
 
-float MultiGPUPyTrainer::validate(const std::int32_t* inputs, const std::int32_t* targets) {
+std::pair<float, float> MultiGPUPyTrainer::validate(const std::int32_t* inputs, const std::int32_t* targets) {
     for(int i = 0; i < mContexts.size(); ++i) {
         auto& ctx = mContexts.at(i);
         auto* ib = ctx.Model->get_input_buffer().get<std::int32_t>();
@@ -127,14 +127,14 @@ float MultiGPUPyTrainer::validate(const std::int32_t* inputs, const std::int32_t
         std::memcpy(tb, targets + i * B * T, B * T * sizeof(std::int32_t));
     }
 
-    float loss;
+    std::pair<float, float> loss;
 
     run_work([micro_idx = mEvalStep, &loss](sThreadContext& ctx) {
         Tensor inputs = ctx.Model->get_input_buffer();
         Tensor targets = ctx.Model->get_target_buffer();
         auto calc_loss = ctx.Model->validate(inputs, targets, *ctx.Communicator, micro_idx);
         if (ctx.Communicator->rank() == 0) {
-            loss = calc_loss.first;
+            loss = calc_loss;
         }
     });
 
@@ -145,16 +145,17 @@ float MultiGPUPyTrainer::validate(const std::int32_t* inputs, const std::int32_t
 
 
 
-std::tuple<float, float, float, float> MultiGPUPyTrainer::update(float lr, float beta1, float beta2, int step, float weight_decay, float grad_clip) {
+std::tuple<float, float, float, float, float> MultiGPUPyTrainer::update(float lr, float beta1, float beta2, int step, float weight_decay, float grad_clip) {
     run_work([=](sThreadContext& ctx) {
         ctx.Model->update(*ctx.Communicator, lr, beta1, beta2, step + 1, 1e-8f, weight_decay, grad_clip);
         CUDA_CHECK(cudaDeviceSynchronize());
 
     });
-    float step_loss, step_norm;
+    float step_loss, step_loss_1k, step_norm;
 
     auto& ctx = mContexts.at(0);
     step_loss = ctx.Model->get_loss();
+    step_loss_1k = ctx.Model->get_loss(1024);
     step_norm = ctx.Model->get_norm();
     float logit_lse_max = ctx.Model->get_run_state().get_lse_max();
     float logit_lse_mean = ctx.Model->get_run_state().get_lse_sum() / ( B * T * mGradAccumulation );
@@ -163,7 +164,7 @@ std::tuple<float, float, float, float> MultiGPUPyTrainer::update(float lr, float
     mTrainMicroStep = 0;
     mEvalStep = 0;
 
-    return {step_loss / B / T / mGradAccumulation, step_norm, logit_lse_max, logit_lse_mean};
+    return {step_loss / B / T / mGradAccumulation, step_loss_1k / B / T / mGradAccumulation, step_norm, logit_lse_max, logit_lse_mean};
 }
 
 

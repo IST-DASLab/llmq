@@ -98,7 +98,7 @@ def main():
     print("\neval...")
     for i in tqdm(range(min(eval_steps, eval_loader.num_chunks-1))):
         eval_loader.load_batch(in_tokens, out_tokens)
-        val_loss += trainer.validate(in_tokens, out_tokens)
+        val_loss += trainer.validate(in_tokens, out_tokens)[0]
 
     print(f"eval loss: {val_loss / eval_steps:6.3f}")
 
