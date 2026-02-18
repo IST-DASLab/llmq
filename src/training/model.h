@@ -55,7 +55,9 @@ public:
     virtual void update(NCCLCommunicator& comm, float learning_rate, float beta_1, float beta_2, int t, float epsilon, float weight_decay, float grad_clip) = 0;
 
     //! Gets the loss of the preceding validate or backward call (forward does _not_ calculate the loss)
-    float get_loss() const;
+    //! \param max_pos Maximum position inside the sequence that is considered for loss calculation.
+    //!                -1 indicates the full sequence. Must be a multiple of 512.
+    float get_loss(int max_pos=-1) const;
 
     //! Gets the gradient norm of the preceding update call.
     float get_norm() const;
@@ -134,7 +136,7 @@ public:
     //! only should be called after the last backward step (i.e., where `micro_step==grad_accum_steps`)
     //! will block the caller until `backward` is done, i.e., the function is safe to call without
     //! additional synchronization.
-    float get_loss() const;
+    float get_loss(int max_pos=-1) const;
 
     //! gets the global gradient norm.
     //! will block the caller until `update` has finished the norm calculation,
@@ -162,6 +164,7 @@ public:
     Tensor Targets;                     // (B, T) Int32
     Tensor Losses;                      // (B, T) FP32
     Tensor LSE;                         // (B, T) FP32; log-sum-exp of logits
+    Tensor GroupedLosses;               // (T / 512) FP32
 
     float* NormHost = nullptr;          // single value
     float* LossHost = nullptr;          // single value
