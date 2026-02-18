@@ -50,7 +50,7 @@ public:
     void schedule_destructive_all_to_all(Tensor& tensor);
     void execute_transaction(cudaEvent_t signal);
 
-    void reduce_sum(float* values, int n, cudaStream_t stream);
+    void reduce_mean(float* values, int n, cudaStream_t stream);
     void reduce_norm(float* norm_squared, cudaStream_t stream);
 
     void reduce_max(float* values, int n = 1, cudaStream_t stream=nullptr);

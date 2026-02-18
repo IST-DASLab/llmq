@@ -569,8 +569,10 @@ void TrainingRunner::run_training(int argc, const char** argv, NCCLCommunicator&
             logger.log_message(step, fmt::format("Gradient norm outlier with z-score: {}", grad_z));
         }
 
+        int ntoks = B * T * GradAccSteps;
+        int ntoks_1k = B * std::min(T, 1024) * GradAccSteps;
         logger.log_step(step, B*T*GradAccSteps*comm.world_size(),
-            narrow<int>(ms), step_norm, step_loss / (B*T*GradAccSteps), step_loss_1k / (B*1024*GradAccSteps), logit_lse_max, logit_lse_mean, lr);
+            narrow<int>(ms), step_norm, step_loss / ntoks, step_loss_1k / ntoks_1k, logit_lse_max, logit_lse_mean, lr);
 
         if (DebugLogAbsMaxes > 0 && step % DebugLogAbsMaxes == 0) {
             auto& rs = model.run_state();

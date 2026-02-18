@@ -79,7 +79,7 @@ def run_evaluation(trainer: pyllmq.LLMQTrainer, eval_loader: pyllmq.DataLoader,
 
     if batches == 0:
         print("WARNING: insufficient validation data", file=sys.stderr)
-        return 0.0, 0
+        return 0.0, 0.0, 0
 
     return total_loss / batches, total_loss_1k / batches, int((time.time() - start_time) * 1000)
 
@@ -231,9 +231,8 @@ def run_training_loop(config: pyllmq.TrainingConfig, trainer: pyllmq.LLMQTrainer
         # Run evaluation
         if run_eval:
             val_loss, val_loss_1k, elapsed_ms = run_evaluation(trainer, eval_loader, in_tokens, out_tokens, config.eval_num_steps)
-            epoch = train_loader.epoch() + 0.01 * train_loader.progress()
             eval_tokens = config.eval_num_steps * config.batch_size * config.seq_len * config.gpus
-            logger.log_eval(step, epoch, eval_tokens, elapsed_ms, val_loss, val_loss_1k)
+            logger.log_eval(step, eval_tokens, elapsed_ms, val_loss, val_loss_1k)
 
         # Training step
         step_start = time.time()
@@ -259,9 +258,8 @@ def run_training_loop(config: pyllmq.TrainingConfig, trainer: pyllmq.LLMQTrainer
 
         # Log step
         tokens_processed = config.batch_size * config.seq_len * config.grad_accumulation * config.gpus
-        epoch = train_loader.epoch() + 0.01 * train_loader.progress()
-        logger.log_step(step, epoch, tokens_processed, elapsed_ms,
-                        result['norm'], result['loss'], result['loss_1k'], lr)
+        logger.log_step(step, tokens_processed, elapsed_ms,
+                        result['norm'], result['loss'], result['loss_1k'], result["z_max"], result["z_mean"], lr)
 
     # Final evaluation
     print("\nRunning final evaluation...")
