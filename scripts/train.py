@@ -67,19 +67,21 @@ def run_evaluation(trainer: pyllmq.LLMQTrainer, eval_loader: pyllmq.DataLoader,
     start_time = time.time()
     eval_loader.set_state(eval_loader.seed, 0, 0, 0)
     total_loss = 0.0
+    total_loss_1k = 0.0
     batches = 0
 
     while batches < max_steps and batches < eval_loader.num_chunks:
         eval_loader.load_batch(in_tokens, out_tokens)
         loss = trainer.validate(in_tokens, out_tokens)
-        total_loss += loss
+        total_loss += loss[0]
+        total_loss_1k += loss[1]
         batches += 1
 
     if batches == 0:
         print("WARNING: insufficient validation data", file=sys.stderr)
         return 0.0, 0
 
-    return total_loss / batches, int((time.time() - start_time) * 1000)
+    return total_loss / batches, total_loss_1k / batches, int((time.time() - start_time) * 1000)
 
 
 def parse_args():
@@ -228,10 +230,10 @@ def run_training_loop(config: pyllmq.TrainingConfig, trainer: pyllmq.LLMQTrainer
 
         # Run evaluation
         if run_eval:
-            val_loss, elapsed_ms = run_evaluation(trainer, eval_loader, in_tokens, out_tokens, config.eval_num_steps)
+            val_loss, val_loss_1k, elapsed_ms = run_evaluation(trainer, eval_loader, in_tokens, out_tokens, config.eval_num_steps)
             epoch = train_loader.epoch() + 0.01 * train_loader.progress()
             eval_tokens = config.eval_num_steps * config.batch_size * config.seq_len * config.gpus
-            logger.log_eval(step, epoch, eval_tokens, elapsed_ms, val_loss)
+            logger.log_eval(step, epoch, eval_tokens, elapsed_ms, val_loss, val_loss_1k)
 
         # Training step
         step_start = time.time()
@@ -259,7 +261,7 @@ def run_training_loop(config: pyllmq.TrainingConfig, trainer: pyllmq.LLMQTrainer
         tokens_processed = config.batch_size * config.seq_len * config.grad_accumulation * config.gpus
         epoch = train_loader.epoch() + 0.01 * train_loader.progress()
         logger.log_step(step, epoch, tokens_processed, elapsed_ms,
-                        result['norm'], result['loss'], lr)
+                        result['norm'], result['loss'], result['loss_1k'], lr)
 
     # Final evaluation
     print("\nRunning final evaluation...")

@@ -304,9 +304,10 @@ NB_MODULE(_pyllmq, m) {
             return trainer->validate(inputs.data(), targets.data());
         }, nb::arg("inputs"), nb::arg("targets"), "Perform one step of forward and loss calculation with the given inputs and targets, and return the resulting loss.")
         .def("update", [](MultiGPUPyTrainer* trainer, float lr, float beta1, float beta2, int step, float weight_decay, float grad_clip){
-            auto [loss, norm, z_max, z_mean] = trainer->update(lr, beta1, beta2, step, weight_decay, grad_clip);
+            auto [loss, loss_1k, norm, z_max, z_mean] = trainer->update(lr, beta1, beta2, step, weight_decay, grad_clip);
             nb::dict ret;
             ret["loss"] = loss;
+            ret["loss_1k"] = loss_1k;
             ret["norm"] = norm;
             ret["z_max"] = z_max;
             ret["z_mean"] = z_mean;
@@ -440,10 +441,10 @@ NB_MODULE(_pyllmq, m) {
              "Log dataset information")
         .def("log_step", &TrainingRunLogger::log_step,
              nb::arg("step"), nb::arg("step_tokens"), nb::arg("duration_ms"),
-             nb::arg("norm"), nb::arg("loss"), nb::arg("logit_lse_max"), nb::arg("logit_lse_mean"), nb::arg("lr"),
+             nb::arg("norm"), nb::arg("loss"), nb::arg("loss_1k"), nb::arg("logit_lse_max"), nb::arg("logit_lse_mean"), nb::arg("lr"),
              "Log a training step")
         .def("log_eval", &TrainingRunLogger::log_eval,
-             nb::arg("step"), nb::arg("eval_tokens"), nb::arg("duration_ms"), nb::arg("loss"),
+             nb::arg("step"), nb::arg("eval_tokens"), nb::arg("duration_ms"), nb::arg("loss"), nb::arg("loss_1k"),
              "Log an evaluation step")
         .def("log_gpu_state", &TrainingRunLogger::log_gpu_state,
              nb::arg("step"), nb::arg("gpu_id"), nb::arg("gpu_util"),
