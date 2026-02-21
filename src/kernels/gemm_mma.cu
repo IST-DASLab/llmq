@@ -21,7 +21,8 @@ std::type_identity<T> type_v = {};
 template<typename AType, typename BType, typename BiasType, typename AccType>
 __global__ __launch_bounds__(32*2*2, 2) void gemm_mma_tn_kernel(nv_bfloat16* __restrict__ out,
                                                                 const AType* __restrict__ a, const BType* __restrict__ b,
-                                                                int m, int n, int k, const float* __restrict__ scale,
+                                                                int m, int n, int k,
+                                                                const float* __restrict__ scale_a, const float* __restrict__ scale_b,
                                                                 const BiasType* __restrict__ bias,
                                                                 bool accumulate,
                                                                 std::type_identity<AccType> acc_type) {
@@ -177,6 +178,14 @@ __global__ __launch_bounds__(32*2*2, 2) void gemm_mma_tn_kernel(nv_bfloat16* __r
     // note: loop_fraction ends with __syncthreads, so no need to sync here
     nv_bfloat16* out_shared = reinterpret_cast<nv_bfloat16*>(input_tiles) + (threadIdx.y + 2 * threadIdx.z) * TJ * TI;
 
+    float scale = 1.f;
+    if (scale_a != nullptr) {
+        scale = *scale_a;
+    }
+    if (scale_b != nullptr) {
+        scale *= *scale_b;
+    }
+
     // on 40xx, for some reason, these loops don't get unrolled, and then
     // all the accumulators end up in local memory and we get terrible
     // performance.
@@ -186,15 +195,15 @@ __global__ __launch_bounds__(32*2*2, 2) void gemm_mma_tn_kernel(nv_bfloat16* __r
         for (int jj = 0; jj < WJ; jj++) {
 
             // interleave scaling and output writing
-            if(scale != nullptr && *scale != 1.f) {
-                acc[ii][jj].v[0] *= *scale;
-                acc[ii][jj].v[1] *= *scale;
-                acc[ii][jj].v[2] *= *scale;
-                acc[ii][jj].v[3] *= *scale;
-                acc[ii][jj].v[4] *= *scale;
-                acc[ii][jj].v[5] *= *scale;
-                acc[ii][jj].v[6] *= *scale;
-                acc[ii][jj].v[7] *= *scale;
+            if(scale != 1.f) {
+                acc[ii][jj].v[0] *= scale;
+                acc[ii][jj].v[1] *= scale;
+                acc[ii][jj].v[2] *= scale;
+                acc[ii][jj].v[3] *= scale;
+                acc[ii][jj].v[4] *= scale;
+                acc[ii][jj].v[5] *= scale;
+                acc[ii][jj].v[6] *= scale;
+                acc[ii][jj].v[7] *= scale;
             }
 
             store_fragment_row_major_sync(acc[ii][jj], out_shared, TJ);
@@ -225,7 +234,7 @@ __global__ __launch_bounds__(32*2*2, 2) void gemm_mma_tn_kernel(nv_bfloat16* __r
 }
 
 template<class AType, class BType, class BiasType, class AccType>
-void gemm_mma_tn_launcher(nv_bfloat16* out, const AType* a, const BType* b, int m, int n, int k, const float* scale, const BiasType* bias,
+void gemm_mma_tn_launcher(nv_bfloat16* out, const AType* a, const BType* b, int m, int n, int k, const float* scale_a, const float* scale_b, const BiasType* bias,
                           bool accumulate, std::type_identity<AccType>, cudaStream_t stream) {
     // our kernel is row-major, so to match cublas, we need to transpose everything => swapped a<->b, m<->n
     dim3 grid{(unsigned)n / 128, (unsigned)m / 128, 1};
@@ -235,15 +244,19 @@ void gemm_mma_tn_launcher(nv_bfloat16* out, const AType* a, const BType* b, int 
         grid = {(unsigned)n / 128, (unsigned)m / 128, 1};
     }
     dim3 block{32, 2, 2};
-    gemm_mma_tn_kernel<<<grid, block, 0, stream>>>(out, b, a, n, m, k, scale, bias, accumulate, type_v<AccType>);
+    gemm_mma_tn_kernel<<<grid, block, 0, stream>>>(out, b, a, n, m, k, scale_a, scale_b, bias, accumulate, type_v<AccType>);
 }
 
-void gemm_mma_tn(nv_bfloat16* out, const __nv_fp8_e4m3* a, const __nv_fp8_e4m3* b, int m, int n, int k, const float* scale, const nv_bfloat16* bias, bool accumulate, cudaStream_t stream) {
-    gemm_mma_tn_launcher(out, a, b, m, n, k, scale, bias, accumulate, type_v<float>, stream);
+void gemm_mma_tn(nv_bfloat16* out, const __nv_fp8_e4m3* a, const __nv_fp8_e4m3* b, int m, int n, int k,
+    const float* scale_a, const float* scale_b, const nv_bfloat16* bias, bool accumulate, cudaStream_t stream)
+{
+    gemm_mma_tn_launcher(out, a, b, m, n, k, scale_a, scale_b, bias, accumulate, type_v<float>, stream);
     assert(cudaGetLastError() == cudaSuccess);
 }
 
-void gemm_mma_tn(nv_bfloat16* out, const nv_bfloat16* a, const nv_bfloat16* b, int m, int n, int k, const float* scale, const nv_bfloat16* bias, bool accumulate, cudaStream_t stream) {
-    gemm_mma_tn_launcher(out, a, b, m, n, k, scale, bias, accumulate, type_v<float>, stream);
+void gemm_mma_tn(nv_bfloat16* out, const nv_bfloat16* a, const nv_bfloat16* b, int m, int n, int k,
+    const float* scale_a, const float* scale_b, const nv_bfloat16* bias, bool accumulate, cudaStream_t stream)
+{
+    gemm_mma_tn_launcher(out, a, b, m, n, k, scale_a, scale_b, bias, accumulate, type_v<float>, stream);
     assert(cudaGetLastError() == cudaSuccess);
 }
