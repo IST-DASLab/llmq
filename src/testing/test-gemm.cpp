@@ -21,9 +21,11 @@ extern void matmul_cublaslt(floatO* d, const floatX* a, const floatX* b, const f
                      int m, int n, int k, cudaStream_t stream, cublasLtHandle_t handle,
                      const float* scale_a, const float* scale_b, EMMTranspose mode, bool accumulate);
 
+extern cublasLtHandle_t create_cublaslt_handle();
 
 template<typename Atype, typename Btype, typename Ctype>
 void run_test(int m, int n, int k, float scale = 1.f, bool accumulate = false, bool use_bias=false, bool check=true) {
+    auto saved_backend = get_matmul_backend();
     Atype* a;
     Btype* b;
     Ctype* c;
@@ -50,9 +52,12 @@ void run_test(int m, int n, int k, float scale = 1.f, bool accumulate = false, b
     CUDA_CHECK(cudaMemset(c_float, 0, m * n * sizeof(float)));
     CUDA_CHECK(cudaMemset(bias_float, 0, n * sizeof(float)));
 
+    std::mt19937 rng(12345);
+    std::uniform_int_distribution<int> dist(-15, 15);
+
     for(int i = 0; i < m; ++i) {
         for(int j = 0; j < k; ++j) {
-            auto val = static_cast<Atype>(rand() % 31 - 15);
+            auto val = static_cast<Atype>(dist(rng));
             a[i*k+j] = val;
             a_float[i*k+j] = static_cast<float>(val);
         }
@@ -60,7 +65,7 @@ void run_test(int m, int n, int k, float scale = 1.f, bool accumulate = false, b
 
     for(int i = 0; i < n; ++i) {
         for(int j = 0; j < k; ++j) {
-            auto val = static_cast<Btype>(rand() % 31 - 15);
+            auto val = static_cast<Btype>(dist(rng));
             b[i*k+j] = val;
             b_float[i*k+j] = static_cast<float>(val);
         }
@@ -68,14 +73,14 @@ void run_test(int m, int n, int k, float scale = 1.f, bool accumulate = false, b
 
     for(int i = 0; i < m; ++i) {
         for(int j = 0; j < n; ++j) {
-            auto val = static_cast<Ctype>(rand() % 31 - 15);
+            auto val = static_cast<Ctype>(dist(rng));
             c[i*n+j] = val;
             c_float[i*n+j] = static_cast<float>(val);
         }
     }
 
     for(int i = 0; i < n; ++i) {
-        auto val = static_cast<Ctype>(rand() % 31 - 15);
+        auto val = static_cast<Ctype>(dist(rng));
         bias[i] = val;
         bias_float[i] = static_cast<float>(val);
     }
@@ -92,11 +97,10 @@ void run_test(int m, int n, int k, float scale = 1.f, bool accumulate = false, b
     CUDA_CHECK(cudaMemPrefetchAsync(scale_a_ptr, 4, cudaMemLocation{cudaMemLocationTypeDevice, 0}, 0));
     CUDA_CHECK(cudaMemPrefetchAsync(scale_b_ptr, 4, cudaMemLocation{cudaMemLocationTypeDevice, 0}, 0));
 
-    cublasLtHandle_t handle;
+    cublasLtHandle_t handle = create_cublaslt_handle();
     std::byte* workspace;
     size_t workspace_size = 128 * 1024 * 1024;
-    assert(cublasLtCreate(&handle) == CUBLAS_STATUS_SUCCESS);
-    cudaMalloc(&workspace, workspace_size);
+    CUDA_CHECK(cudaMalloc(&workspace, workspace_size));
     get_matmul_backend() = EMatmulBackend::Custom;
 
     CUDA_CHECK(cudaDeviceSynchronize());
@@ -115,7 +119,6 @@ void run_test(int m, int n, int k, float scale = 1.f, bool accumulate = false, b
         CUDA_CHECK(cudaDeviceSynchronize());
 
         double r_tol = 1e-2;
-        bool equal = true;
         int approx_count = 0;
         int far_count = 0;
         for (int i = 0; i < m; ++i) {
@@ -138,11 +141,13 @@ void run_test(int m, int n, int k, float scale = 1.f, bool accumulate = false, b
         }
 
         if (far_count == 0 && approx_count == 0) {
+            SUCCEED();
             printf("PASS\n");
         } else if(far_count < m * n / 100 && approx_count < m * n / 10) {
+            SUCCEED();
             printf("CLOSE %d%%  [%d+%d]\n", 100 - (approx_count + far_count) * 100 / (m * n), far_count, approx_count);
         } else {
-            printf("FAIL\n");
+            FAIL();
         }
     }
 
@@ -158,6 +163,7 @@ void run_test(int m, int n, int k, float scale = 1.f, bool accumulate = false, b
     CUDA_CHECK(cudaFree(scale_b_ptr));
     CUDA_CHECK(cudaFree(workspace));
     cublasLtDestroy(handle);
+    get_matmul_backend() = saved_backend;
 }
 
 TEST_CASE("tiny matmul bfloat16 x bfloat16 -> bfloat16", "[gemm][bf16]") {

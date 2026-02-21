@@ -24,7 +24,7 @@ struct m16_n16_k32_b_fragment {
 
 template<typename AccDType>
 struct m16_n16_k32_c_fragment {
-    AccDType v[8] = {0.f, 0.f, 0.f, 0.f, 0.f, 0.f, 0.f, 0.f};
+    AccDType v[8] = {};
 };
 
 template<typename>
