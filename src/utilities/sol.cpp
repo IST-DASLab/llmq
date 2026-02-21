@@ -352,14 +352,14 @@ double measure_real_peak() {
         }
         ++trip_count;
         matmul(c, a, b, nullptr, nullptr, nullptr, handle, workspace, 32 * 1024 * 1024,
-               16384, 16384, 16384, EMMTranspose::TN, false, nullptr);
+               16384, 16384, 16384, EMMTranspose::TN, false, nullptr, EMatmulBackend::CuBLAS);
     }
 
     // now, actual measurement
     CUDA_CHECK(cudaEventRecord(start_event));
     for(int i = 0; i < trip_count; ++i) {
         matmul(c, a, b, nullptr, nullptr, nullptr, handle, workspace, 32 * 1024 * 1024,
-               16384, 16384, 16384, EMMTranspose::TN, false, nullptr);
+               16384, 16384, 16384, EMMTranspose::TN, false, nullptr, EMatmulBackend::CuBLAS);
     }
     CUDA_CHECK(cudaEventRecord(stop_event));
     CUDA_CHECK(cudaEventSynchronize(stop_event));

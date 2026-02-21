@@ -49,6 +49,7 @@ def setup_options(config: pyllmq.TrainingConfig) -> pyllmq.LLamaOptions:
     # Performance options
     options.use_cuda_graphs = config.use_cuda_graphs
     options.use_all_to_all_reduce = config.all_to_all_reduce
+    options.use_custom_matmul = config.custom_matmul
     options.use_write_combined = config.write_combined
 
     # Other options
@@ -99,6 +100,7 @@ def parse_args():
     add_toggle("memcpy-send-recv", True, "Use cudaMemcpyAsync for send/recv (faster on PCIe). Only meaningful in conjunction with all-to-all-reduce")
     add_toggle("all-to-all-reduce", True, "Use custom all-to-all reduce which can be used with memcpy-send-recv")
     add_toggle("write-combined", False, "Use write-combined memory. May give faster PCIe transfers.")
+    add_toggle("custom-matmul", False, "Use custom matmul implementation.")
 
     args = parser.parse_args()
     return pyllmq.TrainingConfig(**vars(args))

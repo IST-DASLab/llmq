@@ -78,6 +78,9 @@ def _create_options(config: TrainingConfig) -> pyllmq.LLamaOptions:
     options.shard_gradients = config.shard_gradients
     options.shard_weights = config.shard_weights
 
+    options.use_all_to_all_reduce = config.all_to_all_reduce
+    options.use_custom_matmul = config.custom_matmul
+
     if config.matmul_dtype:
         options.matmul_type = config.matmul_dtype
     if config.gradient_dtype:
@@ -167,6 +170,7 @@ def parse_args(args: list = None) -> TrainingConfig:
     parser.add_argument("--memcpy-send-recv", action="store_true")
     parser.add_argument("--all-to-all-reduce", action="store_true")
     parser.add_argument("--write-combined", action="store_true")
+    parser.add_argument("--custom-matmul", action="store_true")
     args = parser.parse_args(args=args)
 
     cfg = TrainingConfig(**vars(args))

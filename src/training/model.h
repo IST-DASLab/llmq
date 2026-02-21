@@ -10,10 +10,12 @@
 #include <string_view>
 #include <vector>
 
+#include "kernels/kernels.h"
 #include "utilities/stack.h"
 #include "utilities/tensor.h"
 #include "training/transformer_config.h"
 
+enum class EMatmulBackend;
 class AdamWStateManager;
 class ITensorContainer;
 class NCCLCommunicator;
@@ -188,6 +190,7 @@ public:
     cudnnHandle_t CudnnHandle = nullptr;
     cublasLtHandle_t CublasLtHandle = nullptr;
     Tensor CuBlasWorkspace;
+    EMatmulBackend MatmulBackend = EMatmulBackend{0};
 
     // events for debugging timings
     void setup_timing_events(int micro_steps);

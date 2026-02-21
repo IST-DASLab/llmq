@@ -151,7 +151,7 @@ NB_MODULE(_pyllmq, m) {
             bool recompute_ffn, bool recompute_qkv, bool recompute_att, bool recompute_block, bool offload_residual,
             bool use_cuda_graphs,
             bool offload_master, bool offload_quants, bool offload_opt_m, bool offload_opt_v, bool offload_grads, bool use_zero_copy,
-            bool use_write_combined, bool shard_weights, bool persistent_quants, bool shard_gradients, bool use_all_to_all_reduce,
+            bool use_write_combined, bool shard_weights, bool persistent_quants, bool shard_gradients, bool use_all_to_all_reduce, bool use_custom_matmul,
             bool init_projections_to_zero, int lmhead_chunks, int attn_bwd_chunks,
             const std::string matmul_type, const std::string gradient_type, const std::string master_dtype, const std::string momentum_type, const std::string variance_type) {
             new (t) LLamaOptions{
@@ -176,6 +176,7 @@ NB_MODULE(_pyllmq, m) {
                 .PersistentQuants = persistent_quants,
                 .ShardGradients = shard_gradients,
                 .UseAllToAllReduce = use_all_to_all_reduce,
+                .UseCustomMatmul = use_custom_matmul,
                 .InitProjectionsToZero = init_projections_to_zero,
                 .MatmulType = opt_dtype_from_str(matmul_type),
                 .GradientType = opt_dtype_from_str(gradient_type),
@@ -193,7 +194,8 @@ NB_MODULE(_pyllmq, m) {
              nb::arg("offload_opt_v") = false,    nb::arg("offload_grads") = false,
              nb::arg("use_zero_copy") = false,    nb::arg("use_write_combined") = false,
              nb::arg("shard_weights") = false,    nb::arg("persistent_quants") = false,
-             nb::arg("shard_gradients") = false,  nb::arg("use_all_to_all_reduce") = false,
+             nb::arg("shard_gradients") = false,
+             nb::arg("use_all_to_all_reduce") = false, nb::arg("use_custom_matmul") = false,
              nb::arg("init_projections_to_zero") = false, nb::arg("lmhead_chunks") = 1,
              nb::arg("attn_bwd_chunks") = 1,
              nb::arg("matmul_type") = "",         nb::arg("gradient_type") = "",
@@ -221,6 +223,7 @@ NB_MODULE(_pyllmq, m) {
         .def_rw("persistent_quants", &LLamaOptions::PersistentQuants)
         .def_rw("shard_gradients", &LLamaOptions::ShardGradients)
         .def_rw("use_all_to_all_reduce", &LLamaOptions::UseAllToAllReduce)
+        .def_rw("use_custom_matmul", &LLamaOptions::UseCustomMatmul)
         .def_rw("init_projections_to_zero", &LLamaOptions::InitProjectionsToZero)
         .def_prop_rw("matmul_type", [](const LLamaOptions* opt){ return opt->matmul_dtype(); },
                      [](LLamaOptions* opt, const std::string& dtype_str){ opt->MatmulType = opt_dtype_from_str(dtype_str); })
