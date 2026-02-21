@@ -1,3 +1,7 @@
+// Copyright (c) 2026, IST Austria, developed by Erik Schultheis
+// SPDX-License-Identifier: Apache-2.0
+//
+
 #include <cuda_fp8.h>
 #include <cuda_bf16.h>
 #include <cuda_pipeline_primitives.h>
@@ -7,10 +11,6 @@
 #include <type_traits>
 
 #include "utilities/utils.h"
-
-unsigned div_ceil(unsigned a, unsigned b) {
-    return (a + b - 1) / b;
-}
 
 template<int V>
 using int_c = std::integral_constant<int, V>;

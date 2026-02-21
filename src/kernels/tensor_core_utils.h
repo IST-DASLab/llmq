@@ -1,3 +1,7 @@
+// Copyright (c) 2026, IST Austria, developed by Erik Schultheis
+// SPDX-License-Identifier: Apache-2.0
+//
+
 #ifndef LLMQ_TENSOR_CORE_UTILS_CUH
 #define LLMQ_TENSOR_CORE_UTILS_CUH
 
@@ -20,7 +24,7 @@ struct m16_n16_k32_b_fragment {
 
 template<typename AccDType>
 struct m16_n16_k32_c_fragment {
-    AccDType v[8] = {0.f, 0.f, 0.f, 0.f};
+    AccDType v[8] = {0.f, 0.f, 0.f, 0.f, 0.f, 0.f, 0.f, 0.f};
 };
 
 template<typename>
