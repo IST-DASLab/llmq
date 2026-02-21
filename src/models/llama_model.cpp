@@ -921,6 +921,8 @@ void LLamaModel::allocate_run_state(const LLamaOptions& options, NCCLCommunicato
     RunState = std::make_unique<LLamaRunState>(std::move(acts));
     if (options.UseCustomMatmul) {
         RunState->MatmulBackend = EMatmulBackend::Custom;
+    } else {
+        RunState->MatmulBackend = EMatmulBackend::CuBLAS;
     }
     comm.barrier();     // make sure *all* GPUs have allocated the model before returning
 }
