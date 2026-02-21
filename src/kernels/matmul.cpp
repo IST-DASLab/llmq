@@ -3,6 +3,7 @@
 //
 // Based on llm.c https://github.com/karpathy/llm.c
 
+#include <atomic>
 #include <cublasLt.h>
 #include <fmt/core.h>
 
@@ -167,7 +168,7 @@ void matmul_dispatch(floatO* d, const floatX* a, const floatX* b, const floatB* 
                      int m, int n, int k, cudaStream_t stream, cublasLtHandle_t handle,
                      const float* scale_a, const float* scale_b, EMMTranspose mode, bool accumulate)
 {
-    static bool warning = false;
+    static std::atomic<bool> warning = false;
     if(get_matmul_backend() == EMatmulBackend::Custom && mode != EMMTranspose::TN && !warning) {
         fprintf(stderr, "WARNING: Custom matmuls are not supported for non-TN mode! Falling back to cublas.\n");
         warning = true;

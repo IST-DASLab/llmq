@@ -4,9 +4,9 @@
 #include "tensor_core_utils.h"
 #include "utilities/vec.cuh"
 #include <cstdio>
-#undef NDEBUG
-#include <cassert>
 #include <type_traits>
+
+#include "utilities/utils.h"
 
 unsigned div_ceil(unsigned a, unsigned b) {
     return (a + b - 1) / b;
@@ -236,12 +236,16 @@ __global__ __launch_bounds__(32*2*2, 2) void gemm_mma_tn_kernel(nv_bfloat16* __r
 template<class AType, class BType, class BiasType, class AccType>
 void gemm_mma_tn_launcher(nv_bfloat16* out, const AType* a, const BType* b, int m, int n, int k, const float* scale_a, const float* scale_b, const BiasType* bias,
                           bool accumulate, std::type_identity<AccType>, cudaStream_t stream) {
+    if (n % 128 != 0 || m % 128 != 0) {
+        throw std::invalid_argument("gemm_mma_tn_launcher: n and m must be divisible by 128");
+    }
+
     // our kernel is row-major, so to match cublas, we need to transpose everything => swapped a<->b, m<->n
-    dim3 grid{(unsigned)n / 128, (unsigned)m / 128, 1};
+    dim3 grid;
     if( n > m ) {
-        grid = {(unsigned)m / 128, (unsigned)n / 128, 1};
+        grid = {(unsigned)div_exact(m, 128), (unsigned)div_exact(n, 128), 1};
     } else {
-        grid = {(unsigned)n / 128, (unsigned)m / 128, 1};
+        grid = {(unsigned)div_exact(n, 128), (unsigned)div_exact(m, 128), 1};
     }
     dim3 block{32, 2, 2};
     gemm_mma_tn_kernel<<<grid, block, 0, stream>>>(out, b, a, n, m, k, scale_a, scale_b, bias, accumulate, type_v<AccType>);
@@ -251,12 +255,12 @@ void gemm_mma_tn(nv_bfloat16* out, const __nv_fp8_e4m3* a, const __nv_fp8_e4m3* 
     const float* scale_a, const float* scale_b, const nv_bfloat16* bias, bool accumulate, cudaStream_t stream)
 {
     gemm_mma_tn_launcher(out, a, b, m, n, k, scale_a, scale_b, bias, accumulate, type_v<float>, stream);
-    assert(cudaGetLastError() == cudaSuccess);
+    CUDA_CHECK(cudaGetLastError());
 }
 
 void gemm_mma_tn(nv_bfloat16* out, const nv_bfloat16* a, const nv_bfloat16* b, int m, int n, int k,
     const float* scale_a, const float* scale_b, const nv_bfloat16* bias, bool accumulate, cudaStream_t stream)
 {
     gemm_mma_tn_launcher(out, a, b, m, n, k, scale_a, scale_b, bias, accumulate, type_v<float>, stream);
-    assert(cudaGetLastError() == cudaSuccess);
+    CUDA_CHECK(cudaGetLastError());
 }

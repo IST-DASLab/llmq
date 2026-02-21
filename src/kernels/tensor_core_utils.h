@@ -1,3 +1,6 @@
+#ifndef LLMQ_TENSOR_CORE_UTILS_CUH
+#define LLMQ_TENSOR_CORE_UTILS_CUH
+
 #include "utilities/dtype.h"
 #include <vector_types.h>
 #include <cuda_fp16.h>
@@ -142,3 +145,5 @@ __device__ __forceinline__ void mma_m16_n16_k32_sync(m16_n16_k32_c_fragment<half
           "r"(to_raw(c.v[4])), "r"(to_raw(c.v[6])),
           "C"(ptx_type_name<AType>), "C"(ptx_type_name<BType>));
 }
+
+#endif
