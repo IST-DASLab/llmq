@@ -5,7 +5,7 @@
 #include <cuda_fp8.h>
 #include <cuda_bf16.h>
 #include <cuda_pipeline_primitives.h>
-#include "tensor_core_utils.h"
+#include "tensor_core_utils.cuh"
 #include "utilities/vec.cuh"
 #include <cstdio>
 #include <type_traits>
@@ -88,10 +88,10 @@ __global__ __launch_bounds__(32*2*2, 2) void gemm_mma_tn_kernel(nv_bfloat16* __r
     const uint4* bs_load_ptr = input_tiles + offsets.y + threadIdx.z * WJ*ROW_OFFSET + DEPTH * PIPE_OFFSET;
 
     static_assert(WI * BI % NW == 0, "WI * BI must be divisible by the number of warps per block");
-    static_assert(WJ * BJ % NW == 0, "WI * BI must be divisible by the number of warps per block");
+    static_assert(WJ * BJ % NW == 0, "WJ * BJ must be divisible by the number of warps per block");
 
     m16_n16_k32_a_fragment<AType> a_frag[WI];
-    m16_n16_k32_b_fragment<BType> b_frag[WI];
+    m16_n16_k32_b_fragment<BType> b_frag[WJ];
 
     auto loop_fraction = [&](auto stage_c, auto load_next_c, int ks) {
         constexpr int stage = decltype(stage_c)::value;
@@ -236,8 +236,8 @@ __global__ __launch_bounds__(32*2*2, 2) void gemm_mma_tn_kernel(nv_bfloat16* __r
 template<class AType, class BType, class BiasType, class AccType>
 void gemm_mma_tn_launcher(nv_bfloat16* out, const AType* a, const BType* b, int m, int n, int k, const float* scale_a, const float* scale_b, const BiasType* bias,
                           bool accumulate, std::type_identity<AccType>, cudaStream_t stream) {
-    if (n % 128 != 0 || m % 128 != 0) {
-        throw std::invalid_argument("gemm_mma_tn_launcher: n and m must be divisible by 128");
+    if (n % 128 != 0 || m % 128 != 0 || k % 128 != 0) {
+        throw std::invalid_argument("gemm_mma_tn_launcher: n, m, k must be divisible by 128");
     }
 
     // our kernel is row-major, so to match cublas, we need to transpose everything => swapped a<->b, m<->n

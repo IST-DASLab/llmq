@@ -173,7 +173,6 @@ void matmul_dispatch(floatO* d, const floatX* a, const floatX* b, const floatB* 
     bool expected = false;
     if(get_matmul_backend() == EMatmulBackend::Custom && mode != EMMTranspose::TN && warning.compare_exchange_strong(expected, true)) {
         fprintf(stderr, "WARNING: Custom matmuls are not supported for non-TN mode! Falling back to cublas.\n");
-        warning = true;
     }
 
     if(get_matmul_backend() == EMatmulBackend::CuBLAS || mode != EMMTranspose::TN) {
