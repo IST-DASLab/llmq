@@ -181,6 +181,8 @@ jobs:
             args: "torch-step --grad-accum 2 --model-dtype fp32 --matmul-dtype bf16"
           - name: "Torch Chunking"
             args: "torch-step --grad-accum 4 --model-dtype bf16 --matmul-dtype bf16 --lmhead-chunks 4"
+          - name: "Torch BF16 Custom Matmul"
+            args: "torch-step --grad-accum 1 --model-dtype bf16 --matmul-dtype bf16 --custom-matmul"
     steps:
       - name: Checkout code
         uses: actions/checkout@v4

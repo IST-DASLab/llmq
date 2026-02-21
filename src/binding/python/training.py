@@ -90,6 +90,7 @@ class TrainingConfig:
     memcpy_all_gather: bool = False
     memcpy_send_recv: bool = False
     all_to_all_reduce: bool = False
+    custom_matmul: bool = False
     write_combined: bool = False
     use_zero_copy: bool = False
 

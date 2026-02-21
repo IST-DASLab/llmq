@@ -43,6 +43,7 @@ struct LLamaOptions {
 
     bool ShardGradients = false;
     bool UseAllToAllReduce = false;
+    bool UseCustomMatmul = false;
 
     bool InitProjectionsToZero = false;
 

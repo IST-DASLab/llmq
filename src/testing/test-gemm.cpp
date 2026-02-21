@@ -25,7 +25,6 @@ extern cublasLtHandle_t create_cublaslt_handle();
 
 template<typename Atype, typename Btype, typename Ctype>
 void run_test(int m, int n, int k, float scale = 1.f, bool accumulate = false, bool use_bias=false, bool check=true) {
-    auto saved_backend = get_matmul_backend();
     Atype* a;
     Btype* b;
     Ctype* c;
@@ -101,10 +100,9 @@ void run_test(int m, int n, int k, float scale = 1.f, bool accumulate = false, b
     std::byte* workspace;
     size_t workspace_size = 128 * 1024 * 1024;
     CUDA_CHECK(cudaMalloc(&workspace, workspace_size));
-    get_matmul_backend() = EMatmulBackend::Custom;
 
     CUDA_CHECK(cudaDeviceSynchronize());
-    matmul(c, a, b, use_bias ? bias : nullptr, scale_a_ptr, scale_b_ptr, handle, workspace, workspace_size, m, n, k, EMMTranspose::TN, accumulate, nullptr);
+    matmul(c, a, b, use_bias ? bias : nullptr, scale_a_ptr, scale_b_ptr, handle, workspace, workspace_size, m, n, k, EMMTranspose::TN, accumulate, nullptr, EMatmulBackend::Custom);
     CUDA_CHECK(cudaDeviceSynchronize());
 
     if(check) {
@@ -112,10 +110,9 @@ void run_test(int m, int n, int k, float scale = 1.f, bool accumulate = false, b
         CUDA_CHECK(cudaMemPrefetchAsync(b_float, n*k * sizeof(float), cudaMemLocation{cudaMemLocationTypeDevice, 0}, 0));
         CUDA_CHECK(cudaMemPrefetchAsync(c_float, m*n * sizeof(float), cudaMemLocation{cudaMemLocationTypeDevice, 0}, 0));
         CUDA_CHECK(cudaMemPrefetchAsync(bias_float, n * sizeof(float), cudaMemLocation{cudaMemLocationTypeDevice, 0}, 0));
-        get_matmul_backend() = EMatmulBackend::CuBLAS;
         CUDA_CHECK(cudaDeviceSynchronize());
         matmul(c_float, a_float, b_float,  use_bias ? bias_float : nullptr, nullptr, nullptr,
-            handle, workspace, workspace_size, m, n, k , EMMTranspose::TN, accumulate, nullptr);
+            handle, workspace, workspace_size, m, n, k , EMMTranspose::TN, accumulate, nullptr, EMatmulBackend::CuBLAS);
         CUDA_CHECK(cudaDeviceSynchronize());
 
         double r_tol = 1e-2;
@@ -163,7 +160,6 @@ void run_test(int m, int n, int k, float scale = 1.f, bool accumulate = false, b
     CUDA_CHECK(cudaFree(scale_b_ptr));
     CUDA_CHECK(cudaFree(workspace));
     cublasLtDestroy(handle);
-    get_matmul_backend() = saved_backend;
 }
 
 TEST_CASE("tiny matmul bfloat16 x bfloat16 -> bfloat16", "[gemm][bf16]") {
