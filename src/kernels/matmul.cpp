@@ -157,15 +157,15 @@ void matmul_cublaslt(FloatC* d, const FloatA* a, const FloatB* b, const FloatBia
 }
 
 // custom matmuls
-void gemm_mma_tn(nv_bfloat16* out, const __nv_fp8_e4m3* a, const __nv_fp8_e4m3* b, int m, int n, int k, const float* scale, const nv_bfloat16* bias, bool accumulate, cudaStream_t stream);
-void gemm_mma_tn(nv_bfloat16* out, const nv_bfloat16* a, const nv_bfloat16* b, int m, int n, int k, const float* scale, const nv_bfloat16* bias, bool accumulate, cudaStream_t stream);
+void gemm_mma_tn(nv_bfloat16* out, const __nv_fp8_e4m3* a, const __nv_fp8_e4m3* b, int m, int n, int k, const float* scale_a, const float* scale_b, const nv_bfloat16* bias, bool accumulate, cudaStream_t stream);
+void gemm_mma_tn(nv_bfloat16* out, const nv_bfloat16* a, const nv_bfloat16* b, int m, int n, int k, const float* scale_a, const float* scale_b, const nv_bfloat16* bias, bool accumulate, cudaStream_t stream);
 
 
 template<class floatO, class floatX, class floatB>
 void matmul_dispatch(floatO* d, const floatX* a, const floatX* b, const floatB* bias,
                      std::byte* workspace, std::size_t workspace_size,
                      int m, int n, int k, cudaStream_t stream, cublasLtHandle_t handle,
-                     const float* scale, EMMTranspose mode, bool accumulate)
+                     const float* scale_a, const float* scale_b, EMMTranspose mode, bool accumulate)
 {
     static bool warning = false;
     if(get_matmul_backend() == EMatmulBackend::Custom && mode != EMMTranspose::TN && !warning) {
@@ -174,11 +174,11 @@ void matmul_dispatch(floatO* d, const floatX* a, const floatX* b, const floatB* 
     }
 
     if(get_matmul_backend() == EMatmulBackend::CuBLAS || mode != EMMTranspose::TN) {
-        matmul_cublaslt(d, a, b, bias, workspace, workspace_size, m, n, k, stream, handle, scale, mode, accumulate);
+        matmul_cublaslt(d, a, b, bias, workspace, workspace_size, m, n, k, stream, handle, scale_a, scale_b, mode, accumulate);
     } else if constexpr (std::is_same_v<floatO, nv_bfloat16> && std::is_same_v<floatB, nv_bfloat16>){
-        gemm_mma_tn(d, a, b, m, n, k, scale, bias, accumulate, stream);
+        gemm_mma_tn(d, a, b, m, n, k, scale_a, scale_b, bias, accumulate, stream);
     } else {
-        matmul_cublaslt(d, a, b, bias, workspace, workspace_size, m, n, k, stream, handle, scale, mode, accumulate);
+        matmul_cublaslt(d, a, b, bias, workspace, workspace_size, m, n, k, stream, handle, scale_a,  scale_b, mode, accumulate);
     }
 }
 
