@@ -204,10 +204,10 @@ TEST_CASE("rope forward/backward bfloat16 matches CPU (emulated)", "[rope][bf16]
     std::vector<float> h_inp_f = uniform_host(size_inp, -1.f, 1.f, 1337ull);
     std::vector<nv_bfloat16> h_inp_bf16 = to_bf16(h_inp_f);
 
-    // Prepare freqs and quantize to bf16 (kernel expects bf16 freqs as well)
+    // Prepare freqs and quantize to fp16 (kernel expects fp16 freqs)
     std::vector<float> h_freqs_f(size_freqs);
     precompute_freqs_cis(h_freqs_f.data(), HD, T, 10000.0f);
-    std::vector<nv_bfloat16> h_freqs_bf16 = to_bf16(h_freqs_f);
+    std::vector<half> h_freqs_fp16 = to_fp16(h_freqs_f);
 
     // CPU baseline with bf16 emulation: quantize inputs/freqs to bf16, do math in float, quantize outputs
     std::vector<float> h_inp_q = round_bf16(h_inp_f);
@@ -222,7 +222,7 @@ TEST_CASE("rope forward/backward bfloat16 matches CPU (emulated)", "[rope][bf16]
     thrust::device_vector<nv_bfloat16> d_inp = to_device(h_inp_bf16);
     thrust::device_vector<nv_bfloat16> d_out(size_inp);
     thrust::device_vector<nv_bfloat16> d_dinp(size_inp);
-    thrust::device_vector<nv_bfloat16> d_freqs = to_device(h_freqs_bf16);
+    thrust::device_vector<half> d_freqs = to_device(h_freqs_fp16);
 
     rope_forward(thrust::raw_pointer_cast(d_out.data()),
                  thrust::raw_pointer_cast(d_inp.data()),

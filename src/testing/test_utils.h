@@ -62,6 +62,13 @@ inline std::vector<nv_bfloat16> to_bf16(const std::vector<float>& vec) {
     }
     return result;
 }
+inline std::vector<half> to_fp16(const std::vector<float>& vec) {
+    std::vector<half> result(vec.size());
+    for(size_t i = 0; i < vec.size(); ++i) {
+        result[i] = half(vec[i]);
+    }
+    return result;
+}
 
 inline std::vector<float> round_bf16(const std::vector<float>& vec) {
     std::vector<float> result(vec.size());
