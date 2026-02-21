@@ -1,3 +1,7 @@
+// Copyright (c) 2026, IST Austria, developed by Erik Schultheis
+// SPDX-License-Identifier: Apache-2.0
+//
+
 #include "kernels/kernels.h"
 #include "utilities/utils.h"
 #include <cstdlib>
@@ -40,11 +44,11 @@ void run_test(int m, int n, int k, float scale = 1.f, bool accumulate = false, b
     CUDA_CHECK(cudaMallocManaged(&a_float, m * k * sizeof(float)));
     CUDA_CHECK(cudaMallocManaged(&b_float, n * k * sizeof(float)));
     CUDA_CHECK(cudaMallocManaged(&c_float, m * n * sizeof(float)));
-    CUDA_CHECK(cudaMallocManaged(&bias_float, m* sizeof(float)));
+    CUDA_CHECK(cudaMallocManaged(&bias_float, n * sizeof(float)));
     CUDA_CHECK(cudaMemset(a_float, 0, m * k * sizeof(float)));
     CUDA_CHECK(cudaMemset(b_float, 0, n * k * sizeof(float)));
     CUDA_CHECK(cudaMemset(c_float, 0, m * n * sizeof(float)));
-    CUDA_CHECK(cudaMemset(bias_float, 0, m * sizeof(float)));
+    CUDA_CHECK(cudaMemset(bias_float, 0, n * sizeof(float)));
 
     for(int i = 0; i < m; ++i) {
         for(int j = 0; j < k; ++j) {
@@ -70,7 +74,7 @@ void run_test(int m, int n, int k, float scale = 1.f, bool accumulate = false, b
         }
     }
 
-    for(int i = 0; i < m; ++i) {
+    for(int i = 0; i < n; ++i) {
         auto val = static_cast<Ctype>(rand() % 31 - 15);
         bias[i] = val;
         bias_float[i] = static_cast<float>(val);
@@ -103,7 +107,7 @@ void run_test(int m, int n, int k, float scale = 1.f, bool accumulate = false, b
         CUDA_CHECK(cudaMemPrefetchAsync(a_float, m*k * sizeof(float), cudaMemLocation{cudaMemLocationTypeDevice, 0}, 0));
         CUDA_CHECK(cudaMemPrefetchAsync(b_float, n*k * sizeof(float), cudaMemLocation{cudaMemLocationTypeDevice, 0}, 0));
         CUDA_CHECK(cudaMemPrefetchAsync(c_float, m*n * sizeof(float), cudaMemLocation{cudaMemLocationTypeDevice, 0}, 0));
-        CUDA_CHECK(cudaMemPrefetchAsync(bias_float, m * sizeof(float), cudaMemLocation{cudaMemLocationTypeDevice, 0}, 0));
+        CUDA_CHECK(cudaMemPrefetchAsync(bias_float, n * sizeof(float), cudaMemLocation{cudaMemLocationTypeDevice, 0}, 0));
         get_matmul_backend() = EMatmulBackend::CuBLAS;
         CUDA_CHECK(cudaDeviceSynchronize());
         matmul(c_float, a_float, b_float,  use_bias ? bias_float : nullptr, nullptr, nullptr,
@@ -142,17 +146,17 @@ void run_test(int m, int n, int k, float scale = 1.f, bool accumulate = false, b
         }
     }
 
-    cudaFree(a);
-    cudaFree(b);
-    cudaFree(c);
-    cudaFree(bias);
-    cudaFree(a_float);
-    cudaFree(b_float);
-    cudaFree(c_float);
-    cudaFree(bias_float);
-    cudaFree(scale_a_ptr);
-    cudaFree(scale_b_ptr);
-    cudaFree(workspace);
+    CUDA_CHECK(cudaFree(a));
+    CUDA_CHECK(cudaFree(b));
+    CUDA_CHECK(cudaFree(c));
+    CUDA_CHECK(cudaFree(bias));
+    CUDA_CHECK(cudaFree(a_float));
+    CUDA_CHECK(cudaFree(b_float));
+    CUDA_CHECK(cudaFree(c_float));
+    CUDA_CHECK(cudaFree(bias_float));
+    CUDA_CHECK(cudaFree(scale_a_ptr));
+    CUDA_CHECK(cudaFree(scale_b_ptr));
+    CUDA_CHECK(cudaFree(workspace));
     cublasLtDestroy(handle);
 }
 

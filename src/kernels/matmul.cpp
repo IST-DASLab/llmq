@@ -14,6 +14,7 @@
 cublasComputeType_t cublas_compute = CUBLAS_COMPUTE_32F;
 
 EMatmulBackend& get_matmul_backend() {
+    // TODO: this is global state right now. Ideally, we could make this local.
     static EMatmulBackend backend = EMatmulBackend::CuBLAS;
     return backend;
 }
@@ -168,8 +169,9 @@ void matmul_dispatch(floatO* d, const floatX* a, const floatX* b, const floatB* 
                      int m, int n, int k, cudaStream_t stream, cublasLtHandle_t handle,
                      const float* scale_a, const float* scale_b, EMMTranspose mode, bool accumulate)
 {
-    static std::atomic<bool> warning = false;
-    if(get_matmul_backend() == EMatmulBackend::Custom && mode != EMMTranspose::TN && !warning) {
+    static std::atomic<bool> warning{false};
+    bool expected = false;
+    if(get_matmul_backend() == EMatmulBackend::Custom && mode != EMMTranspose::TN && warning.compare_exchange_strong(expected, true)) {
         fprintf(stderr, "WARNING: Custom matmuls are not supported for non-TN mode! Falling back to cublas.\n");
         warning = true;
     }

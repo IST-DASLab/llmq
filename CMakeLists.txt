@@ -195,9 +195,6 @@ target_link_libraries(train PRIVATE llmq-common CLI11::CLI11 fmt::fmt-header-onl
 add_executable(export-checkpoint export-checkpoint.cpp)
 target_link_libraries(export-checkpoint PRIVATE llmq-common CLI11::CLI11)
 
-add_executable(gemm-test src/testing/kernels/gemm.cpp)
-target_link_libraries(gemm-test PUBLIC llmq-common CUDA::cublas)
-
 if (NOT SKBUILD)
     install(TARGETS llmq-common train export-checkpoint
             LIBRARY DESTINATION lib
@@ -260,6 +257,7 @@ if (BUILD_TESTS)
             src/testing/test-swiglu.cu
             src/testing/test-rope.cu
             src/testing/test-classifier.cu
+            src/testing/test-gemm.cpp
     )
     target_link_libraries(unit-tests PRIVATE llmq-common Catch2::Catch2 CLI11::CLI11)
     target_compile_options(unit-tests PUBLIC $<$<COMPILE_LANGUAGE:CUDA>:--expt-relaxed-constexpr> $<$<COMPILE_LANGUAGE:CUDA>:-lineinfo>)
