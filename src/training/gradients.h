@@ -110,6 +110,7 @@ private:
 /// This reduces optimizer memory while keeping gradient computation simple.
 class UnshardedGradientManager : public IGradientManager {
 public:
+    ~UnshardedGradientManager();
     void end_micro_step(cudaStream_t stream, NCCLCommunicator& comm) override;
 
     Tensor& get_non_block_full(std::size_t index, cudaStream_t stream, NCCLCommunicator& comm, bool& accumulate) override;
@@ -124,7 +125,7 @@ public:
 protected:
     UnshardedGradientManager(const TransformerConfig& cfg, IModel& model, std::uint64_t seed, int step, int rank, int world, const std::shared_ptr<TensorAllocator>& alloc);
 
-    cudaEvent_t mGradEvent;  ///< Synchronization event for backward pass completion
+    cudaEvent_t mGradEvent = nullptr;  ///< Synchronization event for backward pass completion
 
     /// Full gradient accumulators for transformer blocks (replicated across all ranks)
     std::vector<GenericTensorContainer> mBlockGradients;
@@ -142,6 +143,7 @@ protected:
 class ShardedBlocksGradientManager : public IGradientManager {
 public:
     ShardedBlocksGradientManager(const TransformerConfig& cfg, IModel& model, std::uint64_t seed, int step, int rank, int world, bool offload, const std::shared_ptr<TensorAllocator>& alloc);
+    ~ShardedBlocksGradientManager();
 
     void end_micro_step(cudaStream_t stream, NCCLCommunicator& comm) override;
 

@@ -276,18 +276,21 @@ std::vector<std::pair<std::string, long>> MultiGPUPyTrainer::get_stack_info(int 
 }
 
 std::vector<std::pair<std::string, Tensor>> MultiGPUPyTrainer::get_gradients(int gpu_id) {
+    using namespace LLamaWeightID;
+
     std::vector<std::pair<std::string, Tensor>> result;
+    // TODO make this work with generalized gradients
     run_work([&result](sThreadContext& ctx) {
         const auto& config = ctx.Model->config();
         auto& grads = ctx.Model->grads();
         CUDA_CHECK(cudaDeviceSynchronize());
-        result.emplace_back("model.embed_tokens.weight", grads.get_embeddings_shard(nullptr));
+        result.emplace_back("model.embed_tokens.weight", grads.get_non_block_shard(LLamaWeightID::EMBEDDING, nullptr));
         if (!config.TiedWordEmbeddings) {
-            result.emplace_back("lm_head.weight", grads.get_lmhead_shard(nullptr));
+            result.emplace_back("lm_head.weight", grads.get_non_block_shard(LM_HEAD, nullptr));
         }
-        result.emplace_back("model.norm.weight", grads.get_lnf_w_shard(nullptr));
+        result.emplace_back("model.norm.weight", grads.get_non_block_shard(LNF_W, nullptr));
         for (int l = 0; l < config.NumLayers; l++) {
-            using namespace LLamaWeightID;
+
             std::string prefix = "model.layers." + std::to_string(l);
             auto& block = grads.get_block_shard(l, nullptr);
             result.emplace_back(prefix + ".self_attn.qkv.weight", block.get_tensor(QKV_W));

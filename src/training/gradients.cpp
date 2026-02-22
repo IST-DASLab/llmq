@@ -32,15 +32,20 @@ UnshardedGradientManager::UnshardedGradientManager(const TransformerConfig& cfg,
         mBlockGradients[i] = model.create_block_container(cfg, cfg.DType, cfg.DType);
         alloc_lazy.allocate(mBlockGradients[i]);
         alloc_lazy.commit(*alloc, EAllocationType::ON_DEVICE, "block_grad");
-        mBlockShards[i] = shard_container(GenericTensorContainer(mBlockGradients[i]), world);
+        mBlockShards[i] = shard_view(GenericTensorContainer(mBlockGradients[i]), rank, world);
     }
 
     mNonBlockGradients = model.create_non_block_container(cfg, cfg.DType, cfg.DType);
     alloc_lazy.allocate(mNonBlockGradients);
     alloc_lazy.commit(*alloc, EAllocationType::ON_DEVICE, "nonblock_grad");
-    mNonBlockShards = shard_container(GenericTensorContainer(mNonBlockGradients), world);
+    mNonBlockShards = shard_view(GenericTensorContainer(mNonBlockGradients), rank, world);
 
     mGradEvent = create_named_event("grad_event");
+}
+
+UnshardedGradientManager::~UnshardedGradientManager() {
+    if (mGradEvent)
+        CUDA_CHECK(cudaEventDestroy(mGradEvent));
 }
 
 void UnshardedGradientManager::end_micro_step(cudaStream_t stream, NCCLCommunicator& comm) {
@@ -92,7 +97,7 @@ ShardedBlocksGradientManager::ShardedBlocksGradientManager(const TransformerConf
     mFullNonBlock = model.create_non_block_container(cfg, cfg.DType, cfg.DType);
     alloc_lazy.allocate(mFullNonBlock);
     alloc_lazy.commit(*alloc, EAllocationType::ON_DEVICE, "nonblock_grad");
-    mNonBlockShards = shard_container(GenericTensorContainer(mFullNonBlock), world);
+    mNonBlockShards = shard_view(GenericTensorContainer(mFullNonBlock), rank, world);
 
     mGradBuffers[0] = model.create_block_container(cfg, cfg.DType, cfg.DType);
     mGradBuffers[1] = model.create_block_container(cfg, cfg.DType, cfg.DType);
@@ -106,9 +111,18 @@ ShardedBlocksGradientManager::ShardedBlocksGradientManager(const TransformerConf
     mGradShards.resize(cfg.NumLayers);
     for(int i = 0; i < cfg.NumLayers; ++i) {
         EAllocationType kind = offload ? EAllocationType::PINNED : EAllocationType::ON_DEVICE;
-        mGradShards[i] = shard_container(model.create_block_container(cfg, cfg.DType, cfg.DType), world);
+        mGradShards[i] = shard_view(model.create_block_container(cfg, cfg.DType, cfg.DType), rank, world);
         alloc_lazy.allocate(mGradShards[i]);
         alloc_lazy.commit(*alloc, kind, "block_grad_shards");
+    }
+}
+
+ShardedBlocksGradientManager::~ShardedBlocksGradientManager() {
+    if (mNonBlockEvent)
+        CUDA_CHECK(cudaEventDestroy(mNonBlockEvent));
+    for (auto& e : mGradStates) {
+        if (e.Event)
+            CUDA_CHECK(cudaEventDestroy(e.Event));
     }
 }
 
