@@ -1,4 +1,4 @@
-// Copyright (c) 2025, IST Austria, developed by Erik Schultheis
+// Copyright (c) 2025-2026, IST Austria, developed by Erik Schultheis
 // SPDX-License-Identifier: Apache-2.0
 //
 // Based on llm.c https://github.com/karpathy/llm.c
@@ -18,7 +18,8 @@
 // CUDA kernels
 
 __device__ __forceinline__ float scalar_swiglu(float up, float gate) {
-    return (up * gate) / (1.0f + expf(-gate));
+    float denom = 1.0f + expf(-gate);
+    return (up * gate) * reciprocal_approximate_ftz(denom);
 }
 
 template<typename floatX>
@@ -279,7 +280,7 @@ __global__ void swiglu_backward_kernel1(floatX* dinp, const floatX* dout, const 
 
         float up = static_cast<float>(packed_inp1[k]);
         float gate = static_cast<float>(packed_inp2[k]);
-        float sx2 = 1.0f / (1.0f + expf(-gate));
+        float sx2 = reciprocal_approximate_ftz(1.0f + expf(-gate));
 
         float dx1 = dout * gate * sx2;
         float dx2 = dout * up * sx2 * (1.0f + gate * (1.0f - sx2));

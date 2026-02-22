@@ -1,4 +1,4 @@
-// Copyright (c) 2025, IST Austria, developed by Erik Schultheis
+// Copyright (c) 2025-2026, IST Austria, developed by Erik Schultheis
 // SPDX-License-Identifier: Apache-2.0
 //
 
@@ -90,6 +90,12 @@ static __forceinline__ __device__ nv_bfloat16 vecReduceMax(GenericVector<nv_bflo
         }
     }
     return __hmax(val[0], val[1]);
+}
+
+static __device__ __forceinline__ float reciprocal_approximate_ftz(float a) {
+    float b;
+    asm volatile("rcp.approx.ftz.f32 %0, %1;\n" : "=f"(b) : "f"(a));
+    return b;
 }
 
 #endif //LLMQ_SRC_KERNELS_KERNEL_UTILS_CUH
