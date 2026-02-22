@@ -3,6 +3,8 @@
 //
 
 #include "binding_utils.h"
+
+#include <fmt/format.h>
 #include <nanobind/stl/optional.h>
 
 namespace nb = nanobind;
@@ -68,13 +70,13 @@ ETensorDType from_dlpack_dtype(nb::dlpack::dtype dtype) {
         case dtype_code::Float8_E3M4:
         case dtype_code::Float8_E4M3FN:
             if (dtype.bits == 8) {
-                return ETensorDType::BYTE;
+                return ETensorDType::FP8_E4M3;
             } else {
                 throw std::invalid_argument("Unsupported E4M3 dtype: bit width must be 8");
             }
         case dtype_code::Float8_E5M2:
             if (dtype.bits == 8) {
-                return ETensorDType::BYTE;
+                return ETensorDType::FP8_E5M2;
             } else {
                 throw std::invalid_argument("Unsupported E5M2 dtype: bit width must be 8");
             }
@@ -101,4 +103,10 @@ nb::object cast_opt_dtype(std::optional<ETensorDType> dtype) {
         return nb::cast(dtype_to_str(dtype.value()));
     }
     return nb::none();
+}
+
+void check_ndims(int dims, std::string_view name, int expected) {
+    if(dims != expected) {
+        throw std::invalid_argument(fmt::format("Expected {} to have {} dimensions, but got {}", name, expected, dims));
+    }
 }
