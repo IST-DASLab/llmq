@@ -31,6 +31,64 @@ nb::dlpack::dtype to_dlpack_dtype(ETensorDType dtype) {
     }
 }
 
+
+ETensorDType from_dlpack_dtype(nb::dlpack::dtype dtype) {
+    nb::dlpack::dtype_code code = static_cast<nb::dlpack::dtype_code>(dtype.code);
+    using nb::dlpack::dtype_code;
+    switch (code) {
+        case dtype_code::Float: {
+            if (dtype.bits == 32) {
+                return ETensorDType::FP32;
+            } else if (dtype.bits == 16) {
+                return ETensorDType::FP16;
+            } else {
+                throw std::invalid_argument("Unsupported Float dtype: bit width must be 32 or 16");
+            }
+        }
+        case dtype_code::Bfloat:
+            if (dtype.bits == 16) {
+                return ETensorDType::BF16;
+            } else {
+                throw std::invalid_argument("Unsupported BFloat dtype: bit width must be 16");
+            }
+        case dtype_code::Int:
+            if (dtype.bits == 8) {
+                return ETensorDType::INT8;
+            } else if (dtype.bits == 32) {
+                return ETensorDType::INT32;
+            } else {
+                throw std::invalid_argument("Unsupported Int dtype: bit width must be 8 or 32");
+            }
+        case dtype_code::UInt:
+            if (dtype.bits == 8) {
+                return ETensorDType::BYTE;
+            } else {
+                throw std::invalid_argument("Unsupported UInt dtype: bit width must be 8");
+            }
+        case dtype_code::Float8_E3M4:
+        case dtype_code::Float8_E4M3FN:
+            if (dtype.bits == 8) {
+                return ETensorDType::BYTE;
+            } else {
+                throw std::invalid_argument("Unsupported E4M3 dtype: bit width must be 8");
+            }
+        case dtype_code::Float8_E5M2:
+            if (dtype.bits == 8) {
+                return ETensorDType::BYTE;
+            } else {
+                throw std::invalid_argument("Unsupported E5M2 dtype: bit width must be 8");
+            }
+        case dtype_code::Float8_E5M2FNUZ:
+        case dtype_code::Float8_E4M3:
+        case dtype_code::Float8_E4M3FNUZ:
+        case dtype_code::Float8_E4M3B11FNUZ:
+        case dtype_code::Float8_E8M0FNU:
+            throw std::invalid_argument("Unsupported Float8 dtype");
+        default:
+            throw std::invalid_argument("Unsupported dtype");
+    }
+}
+
 std::optional<ETensorDType> opt_dtype_from_str(const std::string& dtype_str) {
     if (dtype_str.empty()) {
         return std::nullopt;

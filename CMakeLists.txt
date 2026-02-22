@@ -209,6 +209,7 @@ if (PYTHON_BINDING)
             src/binding/binding.cpp
             src/binding/py_train.cpp
             src/binding/binding_utils.cpp
+            src/binding/kernel_binding.cpp
     )
     target_link_libraries(_pyllmq PUBLIC llmq-common Python::Module fmt::fmt-header-only)
 
