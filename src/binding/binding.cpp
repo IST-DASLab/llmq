@@ -41,8 +41,11 @@ static inline auto check_shape(const NBArray& arr, std::string_view name, std::a
 
 #define CHECK_SHAPE(obj, ...) check_shape(obj, #obj, std::array{__VA_ARGS__})
 
+void register_kernels(nanobind::module_& m);
 
 NB_MODULE(_pyllmq, m) {
+    register_kernels(m);
+
     nb::class_<GPUUtilInfo>(m, "GPUUtilInfo")
         .def_rw("clock", &GPUUtilInfo::clock)
         .def_rw("max_clock", &GPUUtilInfo::max_clock)
