@@ -11,6 +11,8 @@
 #include "utilities/tensor.h"
 #include "utilities/utils.h"
 
+#include <nanobind/stl/optional.h>
+
 namespace nb = nanobind;
 
 using CudaArray = nb::ndarray<nb::c_contig, nb::device::cuda>;
@@ -380,6 +382,10 @@ void bind_vector_reduce_sr(const CudaArray& dest, const CudaArray& src, float sc
 // ---- Global norm ----
 void bind_global_norm_squared(const CudaArray& out, const CudaArray& values, const std::uintptr_t stream) {
     auto dp = get_device_prop(values.device_id());
+    int blocks = get_max_num_block_sums(dp);
+    if (out.size() < blocks) {
+        throw std::runtime_error("Global norm output buffer too small");
+    }
     Tensor out_t = to_tensor(out);
     global_norm_squared(out_t, to_tensor(values), values.size(), dp, as_stream(stream));
 }
