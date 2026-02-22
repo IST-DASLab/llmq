@@ -204,7 +204,7 @@ sLLamaWeights allocate_weights(const TransformerConfig& config, EAllocationType 
     return result;
 }
 
-void convert_dtype_for_gather(Tensor& src, Tensor& qnt, bool& convert, bool src_is_persistent, LLamaRunState& run_state) {
+void convert_dtype_for_gather(Tensor& src, Tensor& qnt, bool& convert, bool src_is_persistent, cudaStream_t stream, const cudaDeviceProp& dp) {
     qnt.Stats = src.Stats;
     if (qnt.DType == src.DType) {
         // Identical tensors
@@ -212,19 +212,19 @@ void convert_dtype_for_gather(Tensor& src, Tensor& qnt, bool& convert, bool src_
             qnt.Data = src.Data;
             return;
         } else {    // transfer to other device? (should just be GPU -> CPU)
-            CUDA_CHECK(cudaMemcpyAsync(qnt.Data, src.Data, qnt.bytes(), cudaMemcpyDefault, run_state.MainStream));
+            CUDA_CHECK(cudaMemcpyAsync(qnt.Data, src.Data, qnt.bytes(), cudaMemcpyDefault, stream));
             convert = true;
             return;
         }
     }
 
-    quantize_with_abs_max(qnt, src.scale(), src, src.abs_max(), qnt.nelem(), run_state.DeviceProp, run_state.MainStream);
+    quantize_with_abs_max(qnt, src.scale(), src, src.abs_max(), qnt.nelem(), dp, stream);
     convert = true;
 }
 
 void convert_dtype_for_gather(SimpleTensorContainer& src, SimpleTensorContainer& qnt, bool& convert, bool src_is_persistent, LLamaRunState& run_state) {
     visit([&](Tensor& s, Tensor& q) {
-        convert_dtype_for_gather(s, q, convert, src_is_persistent, run_state);
+        convert_dtype_for_gather(s, q, convert, src_is_persistent, run_state.MainStream, run_state.DeviceProp);
     }, src, qnt);
 }
 
