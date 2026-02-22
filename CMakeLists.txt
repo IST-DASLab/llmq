@@ -42,7 +42,7 @@ FetchContent_Declare(
         nanobind
         QUIET
         GIT_REPOSITORY https://github.com/wjakob/nanobind.git
-        GIT_TAG v2.9.2
+        GIT_TAG v2.10.2
 )
 
 # we could use fmt only if std::format is not available, but (e.g., g++-12), but
@@ -205,7 +205,11 @@ endif ()
 if (PYTHON_BINDING)
     find_package(Python COMPONENTS Interpreter Development.Module OPTIONAL_COMPONENTS Development.SABIModule)
     FetchContent_MakeAvailable(nanobind)
-    nanobind_add_module(_pyllmq STABLE_ABI src/binding/binding.cpp src/binding/py_train.cpp)
+    nanobind_add_module(_pyllmq STABLE_ABI
+            src/binding/binding.cpp
+            src/binding/py_train.cpp
+            src/binding/binding_utils.cpp
+    )
     target_link_libraries(_pyllmq PUBLIC llmq-common Python::Module fmt::fmt-header-only)
 
     # make sure we pick up cuda libraries from within the current python env, if available

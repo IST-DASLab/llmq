@@ -13,6 +13,7 @@
 #include <fmt/format.h>
 
 #include "py_train.h"
+#include "binding_utils.h"
 #include "training/dataloader.h"
 #include "training/checkpoint.h"
 #include "training/logging.h"
@@ -23,20 +24,6 @@
 namespace nb = nanobind;
 
 using TokenArray = nb::ndarray<std::int32_t, nb::shape<-1, -1>, nb::c_contig, nb::device::cpu>;
-
-static std::optional<ETensorDType> opt_dtype_from_str(const std::string& dtype_str) {
-    if (dtype_str.empty()) {
-        return std::nullopt;
-    }
-    return dtype_from_str(dtype_str);
-}
-
-static nb::object cast_opt_dtype(std::optional<ETensorDType> dtype) {
-    if (dtype.has_value()) {
-        return nb::cast(dtype_to_str(dtype.value()));
-    }
-    return nb::none();
-}
 
 template<typename NBArray, std::size_t NDims>
 static inline auto check_shape(const NBArray& arr, std::string_view name, std::array<int, NDims> expected) {
@@ -49,25 +36,6 @@ static inline auto check_shape(const NBArray& arr, std::string_view name, std::a
                 fmt::format("Expected {} to have extent {} at dimension {}, but got {}", name, expected[dim], dim,
                             arr.shape(dim)));
         }
-    }
-}
-
-nb::dlpack::dtype to_dlpack_dtype(ETensorDType dtype) {
-    switch (dtype) {
-    case ETensorDType::FP32:
-        return {static_cast<std::uint8_t>(nb::dlpack::dtype_code::Float), 32, 1};
-    case ETensorDType::BF16:
-        return {static_cast<std::uint8_t>(nb::dlpack::dtype_code::Bfloat), 16, 1};
-    case ETensorDType::INT8:
-        return {static_cast<std::uint8_t>(nb::dlpack::dtype_code::Int), 8, 1};
-    case ETensorDType::BYTE:
-        return {static_cast<std::uint8_t>(nb::dlpack::dtype_code::UInt), 8, 1};
-    case ETensorDType::FP16:
-        return {static_cast<std::uint8_t>(nb::dlpack::dtype_code::Float), 16, 1};
-    case ETensorDType::INT32:
-        return {static_cast<std::uint8_t>(nb::dlpack::dtype_code::Int), 32, 1};
-    case ETensorDType::FP8_E4M3:
-        return {static_cast<std::uint8_t>(nb::dlpack::dtype_code::UInt), 8, 1};  // ugh
     }
 }
 
