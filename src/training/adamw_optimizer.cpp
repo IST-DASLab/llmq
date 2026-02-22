@@ -12,28 +12,19 @@
 #include "utilities/stack.h"
 #include "utilities/lazy_allocator.h"
 
-static GenericTensorContainer shard_container(GenericTensorContainer&& c, int world) {
-    // can't use visit here, because we explicitly want to iterate over empty tensors
-    for (int i = 0; i < c.num_tensors(); ++i) {
-        auto& t = c.get_tensor(i);
-        if (!t.empty()) { throw std::logic_error("shard_container called with non-empty tensor"); }
-        t.Sizes[0] = div_exact(t.Sizes[0], static_cast<long>(world));
-    }
-    return c;
-}
 
 AdamWStateManager::AdamWStateManager(TransformerConfig cfg, IModel& model, bool offload_m, bool offload_v,
     ETensorDType type_m, ETensorDType type_v, bool zero_copy, int rank, int world):
     mConfig(cfg), mOffloadM(offload_m), mOffloadV(offload_v), mUseZeroCopy(zero_copy), mRank(rank), mWorld(world), mMType(type_m), mVType(type_v) {
 
     if(mOffloadM && !mUseZeroCopy) {
-        mMDeviceBuffer[0] = shard_container(model.create_block_container(mConfig, mMType, mMType), mWorld);
-        mMDeviceBuffer[1] = shard_container(model.create_block_container(mConfig, mMType, mMType), mWorld);
+        mMDeviceBuffer[0] = shard_empty_container(model.create_block_container(mConfig, mMType, mMType), mWorld);
+        mMDeviceBuffer[1] = shard_empty_container(model.create_block_container(mConfig, mMType, mMType), mWorld);
     }
 
     if(mOffloadV && !mUseZeroCopy) {
-        mVDeviceBuffer[0] = shard_container(model.create_block_container(mConfig, mVType, mVType), mWorld);
-        mVDeviceBuffer[1] = shard_container(model.create_block_container(mConfig, mVType, mVType), mWorld);
+        mVDeviceBuffer[0] = shard_empty_container(model.create_block_container(mConfig, mVType, mVType), mWorld);
+        mVDeviceBuffer[1] = shard_empty_container(model.create_block_container(mConfig, mVType, mVType), mWorld);
     }
 
     if((mOffloadM || mOffloadV) && !mUseZeroCopy) {
@@ -173,11 +164,11 @@ void AdamWStateManager::allocate_state(IModel& model, cudaStream_t stream, EAllo
         LazyAllocator alloc_lazy;
         mBlocksM.resize(mConfig.NumLayers);
         for (int i = 0; i < mConfig.NumLayers; ++i) {
-            mBlocksM[i] = shard_container(model.create_block_container(mConfig, mMType, mMType), mWorld);
+            mBlocksM[i] = shard_empty_container(model.create_block_container(mConfig, mMType, mMType), mWorld);
             alloc_lazy.allocate(mBlocksM[i]);
             mStorageM.push_back(alloc_lazy.commit(alloc, mOffloadM ? kind : EAllocationType::ON_DEVICE, "m_block_shard"));
         }
-        mNonBlockM = shard_container(model.create_non_block_container(mConfig, mMType, mMType), mWorld);
+        mNonBlockM = shard_empty_container(model.create_non_block_container(mConfig, mMType, mMType), mWorld);
         alloc_lazy.allocate(mNonBlockM);
         mStorageM.push_back(alloc_lazy.commit(alloc, mOffloadM ? kind : EAllocationType::ON_DEVICE, "m_nonblock_shard"));
 
@@ -189,14 +180,14 @@ void AdamWStateManager::allocate_state(IModel& model, cudaStream_t stream, EAllo
         if(mMType == ETensorDType::FP8_E4M3) {
             // we "shard" for 128 as many GPUs, so that we get 1 scale per 128 weights.
             for (int i = 0; i < mConfig.NumLayers; ++i) {
-                mBlocksMScales[i] = shard_container(model.create_block_container(mConfig, ETensorDType::FP32, ETensorDType::FP32), 128 * mWorld);
+                mBlocksMScales[i] = shard_empty_container(model.create_block_container(mConfig, ETensorDType::FP32, ETensorDType::FP32), 128 * mWorld);
                 alloc_lazy.allocate(mBlocksMScales[i]);
                 alloc_lazy.commit(alloc, EAllocationType::ON_DEVICE, "m_block_scales");
                 visit([stream](Tensor& t){
                     fill_constant(t, 1.f, t.nelem(), stream);
                 }, mBlocksMScales[i]);
             }
-            mNonBlockMScales = shard_container(model.create_non_block_container(mConfig, ETensorDType::FP32, ETensorDType::FP32), 128 * mWorld);
+            mNonBlockMScales = shard_empty_container(model.create_non_block_container(mConfig, ETensorDType::FP32, ETensorDType::FP32), 128 * mWorld);
             alloc_lazy.allocate(mNonBlockMScales);
             alloc_lazy.commit(alloc, EAllocationType::ON_DEVICE, "m_nonblock_scales");
             visit([stream](Tensor& t){
@@ -215,11 +206,11 @@ void AdamWStateManager::allocate_state(IModel& model, cudaStream_t stream, EAllo
         LazyAllocator alloc_lazy;
         mBlocksV.resize(mConfig.NumLayers);
         for (int i = 0; i < mConfig.NumLayers; ++i) {
-            mBlocksV[i] = shard_container(model.create_block_container(mConfig, mVType, mVType), mWorld);
+            mBlocksV[i] = shard_empty_container(model.create_block_container(mConfig, mVType, mVType), mWorld);
             alloc_lazy.allocate(mBlocksV[i]);
             mStorageV.push_back(alloc_lazy.commit(alloc, mOffloadV ? kind : EAllocationType::ON_DEVICE, "v_block_shard"));
         }
-        mNonBlockV = shard_container(model.create_non_block_container(mConfig, mVType, mVType), mWorld);
+        mNonBlockV = shard_empty_container(model.create_non_block_container(mConfig, mVType, mVType), mWorld);
         alloc_lazy.allocate(mNonBlockV);
         mStorageV.push_back(alloc_lazy.commit(alloc, mOffloadV ? kind : EAllocationType::ON_DEVICE, "v_nonblock_shard"));
 

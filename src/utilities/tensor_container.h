@@ -57,7 +57,13 @@ private:
     std::vector<Tensor> mTensors;
 };
 
-GenericTensorContainer shard_container(GenericTensorContainer&& c, int world);
+//! shards an _empty_ container, i.e., a container in which all data pointers
+//! are `nullptr`, but sizes have been set up.
+GenericTensorContainer shard_empty_container(GenericTensorContainer&& c, int world);
+
+//! shard a non-empty tensor container. The returned container's tensors are _views_ into
+//! the original container's tensors.
+GenericTensorContainer shard_view(const GenericTensorContainer& c, int rank, int world);
 
 class ITensorContainer {
   public:
