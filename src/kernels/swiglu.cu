@@ -17,6 +17,10 @@
 // ----------------------------------------------------------------------------
 // CUDA kernels
 
+__device__ __forceinline__ float scalar_swiglu(float up, float gate) {
+    return (up * gate) / (1.0f + expf(-gate));
+}
+
 template<typename floatX>
 __global__ void swiglu_forward_kernel(floatX* out, const floatX* inp, float* abs_max_ptr, int C) {
     using x128 = GenericVector<floatX, 16/sizeof(floatX)>;
@@ -45,9 +49,9 @@ __global__ void swiglu_forward_kernel(floatX* out, const floatX* inp, float* abs
     x128 up_inp = x128::load_cs(up_ptr);
     x128 gate_inp = x128::load_cs(gate_ptr);
     for(int k = 0; k < up_inp.size; ++k) {
-        float x1 = (float)up_inp[k];
-        float x2 = (float)gate_inp[k];
-        packed_out[k] = (floatX)((x1 * x2) / (1.0f + expf(-x2)));
+        float up = static_cast<float>(up_inp[k]);
+        float gate = static_cast<float>(gate_inp[k]);
+        packed_out[k] = static_cast<floatX>(scalar_swiglu(up, gate));
         if (abs_max_ptr) {
             thread_max = fmaxf(thread_max, fabsf(packed_out[k]));
         }
@@ -80,9 +84,9 @@ __global__ void swiglu_forward_quant_kernel(__nv_fp8_e4m3* out, float* scale_ptr
     x128 up_inp = x128::load_cs(up_ptr);
     x128 gate_inp = x128::load_cs(gate_ptr);
     for(int k = 0; k < up_inp.size; ++k) {
-        float x1 = (float)up_inp[k];
-        float x2 = (float)gate_inp[k];
-        float result = (x1 * x2) / (1.0f + expf(-x2));
+        float up = static_cast<float>(up_inp[k]);
+        float gate = static_cast<float>(gate_inp[k]);
+        float result = scalar_swiglu(up, gate);
         floatX qr = (floatX)result;
         __nv_fp8_e4m3 quant;
         quant.__x = __nv_cvt_float_to_fp8(scale * (float)qr, __nv_saturation_t::__NV_SATFINITE, __nv_fp8_interpretation_t::__NV_E4M3);
@@ -156,9 +160,9 @@ __global__ __launch_bounds__(128) void swiglu_forward_persistent_kernel(floatX* 
 
         x128 packed_out;
         for(int k = 0; k < up_inp.size; ++k) {
-            float x1 = (float)up_inp[k];
-            float x2 = (float)gate_inp[k];
-            packed_out[k] = (floatX)((x1 * x2) / (1.0f + expf(-x2)));
+            float up = static_cast<float>(up_inp[k]);
+            float gate = static_cast<float>(gate_inp[k]);
+            packed_out[k] = static_cast<floatX>(scalar_swiglu(up, gate));
             if (HasAbsMax) {
                 thread_max = fmaxf(thread_max, fabsf((float)packed_out[k]));
             }
@@ -221,9 +225,9 @@ __global__ void swiglu_forward_quant_persistent_kernel(__nv_fp8_e4m3* out, float
 
         f8v_t packed_out;
         for(int k = 0; k < up_inp.size; ++k) {
-            float x1 = (float)up_inp[k];
-            float x2 = (float)gate_inp[k];
-            float result = (x1 * x2) / (1.0f + expf(-x2));
+            float up = static_cast<float>(up_inp[k]);
+            float gate = static_cast<float>(gate_inp[k]);
+            float result = scalar_swiglu(up, gate);
             floatX qr = (floatX)result;
             __nv_fp8_e4m3 quant;
             quant.__x = __nv_cvt_float_to_fp8(scale * (float)qr, __nv_saturation_t::__NV_SATFINITE, __nv_fp8_interpretation_t::__NV_E4M3);
@@ -271,13 +275,14 @@ __global__ void swiglu_backward_kernel1(floatX* dinp, const floatX* dout, const 
     float thread_max = 0.f;
 
     for(int k = 0; k < packed_inp1.size; ++k) {
-        float x1 = (float)packed_inp1[k];
-        float x2 = (float)packed_inp2[k];
         float dout = (float)packed_dout[k];
 
-        float sx2 = 1.0f / (1.0f + expf(-x2)); // sigmoid of x2
-        float dx1 = dout * x2 * sx2;
-        float dx2 = dout * x1 * sx2 * (1.0f + x2 * (1.0f - sx2));
+        float up = static_cast<float>(packed_inp1[k]);
+        float gate = static_cast<float>(packed_inp2[k]);
+        float sx2 = 1.0f / (1.0f + expf(-gate));
+
+        float dx1 = dout * gate * sx2;
+        float dx2 = dout * up * sx2 * (1.0f + gate * (1.0f - sx2));
 
         dinp1[k] = (floatX)dx1;
         dinp2[k] = (floatX)dx2;
