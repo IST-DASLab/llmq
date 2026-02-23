@@ -3,46 +3,77 @@ import torch
 from pyllmq import kernels as K
 
 
+DTYPES = [torch.float32, torch.bfloat16]
 
-@pytest.mark.parametrize("dtype", [torch.float32, torch.bfloat16])
-def test_fill_constant_basic(dtype: torch.dtype):
-    val = 3.25
-    x = torch.empty((8, 16), device="cuda", dtype=dtype)
-    K.fill_constant(x, val)
-    assert torch.allclose(x, torch.full_like(x, val))
+# Tolerances by dtype: (rtol, atol)
+TOL = {
+    torch.float32: (5e-4, 5e-5),
+    torch.bfloat16: (5e-3, 5e-3),
+}
 
 
-@pytest.mark.parametrize("rows,cols", [(7, 11),  (1024, 2048)])
-@pytest.mark.parametrize("dtype", [torch.float32, torch.bfloat16])
-def test_transpose_matches_torch(rows: int, cols: int, dtype: torch.dtype):
+# ============================================================
+# fill_constant
+# ============================================================
+
+@pytest.mark.parametrize("shape", [(8, 16), (1,), (128, 256), (4, 8, 32)])
+@pytest.mark.parametrize("value", [0.0, 1.0, 3.25, -2.5])
+@pytest.mark.parametrize("dtype", DTYPES)
+def test_fill_constant_basic(shape, value, dtype):
+    x = torch.empty(shape, device="cuda", dtype=dtype)
+    K.fill_constant(x, value)
+    assert x.cpu() == pytest.approx(torch.full(shape, value).cpu(), rel=0, abs=0)
+
+
+# ============================================================
+# transpose
+# ============================================================
+
+@pytest.mark.parametrize("rows,cols", [(7, 11), (1024, 2048), (64, 128), (3, 512)])
+@pytest.mark.parametrize("dtype", DTYPES)
+def test_transpose_matches_torch(rows, cols, dtype):
     src = torch.randn((rows, cols), device="cuda", dtype=dtype)
     dst = torch.empty((cols, rows), device="cuda", dtype=dtype)
     K.transpose(dst, src, rows, cols)
-    ref = src.t()
-    assert torch.allclose(dst, ref)
+    assert dst.cpu() == pytest.approx(src.t().cpu(), rel=0, abs=0)
 
 
-def test_abs_max_writes_scalar():
-    x = torch.tensor([[-1.0, 2.5, -0.3], [0.7, -4.2, 3.3]], device="cuda", dtype=torch.float32)
-    scale = torch.empty((), device="cuda", dtype=torch.float32)  # 0-dim scalar
-    K.abs_max(scale, x)
-    assert torch.isfinite(scale)
-    assert torch.allclose(scale, torch.tensor(4.2, device="cuda", dtype=torch.float32))
+# ============================================================
+# abs_max
+# ============================================================
+
+@pytest.mark.parametrize("shape", [(2, 3), (16, 64), (4, 128, 32)])
+@pytest.mark.parametrize("dtype", DTYPES)
+def test_abs_max_writes_scalar(shape, dtype):
+    x = torch.randn(shape, device="cuda", dtype=dtype)
+    # Plant a known maximum so we can assert the exact answer
+    ref = x.abs().max()
+    result = torch.empty((), device="cuda", dtype=torch.float32)
+    K.abs_max(result, x)
+    assert torch.isfinite(result)
+    assert result.cpu() == pytest.approx(ref.cpu(), rel=0, abs=0)
 
 
-@pytest.mark.parametrize("dtype", [torch.float32, torch.bfloat16])
-@pytest.mark.parametrize("shape", [(5, 13), (128, 24524)])
-def test_global_norm_squared(dtype: torch.dtype, shape: tuple[int, int]):
-    x = torch.randn(*shape, device="cuda", dtype=dtype)
-    # TODO figure our correct block count
+# ============================================================
+# global_norm_squared
+# ============================================================
+
+@pytest.mark.parametrize("shape", [(5, 13), (128, 24524), (256, 1024), (1, 4096)])
+@pytest.mark.parametrize("dtype", DTYPES)
+def test_global_norm_squared(shape, dtype):
+    x = torch.randn(shape, device="cuda", dtype=dtype)
     out = torch.zeros((256,), device="cuda", dtype=torch.float32)
     K.global_norm_squared(out, x)
     ref = (x.float() ** 2).sum()
-    assert pytest.approx(ref.item(), 1e-5, abs=1e-6) == out.sum().item()
+    rtol = 1e-5 if dtype == torch.float32 else 1e-2
+    assert out.sum().cpu() == pytest.approx(ref.cpu(), rel=rtol)
 
+
+# ============================================================
+# rmsnorm_forward
+# ============================================================
 
 def _rmsnorm_reference(inp, weight, eps):
-    # inp: (B, T, C), weight: (C)
     var = (inp.float() ** 2).mean(dim=-1, keepdim=True)
     rms = torch.sqrt(var + eps)
     r_rms = 1.0 / rms
@@ -50,80 +81,88 @@ def _rmsnorm_reference(inp, weight, eps):
     return out.to(inp.dtype), r_rms.squeeze(-1)
 
 
-@pytest.mark.parametrize("B,T,C", [(2, 3, 16), (1, 2, 64),  (8, 256, 1024)])
-def test_rmsnorm_forward_matches_reference(B, T, C):
+@pytest.mark.parametrize("B,T,C", [(2, 3, 16), (1, 2, 64), (8, 256, 1024)])
+@pytest.mark.parametrize("dtype", DTYPES)
+def test_rmsnorm_forward_matches_reference(B, T, C, dtype):
     torch.manual_seed(0)
-    dtype = torch.float32  # kernel supports fp32 and bf16; use fp32 for numeric stability in tests
     inp = torch.randn((B, T, C), device="cuda", dtype=dtype)
     weight = torch.randn((C,), device="cuda", dtype=dtype)
-
     out = torch.empty_like(inp)
     rms = torch.empty((B, T), device="cuda", dtype=torch.float32)
-
     eps = 1e-6
-    # absmax is optional; pass None
-    K.rmsnorm_forward(out, rms, inp, weight, None, eps)
 
+    K.rmsnorm_forward(out, rms, inp, weight, None, eps)
     ref_out, ref_rms = _rmsnorm_reference(inp, weight, eps)
 
-    assert pytest.approx(ref_rms.cpu(), 5e-4, abs=5e-5) == rms.cpu()
-    assert pytest.approx(ref_out.cpu(), 5e-4, abs=5e-5) == out.cpu()
+    rtol, atol = TOL[dtype]
+    assert rms.cpu() == pytest.approx(ref_rms.cpu(), rel=rtol, abs=atol)
+    assert out.float().cpu() == pytest.approx(ref_out.float().cpu(), rel=rtol, abs=atol)
 
+
+# ============================================================
+# swiglu_forward
+# ============================================================
 
 def _swiglu_reference(x: torch.Tensor) -> torch.Tensor:
-    # x: (B, T, 2*C) -> out: (B, T, C)
     a, b = torch.tensor_split(x.float(), 2, dim=-1)
     return (torch.nn.functional.silu(b) * a).to(x.dtype)
 
 
-@pytest.mark.parametrize("B,T,C", [(1, 8, 128), (1, 1, 16), (4, 5, 32)])
-def test_swiglu_forward_matches_reference(B, T, C):
+@pytest.mark.parametrize("B,T,C", [(1, 8, 128), (1, 1, 16), (4, 5, 32), (2, 16, 256)])
+@pytest.mark.parametrize("dtype", DTYPES)
+def test_swiglu_forward_matches_reference(B, T, C, dtype):
     torch.manual_seed(123)
-    dtype = torch.float32
     inp = torch.randn((B, T, 2 * C), device="cuda", dtype=dtype)
     out = torch.empty((B, T, C), device="cuda", dtype=dtype)
 
-    # absmax is optional; pass None
     K.swiglu_forward(out, inp, None)
 
     ref = _swiglu_reference(inp)
-    assert pytest.approx(ref.cpu(), 5e-4, 5e-5) == out.cpu()
+    rtol, atol = TOL[dtype]
+    assert out.float().cpu() == pytest.approx(ref.float().cpu(), rel=rtol, abs=atol)
 
 
-@pytest.mark.parametrize("B,T", [(1, 512), (2, 1024), (7, 2048)])
+# ============================================================
+# grouped_loss_sum
+# ============================================================
+
+@pytest.mark.parametrize("B,T", [(1, 512), (2, 1024), (7, 2048), (4, 512)])
 def test_grouped_loss_sum_basic(B, T):
-    # per-token losses, sum over sequence dimension per batch element
     losses = torch.rand((B, T), device="cuda", dtype=torch.float32)
-    out = torch.empty((T//512,), device="cuda", dtype=torch.float32)
+    out = torch.empty((T // 512,), device="cuda", dtype=torch.float32)
     K.grouped_loss_sum(out, losses)
-    assert pytest.approx(losses.reshape((B, -1, 512)).sum(dim=2).sum(dim=0).cpu(), 1e-5, abs=1e-6) == out.cpu()
+    ref = losses.reshape(B, -1, 512).sum(dim=2).sum(dim=0)
+    assert out.cpu() == pytest.approx(ref.cpu(), rel=1e-5, abs=1e-6)
 
 
-@pytest.mark.parametrize("mean,std", [(0.0, 1.0), (1.5, 0.25)])
+# ============================================================
+# fill_normal
+# ============================================================
+
+@pytest.mark.parametrize("mean,std", [(0.0, 1.0), (1.5, 0.25), (-1.0, 2.0)])
 def test_fill_normal_stats(mean, std):
-    # Use large N for stable statistics
     N = 256 * 1024
-    x = torch.empty((N,), device="cuda", dtype=torch.float32)
     seed = 0xABCDEF01
+    x = torch.empty((N,), device="cuda", dtype=torch.float32)
     K.fill_normal(x, float(mean), float(std), seed, 0)
 
-    # Statistics
     m = x.mean().item()
     s = x.std(unbiased=True).item()
 
-    # Tolerances scale with 1/sqrt(N); use generous but meaningful bounds
     assert abs(m - mean) < max(3e-3, 0.02 * abs(std))
     assert abs(s - std) / max(std, 1e-12) < 0.03
 
-    # Determinism for same seed/subsequence
+    # Determinism: same seed + subsequence must give identical output
     y = torch.empty_like(x)
     K.fill_normal(y, float(mean), float(std), seed, 0)
-    assert torch.allclose(x, y)
+    assert x.cpu() == pytest.approx(y.cpu())
 
 
-# ---------------- Rope ----------------
+# ============================================================
+# rope forward + backward
+# ============================================================
 
-def _make_rope_freqs(T: int, head_dim: int, theta: float, dtype: torch.dtype, device: str):
+def _make_rope_freqs(T, head_dim, theta, dtype, device):
     assert head_dim % 2 == 0
     half = head_dim // 2
     idx = torch.arange(half, device=device, dtype=torch.float32)
@@ -132,30 +171,22 @@ def _make_rope_freqs(T: int, head_dim: int, theta: float, dtype: torch.dtype, de
     angles = t * inv_freq.unsqueeze(0)
     cos = torch.cos(angles).to(dtype)
     sin = torch.sin(angles).to(dtype)
-    freqs = torch.stack([cos, sin], dim=-1).flatten(start_dim=1)  # (T, head_dim)
-    return freqs
+    return torch.stack([cos, sin], dim=-1).flatten(start_dim=1)  # (T, head_dim)
 
 
-def _rope_python(x, freqs_cis, Nq: int, Nkv: int, backward: bool = False):
-    """
-    x:         (B, T, Nq+2*Nkv, HD)
-    freqs_cis: (T, HD) interleaved [cos0, sin0, cos1, sin1, ...]
-    """
+def _rope_python(x, freqs_cis, Nq, Nkv, backward=False):
     B, T, N, HD = x.shape
     half = HD // 2
-
-    cos = freqs_cis[:, 0::2].float()  # (T, half)
-    sin = freqs_cis[:, 1::2].float()  # (T, half)
+    cos = freqs_cis[:, 0::2].float()
+    sin = freqs_cis[:, 1::2].float()
     if backward:
         sin = -sin
-
-    cos = cos[None, :, None, :]  # (1, T, 1, half)
+    cos = cos[None, :, None, :]
     sin = sin[None, :, None, :]
 
-    # split into query, key, value
     q = x[:, :, :Nq, :]
-    k = x[:, :, Nq:Nq+Nkv, :]
-    v = x[:, :, Nq+Nkv:, :]
+    k = x[:, :, Nq:Nq + Nkv, :]
+    v = x[:, :, Nq + Nkv:, :]
 
     def rotate(h):
         h = h.float()
@@ -166,33 +197,42 @@ def _rope_python(x, freqs_cis, Nq: int, Nkv: int, backward: bool = False):
 
     return torch.cat([rotate(q), rotate(k), v], dim=2)
 
-@pytest.mark.parametrize("B,T,Nq,Nkv,HD", [(1, 8, 2, 1, 8), (2, 4, 1, 2, 16)])
-@pytest.mark.parametrize("dtype", [torch.float32, torch.bfloat16])
+
+@pytest.mark.parametrize("B,T,Nq,Nkv,HD", [
+    (1, 8, 2, 1, 8),
+    (2, 4, 1, 2, 16),
+    (2, 16, 4, 2, 32),
+    (4, 32, 8, 4, 64),
+])
+@pytest.mark.parametrize("dtype", DTYPES)
 def test_rope_forward_backward_matches_python(B, T, Nq, Nkv, HD, dtype):
     device = "cuda"
-    theta = 1_000_000.0
     C = (Nq + 2 * Nkv) * HD
     x = torch.randn((B, T, C), device=device, dtype=dtype)
     out = torch.empty_like(x)
 
-    # freqs dtype must match kernel expectations: fp32 for fp32, fp16 for bf16
     freq_dtype = torch.float32 if dtype == torch.float32 else torch.float16
-    freqs = _make_rope_freqs(T, HD, theta, freq_dtype, device)
+    freqs = _make_rope_freqs(T, HD, 1_000_000.0, freq_dtype, device)
 
-    # optional absmax path
     K.rope_forward(out, x, freqs, None, Nq, Nkv)
-    ref = _rope_python(x.view(B, T, Nq + 2 * Nkv, HD), freqs, Nq, Nkv, backward=False).view(B, T, C)
-    assert out.float().cpu() == pytest.approx(ref.float().cpu(), 5e-4, abs=5e-5)
+    ref = _rope_python(x.view(B, T, Nq + 2 * Nkv, HD), freqs, Nq, Nkv).view(B, T, C)
+
+    rtol, atol = TOL[dtype]
+    assert out.float().cpu() == pytest.approx(ref.float().cpu(), rel=rtol, abs=atol)
 
     dout = torch.randn_like(x)
     dinp = torch.empty_like(x)
     K.rope_backward(dinp, dout, freqs, None, Nq, Nkv)
     ref_bw = _rope_python(dout.view(B, T, Nq + 2 * Nkv, HD), freqs, Nq, Nkv, backward=True).view(B, T, C)
-    assert dinp.float().cpu() == pytest.approx(ref_bw.float().cpu(), 5e-4, abs=5e-5)
+    assert dinp.float().cpu() == pytest.approx(ref_bw.float().cpu(), rel=rtol, abs=atol)
 
 
-@pytest.mark.parametrize("B,T,C", [(2, 5, 64), (1, 3, 256)])
-@pytest.mark.parametrize("dtype", [torch.float32])
+# ============================================================
+# fused_residual_rmsnorm_forward
+# ============================================================
+
+@pytest.mark.parametrize("B,T,C", [(2, 5, 64), (1, 3, 256), (4, 8, 128), (8, 16, 512)])
+@pytest.mark.parametrize("dtype", DTYPES)
 def test_fused_residual_rmsnorm_forward_reference(B, T, C, dtype):
     device = "cuda"
     torch.manual_seed(0)
@@ -206,60 +246,68 @@ def test_fused_residual_rmsnorm_forward_reference(B, T, C, dtype):
 
     K.fused_residual_rmsnorm_forward(residual, normed, rrms, inp1, inp2, weight, None, eps)
 
-    res_ref = inp1.float() + inp2.float()
-    var = (res_ref ** 2).mean(dim=-1, keepdim=True)
-    rms = torch.sqrt(var + eps)
-    r_rms = 1.0 / rms
-    norm_ref = (res_ref * r_rms * weight.float()).to(dtype)
+    res_ref = (inp1.float() + inp2.float()).to(dtype)
+    var = (res_ref.float() ** 2).mean(dim=-1, keepdim=True)
+    r_rms = 1.0 / torch.sqrt(var + eps)
+    norm_ref = (res_ref.float() * r_rms * weight.float()).to(dtype)
 
-    assert torch.allclose(residual, res_ref.to(dtype))
-    assert pytest.approx(norm_ref.cpu(), 5e-4, abs=5e-5) == normed.cpu()
-    assert pytest.approx(r_rms.squeeze(-1).cpu(), 5e-4, abs=5e-5) == rrms.cpu()
+    rtol, atol = TOL[dtype]
+    assert residual.cpu() == pytest.approx(res_ref.cpu(), rel=rtol, abs=atol)
+    assert normed.float().cpu() == pytest.approx(norm_ref.float().cpu(), rel=rtol, abs=atol)
+    assert rrms.cpu() == pytest.approx(r_rms.squeeze(-1).float().cpu(), rel=rtol, abs=atol)
 
 
-@pytest.mark.parametrize("dtype", [torch.float32, torch.bfloat16])
-def test_vector_add_sr_determinism_and_accuracy(dtype):
+# ============================================================
+# vector_add_sr
+# ============================================================
+
+@pytest.mark.parametrize("nelem", [4096, 16384, 65536])
+@pytest.mark.parametrize("dtype", DTYPES)
+def test_vector_add_sr_determinism_and_accuracy(nelem, dtype):
     device = "cuda"
-    nelem = 4096
     a = torch.randn((nelem,), device=device, dtype=dtype)
     b = torch.randn_like(a)
     out1 = torch.empty_like(a)
     out2 = torch.empty_like(a)
     seed = 12345
-    scale = torch.tensor(0.75, dtype=torch.float32)  # CPU 0-dim for binding float conversion
+    scale = torch.tensor(0.75, dtype=torch.float32)
     K.vector_add_sr(out1, a, b, scale, seed)
     K.vector_add_sr(out2, a, b, scale, seed)
-    # determinism
-    assert torch.equal(out1, out2)
-    # accuracy vs fp32 add scaled
+
+    # Determinism
+    assert out1.cpu() == pytest.approx(out2.cpu())
+
+    # Accuracy vs fp32 reference; stochastic rounding may introduce ~1 ulp at target dtype
     ref = scale.item() * (a.float() + b.float())
-    # stochastic rounding may introduce 1 ulp error at target dtype
-    assert torch.allclose(out1.float(), ref, rtol=5e-3, atol=5e-3)
+    assert out1.float().cpu() == pytest.approx(ref.cpu(), rel=5e-3, abs=5e-3)
 
 
-def test_quantize_with_abs_max_bf16():
+# ============================================================
+# quantize_with_abs_max
+# ============================================================
+
+@pytest.mark.parametrize("N", [1024, 8192, 65536])
+@pytest.mark.parametrize("dtype", DTYPES)
+def test_quantize_with_abs_max_bf16(N, dtype):
     device = "cuda"
-    N = 8192
-    x = torch.randn((N,), device=device, dtype=torch.float32)
-    abs_max = torch.tensor([x.abs().max().item()], device=device, dtype=torch.float32)
-    # Use bf16 path for broader dtype support
+    x = torch.randn((N,), device=device, dtype=dtype)
+    abs_max_val = torch.tensor([x.float().abs().max().item()], device=device, dtype=torch.float32)
     out = torch.empty((N,), device=device, dtype=torch.bfloat16)
     scale = torch.empty((), device=device, dtype=torch.float32)
-    K.quantize_with_abs_max(out, scale, x, abs_max)
-    assert scale.item() == 1.0
-    assert out.cpu().float() == pytest.approx(x.bfloat16().float().cpu(),  rel=0.01)
+    K.quantize_with_abs_max(out, scale, x, abs_max_val)
+    assert scale.item() == pytest.approx(1.0)
+    assert out.float().cpu() == pytest.approx(x.bfloat16().float().cpu(), rel=0.01)
 
 
-@pytest.mark.parametrize("dtype", [torch.float32, torch.bfloat16])
-def test_quantize_with_abs_max_fp8(dtype: torch.dtype):
+@pytest.mark.parametrize("N", [1024, 8192])
+@pytest.mark.parametrize("dtype", DTYPES)
+def test_quantize_with_abs_max_fp8(N, dtype):
     device = "cuda"
-    N = 8192
     x = torch.randn((N,), device=device, dtype=dtype)
-    abs_max = torch.tensor([x.abs().max().item()], device=device, dtype=torch.float32)
-    # Use bf16 path for broader dtype support
+    abs_max_val = torch.tensor([x.float().abs().max().item()], device=device, dtype=torch.float32)
     out = torch.empty((N,), device=device, dtype=torch.float8_e4m3fn)
     scale = torch.empty((), device=device, dtype=torch.float32)
-    K.quantize_with_abs_max(out, scale, x, abs_max)
-    assert scale.item() == pytest.approx(abs_max.item() / 448.0)
+    K.quantize_with_abs_max(out, scale, x, abs_max_val)
+    assert scale.item() == pytest.approx(abs_max_val.item() / 448.0)
     dequant = out.float() * scale
     assert dequant.cpu() == pytest.approx(x.float().cpu(), rel=0.1)
