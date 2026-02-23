@@ -112,6 +112,12 @@ void bind_encoder_forward(const CudaArray& out, const CudaArray& inp, const Cuda
 }
 
 // ---- RMSNorm ----
+long bind_get_rmsnorm_backward_scratch_size(long C) {
+    int did;
+    CUDA_CHECK(cudaGetDevice(&did));
+    return get_rmsnorm_backward_scratch_size(C, get_device_prop(did));
+}
+
 void bind_rmsnorm_forward(const CudaArray& out, const CudaArray& rms, const CudaArray& inp, const CudaArray& weight,
                           const std::optional<CudaArray>& abs_max, float epsilon, const std::uintptr_t stream) {
     NB_CHECK_NDIMS(out, 3);
@@ -142,7 +148,7 @@ void bind_rmsnorm_backward(const CudaArray& dinp, const CudaArray& dweight, cons
 
     auto dp = get_device_prop(inp.device_id());
     const long B = get_dimension_checked({inp.shape(0), dinp.shape(0), dout.shape(0), rstd.shape(0), dresidual.shape(0)}, "B");
-    const long T = get_dimension_checked({inp.shape(1), dinp.shape(1), dout.shape(1), rstd.shape(1), dresidual.shape(0)}, "T");
+    const long T = get_dimension_checked({inp.shape(1), dinp.shape(1), dout.shape(1), rstd.shape(1), dresidual.shape(1)}, "T");
     const long C = get_dimension_checked({inp.shape(2), dinp.shape(2), dout.shape(2), dresidual.shape(2), weight.shape(0)}, "C");
 
     Tensor dinp_t = to_tensor(dinp);
@@ -238,7 +244,7 @@ void bind_swiglu_backward(const CudaArray& dinp, const CudaArray& dout, const Cu
     NB_CHECK_NDIMS(dinp, 3);
     const long B = get_dimension_checked({inp.shape(0), dout.shape(0), dinp.shape(0)}, "B");
     const long T = get_dimension_checked({inp.shape(1), dout.shape(1), dinp.shape(1)},  "T");
-    const long C = get_dimension_checked({inp.shape(2), dinp.shape(2), 2*dout.shape(2)}, "C");
+    const long C = get_dimension_checked({div_exact(inp.shape(2), 2ul), div_exact(dinp.shape(2), 2ul), dout.shape(2)}, "C");
     Tensor dinp_t = to_tensor(dinp);
     swiglu_backward(dinp_t, to_tensor(dout), to_tensor(inp), get_abs_max_ptr(absmax), B, T, C, as_stream(stream));
 }
@@ -385,7 +391,7 @@ void bind_vector_add_sr(const CudaArray& dest, const CudaArray& left, const Cuda
 }
 
 void bind_vector_reduce_sr(const CudaArray& dest, const CudaArray& src, float scale, int n_shards, int skip, bool accumulate, unsigned seed, const std::uintptr_t stream) {
-    const long nelem = get_dimension_checked({dest.size() * n_shards, src.size()}, "nelem");
+    const long nelem = get_dimension_checked({dest.size(), div_exact(src.size(), (std::size_t)n_shards)}, "nelem");
     Tensor dest_t = to_tensor(dest);
     vector_reduce_sr(dest_t, to_tensor(src), scale, n_shards, skip, nelem, accumulate, seed, as_stream(stream));
 }
@@ -403,12 +409,13 @@ void bind_global_norm_squared(const CudaArray& out, const CudaArray& values, con
 
 // ---- AdamW ----
 void bind_adamw_update(const CudaArray& params, const CudaArray& grads, const CudaArray& m, const CudaArray& v,
-                       size_t num_parameters, float learning_rate, float beta1, float beta2, int t, float eps, float weight_decay,
-                       const std::optional<CudaArray>& grad_scale, const std::optional<CudaArray>& m_scales,
+                       float learning_rate, float beta1, float beta2, int t, float eps, float weight_decay,
+                       const CudaArray& grad_scale, const std::optional<CudaArray>& m_scales,
                        const std::optional<CudaArray>& abs_max,
                        unsigned int seed, const std::uintptr_t stream) {
-    const float* grad_scale_ptr = grad_scale.has_value() ? static_cast<const float*>(grad_scale->data()) : nullptr;
+    const float* grad_scale_ptr = device_scalar_float(grad_scale);
     // TODO validate shape compatibility
+    const std::size_t num_parameters = get_dimension_checked({params.size(), grads.size(), m.size(), v.size()}, "nelem");
     Tensor params_t = to_tensor(params);
     Tensor grads_t = to_tensor(grads);
     Tensor m_t = to_tensor(m);
@@ -451,6 +458,7 @@ void register_kernels(nanobind::module_& m) {
     // RMSNorm
     m.def("rmsnorm_forward", &bind_rmsnorm_forward, nb::arg("out"), nb::arg("rms"), nb::arg("inp"), nb::arg("weight"), nb::arg("absmax") = std::nullopt, nb::arg("epsilon"), nb::arg("stream") = 0);
     m.def("rmsnorm_backward", &bind_rmsnorm_backward, nb::arg("dinp"), nb::arg("dweight"), nb::arg("scratch"), nb::arg("dresidual"), nb::arg("dout"), nb::arg("inp"), nb::arg("weight"), nb::arg("rstd"), nb::arg("absmax") = std::nullopt, nb::arg("stream") = 0);
+    m.def("get_rmsnorm_backward_scratch_size", &bind_get_rmsnorm_backward_scratch_size, nb::arg("C"));
 
     // Fused residual + rmsnorm
     m.def("fused_residual_rmsnorm_forward", &bind_fused_residual_rmsnorm_forward, nb::arg("residual"), nb::arg("normed"), nb::arg("rrms"), nb::arg("inp1"), nb::arg("inp2"), nb::arg("weight"), nb::arg("absmax") = std::nullopt, nb::arg("epsilon"), nb::arg("stream") = 0);
@@ -503,5 +511,5 @@ void register_kernels(nanobind::module_& m) {
     m.def("global_norm_squared", &bind_global_norm_squared, nb::arg("out"), nb::arg("values"), nb::arg("stream") = 0);
 
     // AdamW
-    m.def("adamw_update", &bind_adamw_update, nb::arg("params"), nb::arg("grads"), nb::arg("m"), nb::arg("v"), nb::arg("num_parameters"), nb::arg("learning_rate"), nb::arg("beta1"), nb::arg("beta2"), nb::arg("t"), nb::arg("eps"), nb::arg("weight_decay"), nb::arg("grad_scale") = std::nullopt, nb::arg("m_scales") = std::nullopt, nb::arg("abs_max") = std::nullopt, nb::arg("seed") = 0u, nb::arg("stream") = 0);
+    m.def("adamw_update", &bind_adamw_update, nb::arg("params"), nb::arg("grads"), nb::arg("m"), nb::arg("v"), nb::arg("learning_rate"), nb::arg("beta1"), nb::arg("beta2"), nb::arg("t"), nb::arg("eps"), nb::arg("weight_decay"), nb::arg("grad_scale"), nb::arg("m_scales") = std::nullopt, nb::arg("abs_max") = std::nullopt, nb::arg("seed") = 0u, nb::arg("stream") = 0);
 }
