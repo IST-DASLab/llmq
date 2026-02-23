@@ -119,3 +119,147 @@ def test_fill_normal_stats(mean, std):
     y = torch.empty_like(x)
     K.fill_normal(y, float(mean), float(std), seed, 0)
     assert torch.allclose(x, y)
+
+
+# ---------------- Rope ----------------
+
+def _make_rope_freqs(T: int, head_dim: int, theta: float, dtype: torch.dtype, device: str):
+    assert head_dim % 2 == 0
+    half = head_dim // 2
+    idx = torch.arange(half, device=device, dtype=torch.float32)
+    inv_freq = theta ** (-2 * idx / head_dim)
+    t = torch.arange(T, device=device, dtype=torch.float32).unsqueeze(1)
+    angles = t * inv_freq.unsqueeze(0)
+    cos = torch.cos(angles).to(dtype)
+    sin = torch.sin(angles).to(dtype)
+    freqs = torch.stack([cos, sin], dim=-1).flatten(start_dim=1)  # (T, head_dim)
+    return freqs
+
+
+def _rope_python(x, freqs_cis, Nq: int, Nkv: int, backward: bool = False):
+    """
+    x:         (B, T, Nq+2*Nkv, HD)
+    freqs_cis: (T, HD) interleaved [cos0, sin0, cos1, sin1, ...]
+    """
+    B, T, N, HD = x.shape
+    half = HD // 2
+
+    cos = freqs_cis[:, 0::2].float()  # (T, half)
+    sin = freqs_cis[:, 1::2].float()  # (T, half)
+    if backward:
+        sin = -sin
+
+    cos = cos[None, :, None, :]  # (1, T, 1, half)
+    sin = sin[None, :, None, :]
+
+    # split into query, key, value
+    q = x[:, :, :Nq, :]
+    k = x[:, :, Nq:Nq+Nkv, :]
+    v = x[:, :, Nq+Nkv:, :]
+
+    def rotate(h):
+        h = h.float()
+        return torch.cat([
+            h[..., :half] * cos - h[..., half:] * sin,
+            h[..., :half] * sin + h[..., half:] * cos,
+            ], dim=-1).to(x.dtype)
+
+    return torch.cat([rotate(q), rotate(k), v], dim=2)
+
+@pytest.mark.parametrize("B,T,Nq,Nkv,HD", [(1, 8, 2, 1, 8), (2, 4, 1, 2, 16)])
+@pytest.mark.parametrize("dtype", [torch.float32, torch.bfloat16])
+def test_rope_forward_backward_matches_python(B, T, Nq, Nkv, HD, dtype):
+    device = "cuda"
+    theta = 1_000_000.0
+    C = (Nq + 2 * Nkv) * HD
+    x = torch.randn((B, T, C), device=device, dtype=dtype)
+    out = torch.empty_like(x)
+
+    # freqs dtype must match kernel expectations: fp32 for fp32, fp16 for bf16
+    freq_dtype = torch.float32 if dtype == torch.float32 else torch.float16
+    freqs = _make_rope_freqs(T, HD, theta, freq_dtype, device)
+
+    # optional absmax path
+    K.rope_forward(out, x, freqs, None, Nq, Nkv)
+    ref = _rope_python(x.view(B, T, Nq + 2 * Nkv, HD), freqs, Nq, Nkv, backward=False).view(B, T, C)
+    assert out.float().cpu() == pytest.approx(ref.float().cpu(), 5e-4, abs=5e-5)
+
+    dout = torch.randn_like(x)
+    dinp = torch.empty_like(x)
+    K.rope_backward(dinp, dout, freqs, None, Nq, Nkv)
+    ref_bw = _rope_python(dout.view(B, T, Nq + 2 * Nkv, HD), freqs, Nq, Nkv, backward=True).view(B, T, C)
+    assert dinp.float().cpu() == pytest.approx(ref_bw.float().cpu(), 5e-4, abs=5e-5)
+
+
+@pytest.mark.parametrize("B,T,C", [(2, 5, 64), (1, 3, 256)])
+@pytest.mark.parametrize("dtype", [torch.float32])
+def test_fused_residual_rmsnorm_forward_reference(B, T, C, dtype):
+    device = "cuda"
+    torch.manual_seed(0)
+    inp1 = torch.randn((B, T, C), device=device, dtype=dtype)
+    inp2 = torch.randn_like(inp1)
+    weight = torch.randn((C,), device=device, dtype=dtype)
+    residual = torch.empty_like(inp1)
+    normed = torch.empty_like(inp1)
+    rrms = torch.empty((B, T), device=device, dtype=torch.float32)
+    eps = 1e-6
+
+    K.fused_residual_rmsnorm_forward(residual, normed, rrms, inp1, inp2, weight, None, eps)
+
+    res_ref = inp1.float() + inp2.float()
+    var = (res_ref ** 2).mean(dim=-1, keepdim=True)
+    rms = torch.sqrt(var + eps)
+    r_rms = 1.0 / rms
+    norm_ref = (res_ref * r_rms * weight.float()).to(dtype)
+
+    assert torch.allclose(residual, res_ref.to(dtype))
+    assert pytest.approx(norm_ref.cpu(), 5e-4, abs=5e-5) == normed.cpu()
+    assert pytest.approx(r_rms.squeeze(-1).cpu(), 5e-4, abs=5e-5) == rrms.cpu()
+
+
+@pytest.mark.parametrize("dtype", [torch.float32, torch.bfloat16])
+def test_vector_add_sr_determinism_and_accuracy(dtype):
+    device = "cuda"
+    nelem = 4096
+    a = torch.randn((nelem,), device=device, dtype=dtype)
+    b = torch.randn_like(a)
+    out1 = torch.empty_like(a)
+    out2 = torch.empty_like(a)
+    seed = 12345
+    scale = torch.tensor(0.75, dtype=torch.float32)  # CPU 0-dim for binding float conversion
+    K.vector_add_sr(out1, a, b, scale, seed)
+    K.vector_add_sr(out2, a, b, scale, seed)
+    # determinism
+    assert torch.equal(out1, out2)
+    # accuracy vs fp32 add scaled
+    ref = scale.item() * (a.float() + b.float())
+    # stochastic rounding may introduce 1 ulp error at target dtype
+    assert torch.allclose(out1.float(), ref, rtol=5e-3, atol=5e-3)
+
+
+def test_quantize_with_abs_max_bf16():
+    device = "cuda"
+    N = 8192
+    x = torch.randn((N,), device=device, dtype=torch.float32)
+    abs_max = torch.tensor([x.abs().max().item()], device=device, dtype=torch.float32)
+    # Use bf16 path for broader dtype support
+    out = torch.empty((N,), device=device, dtype=torch.bfloat16)
+    scale = torch.empty((), device=device, dtype=torch.float32)
+    K.quantize_with_abs_max(out, scale, x, abs_max)
+    assert scale.item() == 1.0
+    assert out.cpu().float() == pytest.approx(x.bfloat16().float().cpu(),  rel=0.01)
+
+
+@pytest.mark.parametrize("dtype", [torch.float32, torch.bfloat16])
+def test_quantize_with_abs_max_fp8(dtype: torch.dtype):
+    device = "cuda"
+    N = 8192
+    x = torch.randn((N,), device=device, dtype=dtype)
+    abs_max = torch.tensor([x.abs().max().item()], device=device, dtype=torch.float32)
+    # Use bf16 path for broader dtype support
+    out = torch.empty((N,), device=device, dtype=torch.float8_e4m3fn)
+    scale = torch.empty((), device=device, dtype=torch.float32)
+    K.quantize_with_abs_max(out, scale, x, abs_max)
+    assert scale.item() == pytest.approx(abs_max.item() / 448.0)
+    dequant = out.float() * scale
+    assert dequant.cpu() == pytest.approx(x.float().cpu(), rel=0.1)

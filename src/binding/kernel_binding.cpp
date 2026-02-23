@@ -19,25 +19,36 @@ using CudaArray = nb::ndarray<nb::c_contig, nb::device::cuda>;
 using CPUArray = nb::ndarray<nb::c_contig, nb::device::cpu>;
 
 
-Tensor to_tensor(const CudaArray& array) {
+Tensor to_tensor_(const CudaArray& array) {
     const ETensorDType dtype = from_dlpack_dtype(array.dtype());
     const std::vector<long> shape(array.shape_ptr(), array.shape_ptr() + array.ndim());
     return Tensor::from_pointer(static_cast<std::byte*>(array.data()), array.device_id(), dtype, shape);
 }
 
-Tensor to_tensor(const CPUArray& array) {
+Tensor to_tensor_(const CPUArray& array) {
     const ETensorDType dtype = from_dlpack_dtype(array.dtype());
     const std::vector<long> shape(array.shape_ptr(), array.shape_ptr() + array.ndim());
     return Tensor::from_pointer(static_cast<std::byte*>(array.data()), -1, dtype, shape);
 }
 
-Tensor to_tensor(const std::optional<CudaArray>& array) {
+Tensor to_tensor_(const std::optional<CudaArray>& array) {
     if (array.has_value()) {
-        return to_tensor(array.value());
+        return to_tensor_(array.value());
     } else {
         return Tensor{};
     }
 }
+
+template<typename T>
+Tensor to_tensor_(T&& t, const char* name) {
+    try {
+        return to_tensor_(std::forward<T>(t));
+    } catch (std::exception& e) {
+        throw std::invalid_argument("Error converting " + std::string(name) + " to Tensor: " + std::string(e.what()));
+    }
+}
+
+#define to_tensor(array) to_tensor_(array, #array)
 
 /// This function is to be called with the list of dimensions of different tensors that should be
 /// equal (e.g., the first dimension of input and output should be the same batch size B)
@@ -171,9 +182,9 @@ void bind_rope_forward(const CudaArray& out, const CudaArray& in, const CudaArra
     NB_CHECK_NDIMS(freqs_cis, 2);
     const long B = get_dimension_checked({in.shape(0), out.shape(0)}, "B");
     const long T = get_dimension_checked({in.shape(1), out.shape(1)}, "T");
-    const long C = get_dimension_checked({in.shape(2), out.shape(2), freqs_cis.shape(1)}, "C");
+    const long C = get_dimension_checked({in.shape(2), out.shape(2)}, "C");
 
-    const long head_dim = div_exact(C, (long)Nq + 2*Nkv);
+    const long head_dim = get_dimension_checked({freqs_cis.shape(1), (unsigned long)div_exact(C, (long)Nq + 2*Nkv)}, "head_dim");
 
     Tensor out_t = to_tensor(out);
     rope_forward(out_t, to_tensor(in), to_tensor(freqs_cis),
@@ -187,9 +198,9 @@ void bind_rope_backward(const CudaArray& dinp, const CudaArray& dout, const Cuda
     NB_CHECK_NDIMS(freqs_cis, 2);
     const long B = get_dimension_checked({dinp.shape(0), dout.shape(0)}, "B");
     const long T = get_dimension_checked({dinp.shape(1), dout.shape(1)}, "T");
-    const long C = get_dimension_checked({dinp.shape(2), dout.shape(2), freqs_cis.shape(1)}, "C");
+    const long C = get_dimension_checked({dinp.shape(2), dout.shape(2)}, "C");
 
-    const long head_dim = div_exact(C, (long)Nq + 2*Nkv);
+    const long head_dim = get_dimension_checked({freqs_cis.shape(1), (unsigned long)div_exact(C, (long)Nq + 2*Nkv)}, "head_dim");
 
     Tensor dinp_t = to_tensor(dinp);
     rope_backward(dinp_t, to_tensor(dout), to_tensor(freqs_cis),
@@ -347,7 +358,7 @@ void bind_quantize_with_abs_max(const CudaArray& out, CudaArray scale, const Cud
     long N =  get_dimension_checked({in.size(), out.size()}, "nelem");
     Tensor out_t = to_tensor(out);
     Tensor in_t = to_tensor(in);
-    quantize_with_abs_max(out_t, device_scalar_float(scale), in_t, device_scalar_float(abs_max.data()), N, dp, as_stream(stream));
+    quantize_with_abs_max(out_t, device_scalar_float(scale), in_t, device_scalar_float(abs_max), N, dp, as_stream(stream));
 }
 
 void bind_quantize_and_transpose_with_abs_max(const CudaArray& out, CudaArray scale, const CudaArray& in, const CudaArray& abs_max,

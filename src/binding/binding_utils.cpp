@@ -59,7 +59,7 @@ ETensorDType from_dlpack_dtype(nb::dlpack::dtype dtype) {
             } else if (dtype.bits == 32) {
                 return ETensorDType::INT32;
             } else {
-                throw std::invalid_argument("Unsupported Int dtype: bit width must be 8 or 32");
+                throw std::invalid_argument("Unsupported Int dtype: bit width must be 8 or 32, got " + std::to_string(dtype.bits));
             }
         case dtype_code::UInt:
             if (dtype.bits == 8) {
