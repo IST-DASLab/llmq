@@ -3,8 +3,17 @@
 //
 
 #include "kernels.h"
-
+#include <fmt/core.h>
+#include <fmt/ranges.h>
 #include "utilities/tensor.h"
+
+template<typename... T>
+static void throw_unsupported_dtype(const char* func, T&&... args) {
+    std::array<std::string, sizeof...(T)> dtypes = {dtype_to_str(args.DType)...};
+    throw std::invalid_argument(fmt::format("{}: unsupported dtypes. Got {}", func, dtypes));
+}
+
+#define UNSUPPORTED_DTYPE(...) throw_unsupported_dtype(__FUNCTION__, __VA_ARGS__)
 
 void rmsnorm_forward(Tensor& out, Tensor& rms, const Tensor& inp, const Tensor& weight, float* abs_max_ptr, float epsilon, int B, int T, int C, cudaStream_t stream) {
     if(out.DType == ETensorDType::BF16) {
@@ -12,7 +21,7 @@ void rmsnorm_forward(Tensor& out, Tensor& rms, const Tensor& inp, const Tensor& 
     } else if (out.DType == ETensorDType::FP32) {
         rmsnorm_forward(out.get<float>(), rms.get<float>(), inp.get<float>(), weight.get<float>(), abs_max_ptr, epsilon, B, T, C, stream);
     } else {
-        throw std::logic_error("rmsnorm_forward: unsupported dtype");
+        UNSUPPORTED_DTYPE(out, rms, inp, weight);
     }
 }
 
@@ -25,7 +34,7 @@ void rmsnorm_backward(Tensor& dinp, Tensor& dweight, Tensor& scratch, const Tens
         rmsnorm_backward(dinp.get<float>(), dweight.get<float>(), scratch.Data, dresidual.get<float>(),
             dout.get<float>(), inp.get<float>(), weight.get<float>(), rstd.get<float>(), abs_max_ptr, B, T, C, dp, stream);
     } else {
-        throw std::logic_error("rmsnorm_backward: unsupported dtype");
+        UNSUPPORTED_DTYPE(dinp, dweight, scratch, dresidual, dout, inp, weight, rstd);
     }
 }
 
@@ -39,7 +48,7 @@ void fused_residual_rmsnorm_forward(Tensor& residual, Tensor& normed, Tensor& rr
         fused_residual_rmsnorm_forward(residual.get<float>(), normed.get<float>(), rrms.get<float>(),
             inp1.get<float>(), inp2.get<float>(), weight.get<float>(), abs_max_ptr, epsilon, N, C, stream);
     } else {
-        throw std::logic_error("fused_residual_rmsnorm_forward: unsupported dtype");
+        UNSUPPORTED_DTYPE(residual, normed, rrms, inp1, inp2, weight);
     }
 }
 
@@ -49,7 +58,7 @@ void swiglu_forward(Tensor& out, const Tensor& inp, float* abs_max_ptr, int B, i
     } else if (out.DType == ETensorDType::BF16) {
         swiglu_forward(out.get<nv_bfloat16>(), inp.get<nv_bfloat16>(), abs_max_ptr, B, T, C, stream);
     } else {
-        throw std::logic_error("swiglu_forward: unsupported dtype");
+        UNSUPPORTED_DTYPE(out, inp);
     }
 }
 
@@ -57,7 +66,7 @@ void swiglu_forward_quant(Tensor& out, float* scale_ptr, const Tensor& inp, cons
     if(out.DType == ETensorDType::FP8_E4M3 && inp.DType == ETensorDType::BF16) {
         swiglu_forward_quant(out.get<__nv_fp8_e4m3>(), scale_ptr, inp.get<nv_bfloat16>(), abs_max_ptr, B, T, C, stream);
     } else {
-        throw std::logic_error("swiglu_forward_quant: unsupported dtype");
+        UNSUPPORTED_DTYPE(out, inp);
     }
 }
 
@@ -67,7 +76,7 @@ void swiglu_backward(Tensor& dinp, const Tensor& dout, const Tensor& inp, float*
     } else if (dinp.DType == ETensorDType::BF16) {
         swiglu_backward(dinp.get<nv_bfloat16>(), dout.get<nv_bfloat16>(), inp.get<nv_bfloat16>(), abs_max, B, T, C, stream);
     } else {
-        throw std::logic_error("swiglu_backward: unsupported dtype");
+        UNSUPPORTED_DTYPE(dinp, dout, inp);
     }
 }
 
@@ -77,7 +86,7 @@ void rope_forward(Tensor& out, const Tensor& in, const Tensor& freqs_cis, float*
     } else if(out.DType == ETensorDType::BF16) {
         rope_forward(out.get<nv_bfloat16>(), in.get<nv_bfloat16>(), freqs_cis.get<half>(), abs_max_ptr, B, T, Nq, Nkv, head_dim, stream);
     } else {
-        throw std::logic_error("rope_forward: unsupported dtype");
+        UNSUPPORTED_DTYPE(out, in, freqs_cis);
     }
 }
 
@@ -87,7 +96,7 @@ void rope_backward(Tensor& dinp, const Tensor& dout, const Tensor& freqs_cis, fl
     } else if(dinp.DType == ETensorDType::BF16) {
         rope_backward(dinp.get<nv_bfloat16>(), dout.get<nv_bfloat16>(), freqs_cis.get<half>(), abs_max_ptr, B, T, Nq, Nkv, head_dim, stream);
     } else {
-        throw std::logic_error("rope_backward: unsupported dtype");
+        UNSUPPORTED_DTYPE(dinp, dout, freqs_cis);
     }
 }
 
@@ -99,7 +108,7 @@ void fused_classifier(Tensor& logits, Tensor& losses, Tensor& lse,
     } else if(logits.DType == ETensorDType::BF16) {
         fused_classifier(logits.get<nv_bfloat16>(), losses.get<float>(), lse.get<float>(), dloss, targets.get<int>(), z_reg, BT, V, P, write_dlogits, stream);
     } else {
-        throw std::runtime_error("fused_classifier: unsupported dtype");
+        UNSUPPORTED_DTYPE(logits, losses, lse);
     }
 }
 
@@ -113,7 +122,7 @@ void encoder_forward(Tensor& out, const Tensor& inp, const Tensor& wte, const Te
     } else if(out.DType == ETensorDType::BF16) {
         encoder_forward(out.get<nv_bfloat16>(), inp.get<std::int32_t>(), wte.get<nv_bfloat16>(),  wpe.get_optional<nv_bfloat16>(), B, T, C, V, stream);
     } else {
-        throw std::runtime_error("encoder_forward: unsupported dtype");
+        UNSUPPORTED_DTYPE(out, inp, wte, wpe);
     }
 }
 
@@ -132,7 +141,7 @@ void encoder_backward(Tensor& dwte, Tensor& scratch,
             (int4*)bucket_info.get<int>(), dout.get<nv_bfloat16>(), inp.get<std::int32_t>(), inputs_cpu.get<std::int32_t>(),
             B, T, C, seed, stream, sync_event, copy_stream);
     } else {
-        throw std::logic_error("encoder_backward: unsupported dtype");
+        UNSUPPORTED_DTYPE(dwte, scratch, workload_indices, bucket_info, dout, inp, inputs_cpu);
     }
 }
 
@@ -142,7 +151,7 @@ void global_norm_squared(Tensor& out, const Tensor& values, size_t count, const 
     } else if(values.DType == ETensorDType::BF16) {
         global_norm_squared(out.get<float>(), values.get<nv_bfloat16>(), count, dp, stream);
     } else {
-        throw std::logic_error("global_norm_squared: unsupported dtype");
+        UNSUPPORTED_DTYPE(out, values);
     }
 }
 
@@ -151,7 +160,7 @@ void adamw_update(Tensor& params_memory, const Tensor& grads_memory, Tensor& m_m
                   float learning_rate, float beta1, float beta2, int t, float eps, float weight_decay,
                   const float* grad_scale, Tensor& m_scales, float* abs_max, unsigned int seed, cudaStream_t stream) {
     if (params_memory.nelem() != grads_memory.nelem() || params_memory.nelem() != m_memory.nelem() || params_memory.nelem() != v_memory.nelem()) {
-        throw std::runtime_error("adamw_update: shape mismatch");
+        throw std::invalid_argument("adamw_update: shape mismatch");
     }
     if(params_memory.DType == ETensorDType::FP32) {
         adamw_update(params_memory.get<float>(), grads_memory.get<float>(), m_memory.get<float>(), v_memory.get<float>(), num_parameters, learning_rate, beta1, beta2, t, eps, weight_decay, grad_scale, abs_max, seed, stream);
@@ -164,7 +173,7 @@ void adamw_update(Tensor& params_memory, const Tensor& grads_memory, Tensor& m_m
     }  else if(params_memory.DType == ETensorDType::BF16 && m_memory.DType == ETensorDType::FP8_E4M3 && v_memory.DType == ETensorDType::BF16) {
         adamw_update(params_memory.get<nv_bfloat16>(), grads_memory.get<nv_bfloat16>(), m_memory.get<__nv_fp8_e4m3>(), v_memory.get<nv_bfloat16>(), num_parameters, learning_rate, beta1, beta2, t, eps, weight_decay, grad_scale, m_scales.get<float>(), abs_max, seed, stream);
     } else {
-        throw std::logic_error("adamw_update: unsupported dtype");
+        UNSUPPORTED_DTYPE(params_memory, grads_memory, m_memory, v_memory);
     }
 }
 
@@ -178,7 +187,7 @@ void transpose(Tensor& dst, const Tensor& src, int rows, int cols, cudaStream_t 
     }  else if(dst.DType == ETensorDType::FP8_E5M2) {
         transpose(dst.get<__nv_fp8_e5m2>(), src.get<__nv_fp8_e5m2>(), rows, cols, stream);
     } else {
-        throw std::logic_error("transpose: unsupported dtype");
+        UNSUPPORTED_DTYPE(dst, src);
     }
 }
 
@@ -188,7 +197,7 @@ void vector_add_sr(Tensor& dest, const Tensor& left, const Tensor& right, float 
     } else if(dest.DType == ETensorDType::BF16) {
         vector_add_sr(dest.get<nv_bfloat16>(), left.get<nv_bfloat16>(), right.get<nv_bfloat16>(), scale, nelem, seed, stream);
     } else {
-        throw std::logic_error("vector_add_sr: unsupported dtype");
+        UNSUPPORTED_DTYPE(dest, left, right);
     }
 }
 
@@ -197,6 +206,8 @@ void vector_reduce_sr(Tensor& dest, const Tensor& src, float scale, int n_shards
         vector_reduce_sr(dest.get<float>(), src.get<float>(), scale, n_shards, skip, nelem, accumulate, seed, stream);
     } else if(dest.DType == ETensorDType::BF16) {
         vector_reduce_sr(dest.get<nv_bfloat16>(), src.get<nv_bfloat16>(), scale, n_shards, skip, nelem, accumulate, seed, stream);
+    } else {
+        UNSUPPORTED_DTYPE(dest, src);
     }
 }
 
@@ -206,7 +217,7 @@ void abs_max(float* scale, const Tensor& in, long N, const cudaDeviceProp& dp, c
     } else if (in.DType == ETensorDType::BF16) {
         abs_max(scale, in.get<nv_bfloat16>(), N, dp, stream);
     } else {
-        throw std::logic_error("absmax_scale: unsupported dtype");
+        UNSUPPORTED_DTYPE(in);
     }
 }
 
@@ -221,7 +232,7 @@ void quantize_with_abs_max(Tensor& out, float* scale_ptr, const Tensor& in, cons
         } else if (out.DType == ETensorDType::INT8) {
             quantize_with_abs_max(out.get<int8_t>(), scale_ptr, in.get<float>(), abs_max, N, dp, stream);
         } else {
-            throw std::logic_error("quantize_with_abs_max: unsupported dtype");
+            UNSUPPORTED_DTYPE(out, in);
         }
     } else if (in.DType == ETensorDType::BF16) {
         if (out.DType == ETensorDType::FP8_E4M3) {
@@ -231,10 +242,10 @@ void quantize_with_abs_max(Tensor& out, float* scale_ptr, const Tensor& in, cons
         } else if (out.DType == ETensorDType::INT8) {
             quantize_with_abs_max(out.get<int8_t>(), scale_ptr, in.get<nv_bfloat16>(), abs_max, N, dp, stream);
         } else {
-            throw std::logic_error("quantize_with_abs_max: unsupported dtype");
+            UNSUPPORTED_DTYPE(out, in);
         }
     } else {
-        throw std::logic_error("quantize_with_abs_max: unsupported dtype");
+        UNSUPPORTED_DTYPE(out, in);
     }
 }
 
@@ -250,7 +261,7 @@ void quantize_and_transpose_with_abs_max(Tensor& out, float* scale_ptr, const Te
     } else if(out.DType == ETensorDType::FP8_E4M3 && in.DType == ETensorDType::BF16) {
         quantize_and_transpose_with_abs_max(out.get<__nv_fp8_e4m3>(), scale_ptr, in.get<nv_bfloat16>(), abs_max, rows, cols, dp, stream);
     } else {
-        throw std::logic_error("Invalid DType combination");
+        UNSUPPORTED_DTYPE(out, in);
     }
 }
 
@@ -260,7 +271,7 @@ void fill_normal(Tensor& dest, std::size_t count, float mean, float std, unsigne
     } else if (dest.DType == ETensorDType::BF16) {
         fill_normal(dest.get<nv_bfloat16>(), count, mean, std, seed, subsequence, stream);
     } else {
-        throw std::logic_error("fill_normal: unsupported dtype");
+        UNSUPPORTED_DTYPE(dest);
     }
 }
 
@@ -270,7 +281,7 @@ void fill_constant(Tensor& dest, float value, std::size_t count, cudaStream_t st
     } else if (dest.DType == ETensorDType::BF16) {
         fill_constant(dest.get<nv_bfloat16>(), static_cast<nv_bfloat16>(value), count, stream);
     } else {
-        throw std::logic_error("fill_constant: unsupported dtype");
+        UNSUPPORTED_DTYPE(dest);
     }
 }
 
@@ -306,7 +317,7 @@ void matmul(Tensor& c, const Tensor& a, const Tensor& b, const Tensor& bias,
         const nv_bfloat16* bias_ptr = bias.get_optional<nv_bfloat16>();
         matmul(c.get<nv_bfloat16>(), a.get<nv_bfloat16>(), b.get<nv_bfloat16>(), bias_ptr, scale_a, scale_b, handle, ws, ws_size, M, N, K, mode, accumulate, stream);
     } else {
-        throw std::logic_error("matmul_forward: invalid DType combination");
+        UNSUPPORTED_DTYPE(c, a, b, bias, workspace);
     }
 }
 
@@ -320,6 +331,6 @@ void backward_bias(Tensor& dbias, const Tensor& dout, const float* scale_a, cons
     }  else if(dbias.DType == ETensorDType::BF16 && dout.DType == ETensorDType::FP8_E5M2) {
         backward_bias(dbias.get<nv_bfloat16>(), dout.get<__nv_fp8_e5m2>(), scale_a, scale_b, dbias_buffer.get<float>(), B, T, OC, dp, stream);
     } else {
-        throw std::logic_error("backward_bias: unsupported dtype");
+        UNSUPPORTED_DTYPE(dbias, dout, dbias_buffer);
     }
 }
