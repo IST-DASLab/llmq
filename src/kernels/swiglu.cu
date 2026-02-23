@@ -355,8 +355,8 @@ void swiglu_forward_quant(__nv_fp8_e4m3* out, float* scale_ptr, const nv_bfloat1
     }
     using x128 = GenericVector<nv_bfloat16, 16/sizeof(nv_bfloat16)>;
     const int block_size = 128;
-    assert(C % x128::size == 0);
-    assert((B*T*C) % (block_size * x128::size) == 0);
+    if (C % x128::size != 0) throw std::invalid_argument("swiglu_forward_quant: C must be divisible by "+ std::to_string(x128::size));
+    if ((B*T*C) % (block_size * x128::size) != 0) throw std::invalid_argument("swiglu_forward_quant: output size must be divisible by "+ std::to_string(block_size * x128::size));
     int bpsm;
     CUDA_CHECK(cudaOccupancyMaxActiveBlocksPerMultiprocessor(&bpsm, swiglu_forward_quant_persistent_kernel<nv_bfloat16>, block_size, 0));
     int sms;
@@ -386,7 +386,7 @@ void swiglu_backward_impl(floatX* dinp, const floatX* dout, const floatX* inp, f
         CUDA_CHECK(cudaMemsetAsync(abs_max, 0, sizeof(float), stream));
 
     const int block_size = 256;
-    assert((B*T*C) % (block_size * x128::size) == 0);
+    if ((B*T*C) % (block_size * x128::size) != 0) throw std::invalid_argument("swiglu_backward: dout size must be divisible by "+ std::to_string(block_size * x128::size));
     const int grid_size = div_ceil((size_t)B*T*C, block_size * x128::size);
     swiglu_backward_kernel1<<<grid_size, block_size, 0, stream>>>(dinp, dout, inp, abs_max, B, T, C);
     CUDA_CHECK(cudaGetLastError());

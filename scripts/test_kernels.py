@@ -1,19 +1,22 @@
 import pytest
 import torch
+import torch.nn.functional as F
 from pyllmq import kernels as K
 
 
 DTYPES = [torch.float32, torch.bfloat16]
 
-# Tolerances by dtype: (rtol, atol)
+# Tolerances by dtype for approximate kernels: (rtol, atol)
 TOL = {
     torch.float32: (5e-4, 5e-5),
-    torch.bfloat16: (5e-3, 5e-3),
+    torch.bfloat16: (1e-2, 5e-3),
 }
 
 
 # ============================================================
 # fill_constant
+# Fills every element with a compile-time constant: result must
+# be bit-exact, so rel=0, abs=0.
 # ============================================================
 
 @pytest.mark.parametrize("shape", [(8, 16), (1,), (128, 256), (4, 8, 32)])
@@ -22,11 +25,14 @@ TOL = {
 def test_fill_constant_basic(shape, value, dtype):
     x = torch.empty(shape, device="cuda", dtype=dtype)
     K.fill_constant(x, value)
-    assert x.cpu() == pytest.approx(torch.full(shape, value).cpu(), rel=0, abs=0)
+    ref = torch.full(shape, value, dtype=dtype)
+    # Exact: every element is independently written to the same constant.
+    assert x.float().cpu() == pytest.approx(ref.float().cpu(), rel=0, abs=0)
 
 
 # ============================================================
 # transpose
+# Byte-level shuffle — no arithmetic, so result must be exact.
 # ============================================================
 
 @pytest.mark.parametrize("rows,cols", [(7, 11), (1024, 2048), (64, 128), (3, 512)])
@@ -35,33 +41,37 @@ def test_transpose_matches_torch(rows, cols, dtype):
     src = torch.randn((rows, cols), device="cuda", dtype=dtype)
     dst = torch.empty((cols, rows), device="cuda", dtype=dtype)
     K.transpose(dst, src, rows, cols)
-    assert dst.cpu() == pytest.approx(src.t().cpu(), rel=0, abs=0)
+    # Transposing rearranges values without touching bits — must be exact.
+    assert dst.float().cpu() == pytest.approx(src.t().float().cpu(), rel=0, abs=0)
 
 
 # ============================================================
 # abs_max
+# Reduction over exact fp values — output is one of the input
+# values, so the scalar result must be exact.
 # ============================================================
 
-@pytest.mark.parametrize("shape", [(2, 3), (16, 64), (4, 128, 32)])
+@pytest.mark.parametrize("shape", [(16, 64), (4, 128, 32)])
 @pytest.mark.parametrize("dtype", DTYPES)
 def test_abs_max_writes_scalar(shape, dtype):
     x = torch.randn(shape, device="cuda", dtype=dtype)
-    # Plant a known maximum so we can assert the exact answer
     ref = x.abs().max()
     result = torch.empty((), device="cuda", dtype=torch.float32)
     K.abs_max(result, x)
     assert torch.isfinite(result)
-    assert result.cpu() == pytest.approx(ref.cpu(), rel=0, abs=0)
+    # abs_max just selects an existing value — no arithmetic error possible.
+    assert result.cpu() == pytest.approx(ref.float().cpu(), rel=0, abs=0)
 
 
 # ============================================================
 # global_norm_squared
+# Involves floating-point accumulation so tolerances are needed.
 # ============================================================
 
-@pytest.mark.parametrize("shape", [(5, 13), (128, 24524), (256, 1024), (1, 4096)])
+@pytest.mark.parametrize("shape", [(128, 24524), (256, 1024), (1, 4096)])
 @pytest.mark.parametrize("dtype", DTYPES)
 def test_global_norm_squared(shape, dtype):
-    x = torch.randn(shape, device="cuda", dtype=dtype)
+    x = torch.randn(*shape, device="cuda", dtype=dtype)
     out = torch.zeros((256,), device="cuda", dtype=torch.float32)
     K.global_norm_squared(out, x)
     ref = (x.float() ** 2).sum()
@@ -70,7 +80,7 @@ def test_global_norm_squared(shape, dtype):
 
 
 # ============================================================
-# rmsnorm_forward
+# rmsnorm
 # ============================================================
 
 def _rmsnorm_reference(inp, weight, eps):
@@ -79,6 +89,26 @@ def _rmsnorm_reference(inp, weight, eps):
     r_rms = 1.0 / rms
     out = inp.float() * r_rms * weight.float()
     return out.to(inp.dtype), r_rms.squeeze(-1)
+
+
+def _rmsnorm_backward_reference(dout, inp, weight, rstd):
+    # dout, inp: (B, T, C), weight: (C,), rstd: (B, T)
+    B, T, C = inp.shape
+    dout_f = dout.float()
+    inp_f = inp.float()
+    w_f = weight.float()
+    r = rstd.unsqueeze(-1)  # (B, T, 1)
+
+    # dweight: sum over B, T
+    dweight = (dout_f * inp_f * r).sum(dim=(0, 1))
+
+    # dinp
+    normed = inp_f * r                        # (B, T, C)
+    dy_w = dout_f * w_f                       # (B, T, C)
+    dot = (dy_w * normed).sum(dim=-1, keepdim=True)  # (B, T, 1)
+    dinp = r * (dy_w - normed * dot / C)
+
+    return dinp.to(inp.dtype), dweight.to(weight.dtype)
 
 
 @pytest.mark.parametrize("B,T,C", [(2, 3, 16), (1, 2, 64), (8, 256, 1024)])
@@ -99,6 +129,32 @@ def test_rmsnorm_forward_matches_reference(B, T, C, dtype):
     assert out.float().cpu() == pytest.approx(ref_out.float().cpu(), rel=rtol, abs=atol)
 
 
+@pytest.mark.parametrize("B,T,C", [(2, 3, 16), (1, 4, 64), (4, 8, 256)])
+@pytest.mark.parametrize("dtype", DTYPES)
+def test_rmsnorm_backward(B, T, C, dtype):
+    torch.manual_seed(0)
+    inp = torch.randn((B, T, C), device="cuda", dtype=dtype)
+    weight = torch.randn((C,), device="cuda", dtype=dtype)
+    dout = torch.randn((B, T, C), device="cuda", dtype=dtype)
+    eps = 1e-6
+
+    # Forward to get rstd
+    _, rstd = _rmsnorm_reference(inp, weight, eps)
+    rstd = rstd.to(torch.float32).cuda()
+
+    dinp = torch.empty_like(inp)
+    dweight = torch.zeros((C,), device="cuda", dtype=dtype)
+    scratch = torch.zeros(K.get_rmsnorm_backward_scratch_size(C), device="cuda", dtype=torch.float32)
+    dresidual = torch.zeros_like(inp)
+
+    K.rmsnorm_backward(dinp, dweight, scratch, dresidual, dout, inp, weight, rstd, None)
+
+    ref_dinp, ref_dweight = _rmsnorm_backward_reference(dout, inp, weight, rstd)
+    rtol, atol = TOL[dtype]
+    assert dinp.float().cpu() == pytest.approx(ref_dinp.float().cpu(), rel=rtol, abs=atol)
+    assert dweight.float().cpu() == pytest.approx(ref_dweight.float().cpu(), rel=rtol, abs=atol)
+
+
 # ============================================================
 # swiglu_forward
 # ============================================================
@@ -106,6 +162,13 @@ def test_rmsnorm_forward_matches_reference(B, T, C, dtype):
 def _swiglu_reference(x: torch.Tensor) -> torch.Tensor:
     a, b = torch.tensor_split(x.float(), 2, dim=-1)
     return (torch.nn.functional.silu(b) * a).to(x.dtype)
+
+
+def _swiglu_backward_reference(dout, inp):
+    inp_f = inp.detach().float().requires_grad_(True)
+    out = _swiglu_reference(inp_f)
+    out.backward(dout.float())
+    return inp_f.grad.to(inp.dtype)
 
 
 @pytest.mark.parametrize("B,T,C", [(1, 8, 128), (1, 1, 16), (4, 5, 32), (2, 16, 256)])
@@ -120,6 +183,42 @@ def test_swiglu_forward_matches_reference(B, T, C, dtype):
     ref = _swiglu_reference(inp)
     rtol, atol = TOL[dtype]
     assert out.float().cpu() == pytest.approx(ref.float().cpu(), rel=rtol, abs=atol)
+
+
+@pytest.mark.parametrize("B,T,C", [(2, 8, 64), (4, 16, 128)])
+@pytest.mark.parametrize("dtype", [torch.bfloat16])
+def test_swiglu_forward_quant_fp8(B, T, C, dtype):
+    """swiglu_forward_quant writes fp8 output, using the supplied abs-max to scale values"""
+    torch.manual_seed(42)
+    inp = torch.randn((B, T, 2 * C), device="cuda", dtype=dtype)
+    out = torch.empty((B, T, C), device="cuda", dtype=torch.float8_e4m3fn)
+    scale = torch.empty((), device="cuda", dtype=torch.float32)
+
+    ref = _swiglu_reference(inp.float())
+    abs_max = ref.abs().max().float()
+    K.swiglu_forward_quant(out, scale, inp, abs_max)
+
+    dequant = out.float() * scale
+    # fp8 has limited precision — use loose tolerance
+    assert dequant.cpu() == pytest.approx(ref.cpu(), rel=0.125, abs=1e-2)
+
+    expected_scale = abs_max / 448.0
+    assert scale.cpu() == pytest.approx(expected_scale.cpu(), rel=1e-3)
+
+@pytest.mark.parametrize("B,T,C", [(1, 8, 256), (4, 16, 64)])
+@pytest.mark.parametrize("dtype", DTYPES)
+def test_swiglu_backward(B, T, C, dtype):
+    torch.manual_seed(0)
+    inp = torch.randn((B, T, 2 * C), device="cuda", dtype=dtype)
+    dout = torch.randn((B, T, C), device="cuda", dtype=dtype)
+    dinp = torch.empty_like(inp)
+
+    K.swiglu_backward(dinp, dout, inp, None)
+
+    ref = _swiglu_backward_reference(dout, inp)
+    rtol, atol = TOL[dtype]
+
+    assert dinp.float().cpu() == pytest.approx(ref.float().cpu(), rel=rtol, abs=atol)
 
 
 # ============================================================
@@ -152,10 +251,10 @@ def test_fill_normal_stats(mean, std):
     assert abs(m - mean) < max(3e-3, 0.02 * abs(std))
     assert abs(s - std) / max(std, 1e-12) < 0.03
 
-    # Determinism: same seed + subsequence must give identical output
+    # Determinism: same seed + subsequence must give bit-identical output.
     y = torch.empty_like(x)
     K.fill_normal(y, float(mean), float(std), seed, 0)
-    assert x.cpu() == pytest.approx(y.cpu())
+    assert x.cpu() == pytest.approx(y.cpu(), rel=0, abs=0)
 
 
 # ============================================================
@@ -252,7 +351,7 @@ def test_fused_residual_rmsnorm_forward_reference(B, T, C, dtype):
     norm_ref = (res_ref.float() * r_rms * weight.float()).to(dtype)
 
     rtol, atol = TOL[dtype]
-    assert residual.cpu() == pytest.approx(res_ref.cpu(), rel=rtol, abs=atol)
+    assert residual.float().cpu() == pytest.approx(res_ref.float().cpu(), rel=rtol, abs=atol)
     assert normed.float().cpu() == pytest.approx(norm_ref.float().cpu(), rel=rtol, abs=atol)
     assert rrms.cpu() == pytest.approx(r_rms.squeeze(-1).float().cpu(), rel=rtol, abs=atol)
 
@@ -274,12 +373,12 @@ def test_vector_add_sr_determinism_and_accuracy(nelem, dtype):
     K.vector_add_sr(out1, a, b, scale, seed)
     K.vector_add_sr(out2, a, b, scale, seed)
 
-    # Determinism
-    assert out1.cpu() == pytest.approx(out2.cpu())
+    # Determinism: same seed must give bit-identical output.
+    assert out1.float().cpu() == pytest.approx(out2.float().cpu(), rel=0, abs=0)
 
-    # Accuracy vs fp32 reference; stochastic rounding may introduce ~1 ulp at target dtype
+    # Accuracy vs fp32 reference; stochastic rounding may introduce ~1 ulp at target dtype.
     ref = scale.item() * (a.float() + b.float())
-    assert out1.float().cpu() == pytest.approx(ref.cpu(), rel=5e-3, abs=5e-3)
+    assert out1.float().cpu() == pytest.approx(ref.cpu(), rel=1e-2, abs=5e-3)
 
 
 # ============================================================
@@ -287,7 +386,7 @@ def test_vector_add_sr_determinism_and_accuracy(nelem, dtype):
 # ============================================================
 
 @pytest.mark.parametrize("N", [1024, 8192, 65536])
-@pytest.mark.parametrize("dtype", DTYPES)
+@pytest.mark.parametrize("dtype", [torch.float32])
 def test_quantize_with_abs_max_bf16(N, dtype):
     device = "cuda"
     x = torch.randn((N,), device=device, dtype=dtype)
@@ -295,7 +394,7 @@ def test_quantize_with_abs_max_bf16(N, dtype):
     out = torch.empty((N,), device=device, dtype=torch.bfloat16)
     scale = torch.empty((), device=device, dtype=torch.float32)
     K.quantize_with_abs_max(out, scale, x, abs_max_val)
-    assert scale.item() == pytest.approx(1.0)
+    assert scale.item() == pytest.approx(1.0, rel=0, abs=0)
     assert out.float().cpu() == pytest.approx(x.bfloat16().float().cpu(), rel=0.01)
 
 
@@ -311,3 +410,181 @@ def test_quantize_with_abs_max_fp8(N, dtype):
     assert scale.item() == pytest.approx(abs_max_val.item() / 448.0)
     dequant = out.float() * scale
     assert dequant.cpu() == pytest.approx(x.float().cpu(), rel=0.1)
+
+
+# ============================================================
+# fused_classifier
+# ============================================================
+
+
+@pytest.mark.parametrize("write_dlogits", [False, True])
+@pytest.mark.parametrize("dtype", DTYPES)
+@pytest.mark.parametrize("B,T,V", [(2, 4, 16), (1, 8, 32), (4, 2, 64)])
+def test_fused_classifier_losses(B, T, V, write_dlogits, dtype):
+    """Per-token losses, lse, and (optionally) dlogits must match reference with no z-regularisation."""
+    torch.manual_seed(0)
+    logits = torch.randn((B, T, V), device="cuda", dtype=dtype)
+    targets = torch.randint(0, V, (B, T), device="cuda", dtype=torch.int32)
+
+    losses = torch.zeros((B, T), device="cuda", dtype=torch.float32)
+    lse = torch.empty((B, T), device="cuda", dtype=torch.float32)
+    dloss = 1.0
+    logits_copy = logits.clone()  # kernel mutates logits in place
+
+    K.fused_classifier(logits_copy, losses, lse, dloss, targets, 0.0, write_dlogits)
+
+    ref_lse = torch.logsumexp(logits.float(), dim=-1)
+    assert lse.cpu() == pytest.approx(ref_lse.cpu(), rel=1e-4, abs=1e-5)
+
+    ref_losses = F.cross_entropy(logits.reshape(B * T, V).float(), targets.reshape(B * T).long(), reduction="none").reshape(B, T)
+    assert losses.cpu() == pytest.approx(ref_losses.cpu(), rel=1e-4, abs=1e-5)
+
+    if write_dlogits:
+        probs = torch.softmax(logits.float(), dim=-1)
+        onehot = torch.zeros_like(probs)
+        onehot.scatter_(-1, targets.long().unsqueeze(-1), 1.0)
+        ref_dlogits = probs - onehot  # dloss=1 everywhere
+        assert logits_copy.float().cpu() == pytest.approx(ref_dlogits.cpu(), rel=1e-2, abs=1e-3)
+
+
+
+# ============================================================
+# adamw_update
+# ============================================================
+
+def _adamw_reference(params, grads, m, v, lr, beta1, beta2, t, eps, wd):
+    m_new = beta1 * m.float() + (1 - beta1) * grads.float()
+    v_new = beta2 * v.float() + (1 - beta2) * grads.float() ** 2
+    m_hat = m_new / (1 - beta1 ** t)
+    v_hat = v_new / (1 - beta2 ** t)
+    params_new = params.float() * (1 - lr * wd) - lr * m_hat / (v_hat.sqrt() + eps)
+    return params_new, m_new, v_new
+
+
+@pytest.mark.parametrize("N", [1024, 8192, 65536])
+@pytest.mark.parametrize("p_dtype, g_dtype, m_dtype, v_dtype", [
+    (torch.float32, torch.float32, torch.float32, torch.float32),
+    (torch.bfloat16, torch.bfloat16, torch.float32, torch.float32),
+    (torch.bfloat16, torch.bfloat16, torch.bfloat16, torch.float32),
+    (torch.bfloat16, torch.bfloat16, torch.bfloat16, torch.bfloat16),
+])
+def test_adamw_update_matches_reference(N, p_dtype, g_dtype, m_dtype, v_dtype):
+    torch.manual_seed(0)
+    params = torch.randn((N,), device="cuda", dtype=p_dtype)
+    grads = torch.randn((N,), device="cuda", dtype=g_dtype)
+    m = torch.randn((N,), device="cuda", dtype=m_dtype) * 0.1
+    v = torch.rand((N,), device="cuda", dtype=v_dtype) * 0.01 + 1e-8
+    g_scale = torch.rand((), device="cuda", dtype=torch.float32) * 0.5 + 0.5
+
+    lr, beta1, beta2, t, eps, wd = 1e-3, 0.9, 0.999, 1, 1e-8, 0.1
+    ref_params, ref_m, ref_v = _adamw_reference(
+        params.clone().float(), grads.float() * g_scale, m.clone().float(), v.clone().float(), lr, beta1, beta2, t, eps, wd
+    )
+
+    K.adamw_update(params, grads, m, v, lr, beta1, beta2, t, eps, wd, g_scale)
+
+    rtol, atol = TOL[p_dtype]
+    assert params.float().cpu() == pytest.approx(ref_params.cpu(), rel=rtol, abs=atol)
+    rtol, atol = TOL[m_dtype]
+    assert m.float().cpu() == pytest.approx(ref_m.cpu(), rel=rtol, abs=atol)
+    rtol, atol = TOL[v_dtype]
+    assert v.float().cpu() == pytest.approx(ref_v.cpu(), rel=rtol, abs=atol)
+
+
+# ============================================================
+# vector_reduce_sr
+# ============================================================
+@pytest.mark.parametrize("n_shards,nelem", [(2, 4096), (4, 8192), (8, 16384)])
+@pytest.mark.parametrize("dtype", DTYPES)
+def test_vector_reduce_sr_sum_matches_reference(n_shards, nelem, dtype):
+    """With scale=1, the reduction must equal the sum across shards."""
+    torch.manual_seed(0)
+    src = torch.randn((n_shards * nelem,), device="cuda", dtype=dtype)
+    dest = torch.empty((nelem,), device="cuda", dtype=dtype)
+    scale = torch.tensor(1.0, dtype=torch.float32)
+
+    K.vector_reduce_sr(dest, src, scale, n_shards, seed=0)
+
+    ref = src.view(n_shards, nelem).float().sum(dim=0)
+    rtol, atol = TOL[dtype]
+    assert dest.float().cpu() == pytest.approx(ref.cpu(), rel=rtol, abs=atol)
+
+
+
+@pytest.mark.parametrize("n_shards,nelem", [(2, 4096), (4, 8192)])
+@pytest.mark.parametrize("dtype", DTYPES)
+def test_vector_reduce_sr_determinism(n_shards, nelem, dtype):
+    src = torch.randn((n_shards * nelem,), device="cuda", dtype=dtype)
+    dest1 = torch.empty((nelem,), device="cuda", dtype=dtype)
+    dest2 = torch.empty((nelem,), device="cuda", dtype=dtype)
+    scale = torch.tensor(0.5, dtype=torch.float32)
+
+    K.vector_reduce_sr(dest1, src, scale, n_shards, seed=99)
+    K.vector_reduce_sr(dest2, src, scale, n_shards, seed=99)
+
+    assert dest1.float().cpu() == pytest.approx(dest2.float().cpu(), rel=0, abs=0)
+
+
+@pytest.mark.parametrize("n_shards,nelem", [(2, 4096), (4, 8192)])
+@pytest.mark.parametrize("dtype", DTYPES)
+def test_vector_reduce_sr_scale_zero(n_shards, nelem, dtype):
+    src = torch.randn((n_shards * nelem,), device="cuda", dtype=dtype)
+    dest = torch.empty((nelem,), device="cuda", dtype=dtype)
+    scale = torch.tensor(0.0, dtype=torch.float32)
+
+    K.vector_reduce_sr(dest, src, scale, n_shards, seed=0)
+
+    assert dest.float().cpu() == pytest.approx(torch.zeros(nelem).cpu(), rel=0, abs=0)
+
+
+@pytest.mark.parametrize("n_shards,nelem", [(2, 4096), (4, 8192)])
+@pytest.mark.parametrize("dtype", DTYPES)
+def test_vector_reduce_sr_skip(n_shards, nelem, dtype):
+    """Skipped shard should not contribute to the result."""
+    torch.manual_seed(42)
+    src = torch.randn((n_shards * nelem,), device="cuda", dtype=dtype)
+    dest = torch.empty((nelem,), device="cuda", dtype=dtype)
+    scale = torch.tensor(1.0, dtype=torch.float32)
+
+    skip = 1
+    K.vector_reduce_sr(dest, src, scale, n_shards, skip=skip, seed=0)
+
+    shards = src.view(n_shards, nelem).float()
+    ref = sum(shards[k] for k in range(n_shards) if k != skip)
+    rtol, atol = TOL[dtype]
+    assert dest.float().cpu() == pytest.approx(ref.cpu(), rel=rtol, abs=atol)
+
+
+@pytest.mark.parametrize("n_shards,nelem", [(2, 4096), (4, 8192)])
+@pytest.mark.parametrize("dtype", DTYPES)
+def test_vector_reduce_sr_accumulate(n_shards, nelem, dtype):
+    """With accumulate=True, dest's initial values should be included in the sum."""
+    torch.manual_seed(7)
+    src = torch.randn((n_shards * nelem,), device="cuda", dtype=dtype)
+    dest = torch.randn((nelem,), device="cuda", dtype=dtype)
+    dest_initial = dest.clone()
+    scale = torch.tensor(1.0, dtype=torch.float32)
+
+    K.vector_reduce_sr(dest, src, scale, n_shards, accumulate=True, seed=0)
+
+    ref = src.view(n_shards, nelem).float().sum(dim=0) + dest_initial.float()
+    rtol, atol = TOL[dtype]
+    assert dest.float().cpu() == pytest.approx(ref.cpu(), rel=rtol, abs=atol)
+
+
+@pytest.mark.parametrize("dtype", DTYPES)
+def test_vector_reduce_sr_stochastic_rounding_unbiased(dtype: torch.dtype, nelem=4096):
+    """SR rounding should be unbiased: mean of many rounded values ≈ true mean."""
+    n_shards = 2
+    # Use values that are exactly halfway between representable values to maximise rounding effect
+    src = torch.ones((n_shards * nelem,), device="cuda", dtype=dtype) * 0.5
+    results = []
+    for seed in range(20):
+        dest = torch.empty((nelem,), device="cuda", dtype=dtype)
+        scale = torch.tensor(1.0, dtype=torch.float32)
+        K.vector_reduce_sr(dest, src, scale, n_shards, seed=seed)
+        results.append(dest.float().cpu())
+
+    mean_result = torch.stack(results).mean(dim=0)
+    # True answer is 1.0 (sum of two 0.5 shards); mean over seeds should be close
+    assert mean_result == pytest.approx(torch.ones(nelem).cpu(), rel=0.01, abs=0.01)

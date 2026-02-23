@@ -9,6 +9,10 @@ def encoder_forward(out: torch.Tensor, inp: torch.Tensor, wte: torch.Tensor, wpe
 
 
 # RMSNorm
+
+def get_rmsnorm_backward_scratch_size(channels: int):
+    return _pyllmq.get_rmsnorm_backward_scratch_size(channels)
+
 @torch.library.custom_op("llmq::rmsnorm_forward", mutates_args=("out", "rms"))
 def rmsnorm_forward(out: torch.Tensor, rms: torch.Tensor, inp: torch.Tensor, weight: torch.Tensor, absmax: torch.Tensor | None, epsilon: float, stream: int = 0) -> None:
     _pyllmq.rmsnorm_forward(out, rms, inp, weight, absmax, epsilon, stream)
@@ -72,8 +76,8 @@ def attention_backward(dqkv: torch.Tensor, stats: torch.Tensor, out: torch.Tenso
 
 
 # Classifier
-@torch.library.custom_op("llmq::fused_classifier", mutates_args=("logits", "losses", "lse", "dloss"))
-def fused_classifier(logits: torch.Tensor, losses: torch.Tensor, lse: torch.Tensor, dloss: torch.Tensor,
+@torch.library.custom_op("llmq::fused_classifier", mutates_args=("logits", "losses", "lse"))
+def fused_classifier(logits: torch.Tensor, losses: torch.Tensor, lse: torch.Tensor, dloss: float,
                      targets: torch.Tensor, z_reg: float, write_dlogits: bool, stream: int = 0) -> None:
     _pyllmq.fused_classifier(logits, losses, lse, dloss, targets, z_reg, write_dlogits, stream)
 
@@ -130,6 +134,11 @@ def vector_add_sr(dest: torch.Tensor, left: torch.Tensor, right: torch.Tensor, s
 @torch.library.custom_op("llmq::vector_reduce_sr", mutates_args=("dest",))
 def vector_reduce_sr(dest: torch.Tensor, src: torch.Tensor, scale: torch.Tensor, n_shards: int,
                      skip: int = -1, accumulate: bool = False, seed: int = 0, stream: int = 0) -> None:
+    """
+    Interprets `src` as a tensor of `n_shard` shards of size `nelem` each. The shards are summed together, and the result is either written to (`accumulate = false`)
+    or added into (`accumulate = true`) `dest`, after being scaled by `scale`. All intermediate calculations are done in float precision, and stochastic rounding using the
+    provided `seed` is applied before writing to `dest`. The `skip` parameter allows to skip one of the shards. Set to -1 to disable skipping.
+    """
     _pyllmq.vector_reduce_sr(dest, src, scale, n_shards, skip, accumulate, seed, stream)
 
 
@@ -160,11 +169,11 @@ def global_norm_squared(out: torch.Tensor, values: torch.Tensor, stream: int = 0
 
 # AdamW update
 @torch.library.custom_op("llmq::adamw_update", mutates_args=("params", "m", "v"))
-def adamw_update(params: torch.Tensor, grads: torch.Tensor, m: torch.Tensor, v: torch.Tensor, num_parameters: int,
+def adamw_update(params: torch.Tensor, grads: torch.Tensor, m: torch.Tensor, v: torch.Tensor,
                  learning_rate: float, beta1: float, beta2: float, t: int, eps: float, weight_decay: float,
-                 grad_scale: torch.Tensor | None = None, m_scales: torch.Tensor | None = None,
+                 grad_scale: torch.Tensor, m_scales: torch.Tensor | None = None,
                  abs_max: torch.Tensor | None = None, seed: int = 0, stream: int = 0) -> None:
-    _pyllmq.adamw_update(params, grads, m, v, num_parameters, learning_rate, beta1, beta2, t, eps, weight_decay, grad_scale, m_scales, abs_max, seed, stream)
+    _pyllmq.adamw_update(params, grads, m, v, learning_rate, beta1, beta2, t, eps, weight_decay, grad_scale, m_scales, abs_max, seed, stream)
 
 
 __all__ = [

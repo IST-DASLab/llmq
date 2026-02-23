@@ -144,6 +144,7 @@ void adamw_update_imp(floatX* params_memory, const floatX* grads_memory, floatM*
                       float learning_rate, float beta1, float beta2, int t, float eps, float weight_decay,
                       const float* grad_scale, float* m_scales, float* abs_max, unsigned int seed, cudaStream_t stream) {
     constexpr int VecElems = std::min({16 / sizeof(floatX), 16 / sizeof(floatM), 16 / sizeof(floatV)});
+    if (num_parameters % VecElems != 0) throw std::invalid_argument("num_parameters must be divisible by VecElems");
     // AdamW update
     int block_size = 512;
     int num_blocks = div_ceil(num_parameters, (size_t)(block_size * VecElems));
