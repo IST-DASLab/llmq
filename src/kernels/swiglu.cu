@@ -4,6 +4,7 @@
 // Based on llm.c https://github.com/karpathy/llm.c
 
 #include <cassert>
+#include <string>
 
 #include <cuda_bf16.h>
 #include <cuda_pipeline_primitives.h>
@@ -307,7 +308,8 @@ void swiglu_forward_impl(floatX* out, const floatX* inp, float* abs_max_ptr, int
     // input is (B, T, 2C), output is (B, T, C)
     // we have that inp[b, t, :] = [fc1, fc2] (i.e. they are concatenated in each C-fiber)
 
-    if (2ll*B*T*C >= std::numeric_limits<int>::max()) {
+    std::int64_t nelem = static_cast<std::int64_t>(B) * T * C;
+    if (2ll*nelem >= std::numeric_limits<std::int32_t>::max()) {
         throw std::runtime_error("swiglu_forward: input too large");
     }
 
@@ -316,8 +318,8 @@ void swiglu_forward_impl(floatX* out, const floatX* inp, float* abs_max_ptr, int
         CUDA_CHECK(cudaMemsetAsync(abs_max_ptr, 0, sizeof(float), stream));
 
     const int block_size = 128;
-    assert(C % x128::size == 0);
-    assert((B*T*C) % (block_size * x128::size) == 0);
+    if (C % x128::size != 0) throw std::invalid_argument("swiglu_forward: C must be divisible by "+ std::to_string(x128::size));
+    if (nelem % (block_size * x128::size) != 0) throw std::invalid_argument("swiglu_forward: output size must be divisible by "+ std::to_string(block_size * x128::size));
     int bpsm;
     if (abs_max_ptr) {
         CUDA_CHECK(cudaOccupancyMaxActiveBlocksPerMultiprocessor(&bpsm, swiglu_forward_persistent_kernel<true, floatX>, block_size, 0));
@@ -350,13 +352,15 @@ void swiglu_forward(float* out, const float* inp, float* abs_max_ptr, int B, int
 }
 
 void swiglu_forward_quant(__nv_fp8_e4m3* out, float* scale_ptr, const nv_bfloat16* inp, const float* abs_max_ptr, int B, int T, int C, cudaStream_t stream) {
-    if (2ll*B*T*C >= std::numeric_limits<int>::max()) {
+    std::int64_t nelem = static_cast<std::int64_t>(B) * T * C;
+    if (2ll*nelem >= std::numeric_limits<std::int32_t>::max()) {
         throw std::runtime_error("swiglu_forward_quant: input too large");
     }
+
     using x128 = GenericVector<nv_bfloat16, 16/sizeof(nv_bfloat16)>;
     const int block_size = 128;
     if (C % x128::size != 0) throw std::invalid_argument("swiglu_forward_quant: C must be divisible by "+ std::to_string(x128::size));
-    if ((B*T*C) % (block_size * x128::size) != 0) throw std::invalid_argument("swiglu_forward_quant: output size must be divisible by "+ std::to_string(block_size * x128::size));
+    if (nelem % (block_size * x128::size) != 0) throw std::invalid_argument("swiglu_forward_quant: output size must be divisible by "+ std::to_string(block_size * x128::size));
     int bpsm;
     CUDA_CHECK(cudaOccupancyMaxActiveBlocksPerMultiprocessor(&bpsm, swiglu_forward_quant_persistent_kernel<nv_bfloat16>, block_size, 0));
     int sms;

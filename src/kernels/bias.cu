@@ -158,8 +158,11 @@ void backward_bias_imp(floatX* dbias, const FloatY* dout, const float* scale_a, 
     const int grid_size_y = std::max(1, block_size * dp.multiProcessorCount / (block_size * grid_size_x)); // full GPU!
 
     if( (scale_a == nullptr) != (scale_b == nullptr) ) {
-        throw std::logic_error("backward_bias: scale_a and scale_b must be both nullptr or both non-nullptr");
+        throw std::invalid_argument("backward_bias: scale_a and scale_b must be both nullptr or both non-nullptr");
     }
+
+    if (OC % x128::size != 0)
+        throw std::invalid_argument("backward_bias: OC must be a multiple of vector size");
 
     // If we have enough OC that we don't need cross-block reductions, we can skip the bias_buffer accumulation
     // and write results directly to the output.

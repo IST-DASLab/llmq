@@ -24,9 +24,9 @@ ETensorDType dtype_from_str(std::string_view dtype) {
         return ETensorDType::INT32;
     } else if(iequals_any(dtype, "Int8", "i8")) {
         return ETensorDType::INT8;
-    } else if(iequals_any(dtype, "E4M3", "fp8_e4m3", "F8_E4M3")) {
+    } else if(iequals_any(dtype, "E4M3", "fp8_e4m3", "F8_E4M3", "float8_e4m3", "float8_e4m3fn")) {
         return ETensorDType::FP8_E4M3;
-    }  else if(iequals_any(dtype, "E5M2", "fp8_e5m2", "F8_E5M2")) {
+    }  else if(iequals_any(dtype, "E5M2", "fp8_e5m2", "F8_E5M2", "float8_e5m2")) {
         return ETensorDType::FP8_E5M2;
     } else if(iequals_any(dtype, "byte")) {
         return ETensorDType::BYTE;
