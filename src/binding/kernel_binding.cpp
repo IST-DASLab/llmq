@@ -12,6 +12,7 @@
 #include "utilities/utils.h"
 
 #include <nanobind/stl/optional.h>
+#include <nanobind/stl/string.h>
 
 namespace nb = nanobind;
 
@@ -67,6 +68,9 @@ static float* get_abs_max_ptr(const std::optional<CudaArray>& abs_max_tensor) {
     if (!abs_max_tensor.has_value()) return nullptr;
     if (from_dlpack_dtype(abs_max_tensor->dtype()) != ETensorDType::FP32) {
         throw std::invalid_argument("abs_max_tensor must be a FP32 tensor");
+    }
+    if (abs_max_tensor->size() != 1) {
+        throw std::invalid_argument("abs_max_tensor must be a scalar");
     }
     return static_cast<float*>(abs_max_tensor->data());
 }
@@ -331,6 +335,12 @@ void bind_matmul(const CudaArray& c, const CudaArray& a, const CudaArray& b, con
            reinterpret_cast<cublasLtHandle_t>(cublaslt_handle), ws_t, M, N, K, mode, accumulate, as_stream(stream));
 }
 
+cublasLtHandle_t create_cublaslt_handle();
+
+std::uintptr_t bind_create_cublas_handle() {
+    return reinterpret_cast<std::uintptr_t>(create_cublaslt_handle());
+}
+
 // ---- Bias add/backward ----
 void bind_backward_bias(const CudaArray& dbias, const CudaArray& dout, const std::optional<CudaArray>& scale_a, const std::optional<CudaArray>& scale_b,
                         const CudaArray& dbias_buffer, const std::uintptr_t stream) {
@@ -340,13 +350,20 @@ void bind_backward_bias(const CudaArray& dbias, const CudaArray& dout, const std
     auto dp = get_device_prop(device);
     long B = get_dimension_checked({dout.shape(0)}, "B");
     long T = get_dimension_checked({dout.shape(1)}, "T");
-    long OC = get_dimension_checked({dbias.shape(0), dout.shape(0)}, "OC");
-    const float* scale_a_ptr = scale_a.has_value() ? static_cast<const float*>(scale_a->data()) : nullptr;
-    const float* scale_b_ptr = scale_b.has_value() ? static_cast<const float*>(scale_b->data()) : nullptr;
+    long OC = get_dimension_checked({dbias.shape(0), dout.shape(2)}, "OC");
+    const float* scale_a_ptr = scale_a.has_value() ? device_scalar_float(scale_a.value()) : nullptr;
+    const float* scale_b_ptr = scale_b.has_value() ? device_scalar_float(scale_b.value()) : nullptr;
     Tensor dbias_t = to_tensor(dbias);
     Tensor buf_t = to_tensor(dbias_buffer);
     backward_bias(dbias_t, to_tensor(dout), scale_a_ptr, scale_b_ptr, buf_t, B, T, OC, dp, as_stream(stream));
 }
+
+long bind_get_bias_backward_scratch_size(std::string dtype, long OC) {
+    int did;
+    CUDA_CHECK(cudaGetDevice(&did));
+    return get_bias_backward_scratch_size(dtype_from_str(dtype), OC, get_device_prop(did));
+}
+
 
 // ---- Quantization helpers ----
 void bind_abs_max(CudaArray scale, const CudaArray& in, const std::uintptr_t stream) {
@@ -482,9 +499,11 @@ void register_kernels(nanobind::module_& m) {
 
     // Matmul
     m.def("matmul", &bind_matmul, nb::arg("c"), nb::arg("a"), nb::arg("b"), nb::arg("bias") = std::nullopt, nb::arg("scale_a") = std::nullopt, nb::arg("scale_b") = std::nullopt, nb::arg("cublaslt_handle"), nb::arg("workspace"), nb::arg("M"), nb::arg("N"), nb::arg("K"), nb::arg("mode"), nb::arg("accumulate") = false, nb::arg("stream") = 0);
+    m.def("create_cublas_handle", &bind_create_cublas_handle);
 
     // Bias backward
     m.def("backward_bias", &bind_backward_bias, nb::arg("dbias"), nb::arg("dout"), nb::arg("scale_a") = std::nullopt, nb::arg("scale_b") = std::nullopt, nb::arg("dbias_buffer"), nb::arg("stream") = 0);
+    m.def("get_bias_backward_scratch_size", &bind_get_bias_backward_scratch_size, nb::arg("dtype"), nb::arg("OC"));
 
     // Quantization utils
     m.def("abs_max", &bind_abs_max, nb::arg("scale"), nb::arg("in"), nb::arg("stream") = 0);

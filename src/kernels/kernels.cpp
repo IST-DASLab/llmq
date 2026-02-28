@@ -7,9 +7,17 @@
 #include <fmt/ranges.h>
 #include "utilities/tensor.h"
 
+template<typename TensorLike>
+static std::string tensor_dtype_str(const TensorLike& t) {
+    if (t.empty()) {
+        return "<null>";
+    }
+    return dtype_to_str(t.DType);
+}
+
 template<typename... T>
 static void throw_unsupported_dtype(const char* func, T&&... args) {
-    std::array<std::string, sizeof...(T)> dtypes = {dtype_to_str(args.DType)...};
+    std::array<std::string, sizeof...(T)> dtypes = {tensor_dtype_str(args)...};
     throw std::invalid_argument(fmt::format("{}: unsupported dtypes. Got {}", func, dtypes));
 }
 
@@ -322,6 +330,10 @@ void matmul(Tensor& c, const Tensor& a, const Tensor& b, const Tensor& bias,
 }
 
 void backward_bias(Tensor& dbias, const Tensor& dout, const float* scale_a, const float* scale_b, Tensor& dbias_buffer, int B, int T, int OC, const cudaDeviceProp& dp, cudaStream_t stream) {
+    std::size_t expected_buffer_size =  get_bias_backward_scratch_size(dbias.DType, OC, dp);
+    if (dbias_buffer.bytes() < expected_buffer_size) {
+        throw std::invalid_argument(fmt::format("scratch buffer too small: expected at least {} bytes, got {}", expected_buffer_size, dbias_buffer.bytes()));
+    }
     if(dbias.DType == ETensorDType::FP32 && dout.DType == ETensorDType::FP32) {
         backward_bias(dbias.get<float>(), dout.get<float>(), scale_a, scale_b, dbias_buffer.get<float>(), B, T, OC, dp, stream);
     } else if(dbias.DType == ETensorDType::BF16 && dout.DType == ETensorDType::BF16) {

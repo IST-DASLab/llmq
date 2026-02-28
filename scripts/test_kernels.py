@@ -588,3 +588,63 @@ def test_vector_reduce_sr_stochastic_rounding_unbiased(dtype: torch.dtype, nelem
     mean_result = torch.stack(results).mean(dim=0)
     # True answer is 1.0 (sum of two 0.5 shards); mean over seeds should be close
     assert mean_result == pytest.approx(torch.ones(nelem).cpu(), rel=0.01, abs=0.01)
+
+
+# ============================================================
+# backward_bias
+# ============================================================
+@pytest.mark.parametrize("B,T,OC", [(2, 5, 64), (1, 3, 256), (4, 8, 128), (8, 16, 512)])
+@pytest.mark.parametrize("dtype", DTYPES)
+def test_backward_bias(B, T, OC, dtype):
+    device = "cuda"
+    torch.manual_seed(0)
+
+    dout = torch.randn((B, T, OC), device=device, dtype=dtype)
+    dbias = torch.zeros((OC,), device=device, dtype=dtype)
+    dbias_buffer = torch.empty(K.get_bias_backward_scratch_size(dtype, OC) // 4, device=device, dtype=torch.float32)
+
+    K.backward_bias(dbias, dout, None, None, dbias_buffer)
+
+    ref = dout.float().sum(dim=(0, 1)).to(dtype)
+
+    rtol, atol = TOL[dtype]
+    assert dbias.float().cpu() == pytest.approx(ref.float().cpu(), rel=rtol, abs=atol)
+
+
+@pytest.mark.parametrize("B,T,OC", [(2, 5, 64), (1, 3, 256), (4, 8, 128), (8, 16, 512)])
+@pytest.mark.parametrize("dtype", DTYPES)
+def test_backward_bias_with_scale(B, T, OC, dtype):
+    device = "cuda"
+    torch.manual_seed(0)
+
+    dout = torch.randn((B, T, OC), device=device, dtype=dtype)
+    dbias = torch.zeros((OC,), device=device, dtype=dtype)
+    dbias_buffer = torch.zeros(K.get_bias_backward_scratch_size(dtype, OC) // 4, device=device, dtype=torch.float32)
+    scale_a = torch.tensor(0.25, device=device, dtype=torch.float32)
+    scale_b = torch.tensor(2.0, device=device, dtype=torch.float32)
+
+    scale = scale_a.item() * scale_b.item()
+    ref = (dout.float().sum(dim=(0, 1)) * scale).to(dtype)
+    K.backward_bias(dbias, dout, scale_a, scale_b, dbias_buffer)
+    rtol, atol = TOL[dtype]
+    assert dbias.float().cpu() == pytest.approx(ref.float().cpu(), rel=rtol, abs=atol)
+
+
+@pytest.mark.parametrize("B,T,OC", [(2, 5, 64), (1, 3, 256), (4, 8, 128), (8, 16, 512)])
+@pytest.mark.parametrize("dtype", DTYPES)
+def test_backward_bias_accumulates(B, T, OC, dtype):
+    """Verify that backward_bias adds into dbias rather than overwriting it."""
+    device = "cuda"
+    torch.manual_seed(0)
+
+    dout = torch.randn((B, T, OC), device=device, dtype=dtype)
+    initial = torch.randn((OC,), device=device, dtype=dtype)
+    dbias = initial.clone()
+    dbias_buffer = torch.zeros(K.get_bias_backward_scratch_size(dtype, OC) // 4, device=device, dtype=torch.float32)
+
+    K.backward_bias(dbias, dout, None, None, dbias_buffer)
+
+    ref = (initial.float() + dout.float().sum(dim=(0, 1))).to(dtype)
+
+    rtol, atol = TOL[dtype]
+    assert dbias.float().cpu() == pytest.approx(ref.float().cpu(), rel=rtol, abs=atol)
