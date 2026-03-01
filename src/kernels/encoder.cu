@@ -41,12 +41,12 @@ __global__ void encoder_forward_kernel3(floatX* out,
     const floatX* wpe_tc = wpe + t * C + c;
 
     x128 packed_out;
-    x128 wte128 = load128cs(wte_ix);
-    x128 wpe128 = load128cs(wpe_tc);
+    x128 wte128 = x128::load(wte_ix);
+    x128 wpe128 = x128::load(wpe_tc);
     for (int k = 0; k < x128::size; k++) {
         packed_out[k] = (floatX)((float)wte128[k] + (float)wpe128[k]);
     }
-    store128(out_btc, packed_out);
+    packed_out.store(out_btc);
 }
 
 // same kernel but without the positional encoder

@@ -16,6 +16,8 @@
 
 constexpr int MAX_TENSOR_DIM = 5;
 
+void throw_dtype_mismatch(ETensorDType expected, ETensorDType actual);
+
 //! \brief The Tensor class represents a contiguous view on memory that is associated
 //! with a specific data type and shape.
 struct Tensor {
@@ -58,7 +60,7 @@ struct Tensor {
     template<class TargetType>
     [[nodiscard]] constexpr const TargetType* get() const {
         if(dtype_from_type<TargetType> != DType) {
-            throw std::logic_error("DType mismatch");
+            throw_dtype_mismatch(dtype_from_type<TargetType>, DType);
         }
 
         if(Data == nullptr) {
@@ -71,10 +73,10 @@ struct Tensor {
     template<class TargetType>
     [[nodiscard]] constexpr TargetType* get() {
         if(dtype_from_type<TargetType> != DType) {
-            throw std::logic_error("DType mismatch");
+            throw_dtype_mismatch(dtype_from_type<TargetType>, DType);
         }
 
-        if(Data == nullptr) {
+        if (Data == nullptr) {
             throw std::logic_error("Tensor is null");
         }
 
@@ -86,7 +88,7 @@ struct Tensor {
     [[nodiscard]] constexpr TargetType* get_optional() {
         if(Data == nullptr) { return nullptr; }
         if(dtype_from_type<TargetType> != DType) {
-            throw std::logic_error("DType mismatch");
+            throw_dtype_mismatch(dtype_from_type<TargetType>, DType);
         }
 
         return reinterpret_cast<TargetType*>(Data);
@@ -96,7 +98,7 @@ struct Tensor {
     [[nodiscard]] constexpr const TargetType* get_optional() const {
         if(Data == nullptr) { return nullptr; }
         if(dtype_from_type<TargetType> != DType) {
-            throw std::logic_error("DType mismatch");
+            throw_dtype_mismatch(dtype_from_type<TargetType>, DType);
         }
 
         return reinterpret_cast<const TargetType*>(Data);
