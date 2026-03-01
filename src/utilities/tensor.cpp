@@ -63,6 +63,10 @@ void do_print(const Tensor& tensor, long offset, long count) {
 }
 } // namespace
 
+void throw_dtype_mismatch(ETensorDType expected, ETensorDType actual) {
+    throw std::invalid_argument(fmt::format("Expected dtype {}, got {}", dtype_to_str(expected), dtype_to_str(actual)));
+}
+
 void Tensor::print_sample(long offset, long count) const {
     switch (DType) {
     case ETensorDType::FP32:
