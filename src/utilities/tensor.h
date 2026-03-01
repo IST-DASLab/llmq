@@ -58,7 +58,7 @@ struct Tensor {
     void print_sample(long offset, long count=10) const;
 
     template<class TargetType>
-    [[nodiscard]] constexpr const TargetType* get() const {
+    [[nodiscard]] const TargetType* get() const {
         if(dtype_from_type<TargetType> != DType) {
             throw_dtype_mismatch(dtype_from_type<TargetType>, DType);
         }
@@ -71,7 +71,7 @@ struct Tensor {
     }
 
     template<class TargetType>
-    [[nodiscard]] constexpr TargetType* get() {
+    [[nodiscard]] TargetType* get() {
         if(dtype_from_type<TargetType> != DType) {
             throw_dtype_mismatch(dtype_from_type<TargetType>, DType);
         }
@@ -85,7 +85,7 @@ struct Tensor {
 
     // like `get`, but may return nullptr. In case of nullptr, no type check will be performed.
     template<class TargetType>
-    [[nodiscard]] constexpr TargetType* get_optional() {
+    [[nodiscard]] TargetType* get_optional() {
         if(Data == nullptr) { return nullptr; }
         if(dtype_from_type<TargetType> != DType) {
             throw_dtype_mismatch(dtype_from_type<TargetType>, DType);
@@ -95,7 +95,7 @@ struct Tensor {
     }
 
     template<class TargetType>
-    [[nodiscard]] constexpr const TargetType* get_optional() const {
+    [[nodiscard]] const TargetType* get_optional() const {
         if(Data == nullptr) { return nullptr; }
         if(dtype_from_type<TargetType> != DType) {
             throw_dtype_mismatch(dtype_from_type<TargetType>, DType);

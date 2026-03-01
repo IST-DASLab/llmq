@@ -67,7 +67,6 @@ ETensorDType from_dlpack_dtype(nb::dlpack::dtype dtype) {
             } else {
                 throw std::invalid_argument("Unsupported UInt dtype: bit width must be 8");
             }
-        case dtype_code::Float8_E3M4:
         case dtype_code::Float8_E4M3FN:
             if (dtype.bits == 8) {
                 return ETensorDType::FP8_E4M3;
@@ -80,6 +79,7 @@ ETensorDType from_dlpack_dtype(nb::dlpack::dtype dtype) {
             } else {
                 throw std::invalid_argument("Unsupported E5M2 dtype: bit width must be 8");
             }
+        case dtype_code::Float8_E3M4:
         case dtype_code::Float8_E5M2FNUZ:
         case dtype_code::Float8_E4M3:
         case dtype_code::Float8_E4M3FNUZ:

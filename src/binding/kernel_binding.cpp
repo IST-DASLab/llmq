@@ -106,11 +106,16 @@ void bind_encoder_forward(const CudaArray& out, const CudaArray& inp, const Cuda
     NB_CHECK_NDIMS(inp, 2);
     NB_CHECK_NDIMS(wte, 2);
 
-    // TODO wpe dimension check
     const long B = get_dimension_checked({out.shape(0), inp.shape(0)}, "B");
     const long T = get_dimension_checked({out.shape(1), inp.shape(1)}, "T");
     const long V = wte.shape(0);
     const long C = get_dimension_checked({out.shape(2), wte.shape(1)}, "C");
+
+    if (wpe) {
+        NB_CHECK_NDIMS(wpe.value(), 2);
+        (void) get_dimension_checked({wpe->shape(0), static_cast<unsigned>(T)}, "T");
+        (void) get_dimension_checked({wpe->shape(1), static_cast<unsigned>(C)}, "C");
+    }
     Tensor out_t = to_tensor(out);
     encoder_forward(out_t, to_tensor(inp), to_tensor(wte), to_tensor(wpe), B, T, C, V, as_stream(stream));
 }
@@ -496,6 +501,10 @@ void bind_fill_constant(const CudaArray& dst, float value, const std::uintptr_t 
 void bind_encoder_backward(const CudaArray& dwte, const CudaArray& scratch, const CPUArray& workload_indices, const CPUArray& bucket_info,
                            const CudaArray& dout, const CudaArray& inp, const CPUArray& inputs_cpu,
                            unsigned int seed, const std::uintptr_t stream, std::uintptr_t sync_event, std::uintptr_t copy_stream) {
+    NB_CHECK_NDIMS(dwte, 2);
+    NB_CHECK_NDIMS(inp, 2);
+    NB_CHECK_NDIMS(inputs_cpu, 2);
+    NB_CHECK_NDIMS(dout, 3);
     const long B = get_dimension_checked({inp.shape(0), dout.shape(0), inputs_cpu.shape(0)}, "B");
     const long T = get_dimension_checked({inp.shape(1), dout.shape(1), inputs_cpu.shape(1)}, "T");
     const long C = get_dimension_checked({dout.shape(2), dwte.shape(1)}, "C");
