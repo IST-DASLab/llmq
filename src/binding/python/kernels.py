@@ -134,15 +134,14 @@ def quantize_with_abs_max(out: torch.Tensor, scale: torch.Tensor, x: torch.Tenso
 
 
 @torch.library.custom_op("llmq::quantize_and_transpose_with_abs_max", mutates_args=("out", "scale"))
-def quantize_and_transpose_with_abs_max(out: torch.Tensor, scale: torch.Tensor, x: torch.Tensor, abs_max: torch.Tensor,
-                                        rows: int, cols: int, stream: int = 0) -> None:
-    _pyllmq.quantize_and_transpose_with_abs_max(out, scale, x, abs_max, rows, cols, stream)
+def quantize_and_transpose_with_abs_max(out: torch.Tensor, scale: torch.Tensor, x: torch.Tensor, abs_max: torch.Tensor, stream: int = 0) -> None:
+    _pyllmq.quantize_and_transpose_with_abs_max(out, scale, x, abs_max, stream)
 
 
 # Transpose
 @torch.library.custom_op("llmq::transpose", mutates_args=("dst",))
-def transpose(dst: torch.Tensor, src: torch.Tensor, rows: int, cols: int, stream: int = 0) -> None:
-    _pyllmq.transpose(dst, src, rows, cols, stream)
+def transpose(dst: torch.Tensor, src: torch.Tensor, stream: int = 0) -> None:
+    _pyllmq.transpose(dst, src, stream)
 
 
 # Vector ops
