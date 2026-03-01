@@ -42,7 +42,7 @@ def test_fill_constant_basic(shape, value, dtype):
 def test_transpose_matches_torch(rows, cols, dtype):
     src = torch.randn((rows, cols), device="cuda", dtype=dtype)
     dst = torch.empty((cols, rows), device="cuda", dtype=dtype)
-    K.transpose(dst, src, rows, cols)
+    K.transpose(dst, src)
     # Transposing rearranges values without touching bits — must be exact.
     assert dst.float().cpu() == pytest.approx(src.t().float().cpu(), rel=0, abs=0)
 
@@ -901,3 +901,43 @@ def test_encoder_backward_seed_determinism(B, T, V, C, dtype):
 
     # Bit-exact: same seed must yield identical output.
     assert dwte1.float().cpu() == pytest.approx(dwte2.float().cpu(), rel=0, abs=0)
+
+
+# ============================================================
+# quantize_and_transpose_with_abs_max
+# ============================================================
+
+@pytest.mark.parametrize("rows,cols", [(32, 32), (128, 256), (512, 1024)])
+@pytest.mark.parametrize("dtype", [torch.float32])
+def test_quantize_and_transpose_with_abs_max_bf16(rows, cols, dtype):
+    device = "cuda"
+    x = torch.randn((rows, cols), device=device, dtype=dtype)
+    abs_max_val = torch.tensor([x.float().abs().max().item()], device=device, dtype=torch.float32)
+    out = torch.empty((cols, rows), device=device, dtype=torch.bfloat16)
+    scale = torch.empty((), device=device, dtype=torch.float32)
+    K.quantize_and_transpose_with_abs_max(out, scale, x, abs_max_val)
+
+    # no assert for scale, as scale is unused for bf16
+
+    expected = x.bfloat16().T.contiguous()
+    assert out.float().cpu() == pytest.approx(expected.float().cpu(), rel=0.01)
+
+
+@pytest.mark.parametrize("rows,cols", [(32, 32), (128, 256), (512, 1024)])
+@pytest.mark.parametrize("dtype", DTYPES)
+def test_quantize_and_transpose_with_abs_max_fp8(rows, cols, dtype):
+    device = "cuda"
+    x = torch.randn((rows, cols), device=device, dtype=dtype)
+    abs_max_val = torch.tensor([x.float().abs().max().item()], device=device, dtype=torch.float32)
+    out = torch.empty((cols, rows), device=device, dtype=torch.float8_e4m3fn)
+    scale = torch.empty((), device=device, dtype=torch.float32)
+    K.quantize_and_transpose_with_abs_max(out, scale, x, abs_max_val)
+
+    assert scale.item() == pytest.approx(abs_max_val.item() / 448.0)
+
+    # Dequantize and verify values match input (with fp8 tolerance)
+    dequant = out.float() * scale
+
+    # Verify transpose: reshape input as [rows, cols], transpose to [cols, rows]
+    expected = x.float().T.contiguous()
+    assert dequant.cpu() == pytest.approx(expected.cpu(), rel=0.1, abs=1e-4)

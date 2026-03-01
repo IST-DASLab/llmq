@@ -411,7 +411,11 @@ void bind_quantize_with_abs_max(const CudaArray& out, CudaArray scale, const Cud
 }
 
 void bind_quantize_and_transpose_with_abs_max(const CudaArray& out, CudaArray scale, const CudaArray& in, const CudaArray& abs_max,
-                                              int rows, int cols, const std::uintptr_t stream) {
+                                              const std::uintptr_t stream) {
+    NB_CHECK_NDIMS(out, 2);
+    NB_CHECK_NDIMS(in, 2);
+    long rows = get_dimension_checked({out.shape(1), in.shape(0)}, "rows");
+    long cols = get_dimension_checked({out.shape(0), in.shape(1)}, "cols");
     int device = in.device_id();
     auto dp = get_device_prop(device);
     Tensor out_t = to_tensor(out);
@@ -420,7 +424,11 @@ void bind_quantize_and_transpose_with_abs_max(const CudaArray& out, CudaArray sc
 }
 
 // ---- Transpose ----
-void bind_transpose(const CudaArray& dst, const CudaArray& src, int rows, int cols, const std::uintptr_t stream) {
+void bind_transpose(const CudaArray& dst, const CudaArray& src, const std::uintptr_t stream) {
+    NB_CHECK_NDIMS(dst, 2);
+    NB_CHECK_NDIMS(src, 2);
+    long rows = get_dimension_checked({dst.shape(1), src.shape(0)}, "rows");
+    long cols = get_dimension_checked({dst.shape(0), src.shape(1)}, "cols");
     Tensor dst_t = to_tensor(dst);
     Tensor src_t = to_tensor(src);
     transpose(dst_t, src_t, rows, cols, as_stream(stream));
@@ -534,10 +542,10 @@ void register_kernels(nanobind::module_& m) {
     // Quantization utils
     m.def("abs_max", &bind_abs_max, nb::arg("scale"), nb::arg("in"), nb::arg("stream") = 0);
     m.def("quantize_with_abs_max", &bind_quantize_with_abs_max, nb::arg("out"), nb::arg("scale"), nb::arg("in"), nb::arg("abs_max"), nb::arg("stream") = 0);
-    m.def("quantize_and_transpose_with_abs_max", &bind_quantize_and_transpose_with_abs_max, nb::arg("out"), nb::arg("scale"), nb::arg("in"), nb::arg("abs_max"), nb::arg("rows"), nb::arg("cols"), nb::arg("stream") = 0);
+    m.def("quantize_and_transpose_with_abs_max", &bind_quantize_and_transpose_with_abs_max, nb::arg("out"), nb::arg("scale"), nb::arg("in"), nb::arg("abs_max"), nb::arg("stream") = 0);
 
     // Transpose
-    m.def("transpose", &bind_transpose, nb::arg("dst"), nb::arg("src"), nb::arg("rows"), nb::arg("cols"), nb::arg("stream") = 0);
+    m.def("transpose", &bind_transpose, nb::arg("dst"), nb::arg("src"), nb::arg("stream") = 0);
 
     // Vector ops
     m.def("vector_add_sr", &bind_vector_add_sr, nb::arg("dest"), nb::arg("left"), nb::arg("right"), nb::arg("scale"), nb::arg("seed"), nb::arg("stream") = 0);
