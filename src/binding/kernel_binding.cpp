@@ -362,9 +362,14 @@ void bind_matmul(const CudaArray& c, const CudaArray& a, const CudaArray& b, con
 }
 
 cublasLtHandle_t create_cublaslt_handle();
+void destroy_cublaslt_handle(cublasLtHandle_t handle);
 
 std::uintptr_t bind_create_cublas_handle() {
     return reinterpret_cast<std::uintptr_t>(create_cublaslt_handle());
+}
+
+void bind_destroy_cublas_handle(std::uintptr_t handle) {
+    destroy_cublaslt_handle(reinterpret_cast<cublasLtHandle_t>(handle));
 }
 
 // ---- Bias add/backward ----
@@ -534,6 +539,7 @@ void register_kernels(nanobind::module_& m) {
     // Matmul
     m.def("matmul", &bind_matmul, nb::arg("c"), nb::arg("a"), nb::arg("b"), nb::arg("bias") = std::nullopt, nb::arg("scale_a") = std::nullopt, nb::arg("scale_b") = std::nullopt, nb::arg("cublaslt_handle"), nb::arg("workspace"), nb::arg("mode"), nb::arg("accumulate") = false, nb::arg("stream") = 0);
     m.def("create_cublas_handle", &bind_create_cublas_handle);
+    m.def("destroy_cublas_handle", &bind_destroy_cublas_handle);
 
     // Bias backward
     m.def("backward_bias", &bind_backward_bias, nb::arg("dbias"), nb::arg("dout"), nb::arg("scale_a") = std::nullopt, nb::arg("scale_b") = std::nullopt, nb::arg("dbias_buffer"), nb::arg("stream") = 0);

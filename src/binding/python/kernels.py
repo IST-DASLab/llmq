@@ -112,6 +112,9 @@ def create_cublas_handle() -> int:
     return _pyllmq.create_cublas_handle()
 
 
+def destroy_cublas_handle(handle: int) -> None:
+    _pyllmq.destroy_cublas_handle(handle)
+
 @torch.library.custom_op("llmq::backward_bias", mutates_args=("dbias", "dbias_buffer"))
 def backward_bias(dbias: torch.Tensor, dout: torch.Tensor, scale_a: torch.Tensor | None,
                   scale_b: torch.Tensor | None, dbias_buffer: torch.Tensor, stream: int = 0) -> None:
