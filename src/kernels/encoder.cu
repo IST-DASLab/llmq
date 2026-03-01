@@ -83,7 +83,7 @@ void encoder_forward_imp(floatX* out,
         encoder_forward_kernel3_nowpe<<<grid_size, block_size, 0, stream>>>(out, inp, wte, B, T, C, V);
     } else {
         // GPT-2 does, so we use the full encoder kernel
-        // encoder_forward_kernel3<<<grid_size, block_size, 0, stream>>>(out, inp, wte, wpe, B, T, C);
+        encoder_forward_kernel3<<<grid_size, block_size, 0, stream>>>(out, inp, wte, wpe, B, T, C);
     }
     CUDA_CHECK(cudaGetLastError());
 }

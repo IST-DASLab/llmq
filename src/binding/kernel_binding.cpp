@@ -103,7 +103,7 @@ static cudaDeviceProp get_device_prop(int device) {
 
 void bind_encoder_forward(const CudaArray& out, const CudaArray& inp, const CudaArray& wte, const std::optional<CudaArray>& wpe, const std::uintptr_t stream) {
     NB_CHECK_NDIMS(out, 3);
-    NB_CHECK_NDIMS(inp, 3);
+    NB_CHECK_NDIMS(inp, 2);
     NB_CHECK_NDIMS(wte, 2);
 
     // TODO wpe dimension check
@@ -335,7 +335,6 @@ void bind_matmul(const CudaArray& c, const CudaArray& a, const CudaArray& b, con
     const bool a_transposed = (mode == EMMTranspose::TN || mode == EMMTranspose::TT);
     const bool b_transposed = (mode == EMMTranspose::NT || mode == EMMTranspose::TT);
 
-    printf("%ld %ld ; %ld %ld ; %ld %ld\n", a.shape(0), a.shape(1), b.shape(0), b.shape(1), c.shape(0), c.shape(1));
     const long M = get_dimension_checked({b.shape(b_transposed ? 0 : 1), c.shape(1)}, "M");
     const long N = get_dimension_checked({a.shape(a_transposed ? 1 : 0), c.shape(0)}, "N");
     const long K = get_dimension_checked({b.shape(b_transposed ? 1 : 0), a.shape(a_transposed ? 0 : 1)}, "K");
