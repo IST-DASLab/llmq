@@ -657,7 +657,11 @@ def test_backward_bias_accumulates(B, T, OC, dtype):
 
 @pytest.fixture(scope="module")
 def cublas_handle():
-    return K.create_cublas_handle()
+    handle = K.create_cublas_handle()
+    try:
+        yield handle
+    finally:
+        K.destroy_cublas_handle(handle)
 
 @pytest.fixture(scope="module")
 def workspace():
