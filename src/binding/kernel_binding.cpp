@@ -325,14 +325,41 @@ void bind_grouped_loss_sum(const CudaArray& out, const CudaArray& per_token_loss
 void bind_matmul(const CudaArray& c, const CudaArray& a, const CudaArray& b, const std::optional<CudaArray>& bias,
                  const std::optional<CudaArray>& scale_a, const std::optional<CudaArray>& scale_b,
                  std::uintptr_t cublaslt_handle, const CudaArray& workspace,
-                 int M, int N, int K, EMMTranspose mode, bool accumulate, const std::uintptr_t stream) {
-    // TODO shape validation
-    const float* scale_a_ptr = scale_a.has_value() ? static_cast<const float*>(scale_a->data()) : nullptr;
-    const float* scale_b_ptr = scale_b.has_value() ? static_cast<const float*>(scale_b->data()) : nullptr;
+                 int mode_, bool accumulate, const std::uintptr_t stream) {
+    NB_CHECK_NDIMS(a, 2);
+    NB_CHECK_NDIMS(b, 2);
+    NB_CHECK_NDIMS(c, 2);
+    EMMTranspose mode = static_cast<EMMTranspose>(mode_);
+
+    // torch vs cublas: a @ b <=> b^t @ a^ t
+    const bool a_transposed = (mode == EMMTranspose::TN || mode == EMMTranspose::TT);
+    const bool b_transposed = (mode == EMMTranspose::NT || mode == EMMTranspose::TT);
+
+    printf("%ld %ld ; %ld %ld ; %ld %ld\n", a.shape(0), a.shape(1), b.shape(0), b.shape(1), c.shape(0), c.shape(1));
+    const long M = get_dimension_checked({b.shape(b_transposed ? 0 : 1), c.shape(1)}, "M");
+    const long N = get_dimension_checked({a.shape(a_transposed ? 1 : 0), c.shape(0)}, "N");
+    const long K = get_dimension_checked({b.shape(b_transposed ? 1 : 0), a.shape(a_transposed ? 0 : 1)}, "K");
+
+    EMMTranspose inv_mode;
+    switch (mode) {
+        case EMMTranspose::NT: inv_mode = EMMTranspose::TN; break;
+        case EMMTranspose::TN: inv_mode = EMMTranspose::NT; break;
+        case EMMTranspose::TT: inv_mode = EMMTranspose::TT; break;
+        case EMMTranspose::NN: inv_mode = EMMTranspose::NN; break;
+        default: throw std::runtime_error("Invalid mode");
+    }
+
+    if (bias.has_value()) {
+        NB_CHECK_NDIMS(bias.value(), 1);
+        get_dimension_checked({bias->shape(0), (std::size_t)M}, "bias M");
+    }
+
+    const float* scale_a_ptr = scale_a.has_value() ? device_scalar_float(scale_a.value()) : nullptr;
+    const float* scale_b_ptr = scale_b.has_value() ? device_scalar_float(scale_b.value()) : nullptr;
     Tensor c_t = to_tensor(c);
     Tensor ws_t = to_tensor(workspace);
-    matmul(c_t, to_tensor(a), to_tensor(b), to_tensor(bias), scale_a_ptr, scale_b_ptr,
-           reinterpret_cast<cublasLtHandle_t>(cublaslt_handle), ws_t, M, N, K, mode, accumulate, as_stream(stream));
+    matmul(c_t, to_tensor(b), to_tensor(a), to_tensor(bias), scale_b_ptr, scale_a_ptr,
+       reinterpret_cast<cublasLtHandle_t>(cublaslt_handle), ws_t, M, N, K, inv_mode, accumulate, as_stream(stream));
 }
 
 cublasLtHandle_t create_cublaslt_handle();
@@ -498,7 +525,7 @@ void register_kernels(nanobind::module_& m) {
     m.def("grouped_loss_sum", &bind_grouped_loss_sum, nb::arg("out"), nb::arg("per_token_loss"), nb::arg("stream") = 0);
 
     // Matmul
-    m.def("matmul", &bind_matmul, nb::arg("c"), nb::arg("a"), nb::arg("b"), nb::arg("bias") = std::nullopt, nb::arg("scale_a") = std::nullopt, nb::arg("scale_b") = std::nullopt, nb::arg("cublaslt_handle"), nb::arg("workspace"), nb::arg("M"), nb::arg("N"), nb::arg("K"), nb::arg("mode"), nb::arg("accumulate") = false, nb::arg("stream") = 0);
+    m.def("matmul", &bind_matmul, nb::arg("c"), nb::arg("a"), nb::arg("b"), nb::arg("bias") = std::nullopt, nb::arg("scale_a") = std::nullopt, nb::arg("scale_b") = std::nullopt, nb::arg("cublaslt_handle"), nb::arg("workspace"), nb::arg("mode"), nb::arg("accumulate") = false, nb::arg("stream") = 0);
     m.def("create_cublas_handle", &bind_create_cublas_handle);
 
     // Bias backward
