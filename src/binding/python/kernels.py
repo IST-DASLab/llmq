@@ -104,7 +104,7 @@ def grouped_loss_sum(out: torch.Tensor, per_token_loss: torch.Tensor, stream: in
 def matmul(c: torch.Tensor, a: torch.Tensor, b: torch.Tensor, bias: torch.Tensor | None,
            scale_a: torch.Tensor | None, scale_b: torch.Tensor | None,
            cublaslt_handle: int, workspace: torch.Tensor, mode: int,
-           accumulate: bool = False, stream: int = 0) -> None:    # For non-transposed: [..., rows, cols] -> [-1, cols] is correct
+           accumulate: bool = False, stream: int = 0) -> None:
     _pyllmq.matmul(c, a, b, bias, scale_a, scale_b, cublaslt_handle, workspace, mode, accumulate, stream)
 
 
