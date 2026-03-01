@@ -157,6 +157,39 @@ def test_rmsnorm_backward(B, T, C, dtype):
     assert dweight.float().cpu() == pytest.approx(ref_dweight.float().cpu(), rel=rtol, abs=atol)
 
 
+@pytest.mark.parametrize("B,T,C", [(2, 3, 16), (1, 4, 64), (4, 8, 256)])
+@pytest.mark.parametrize("dtype", DTYPES)
+def test_rmsnorm_backward_dresidual_accumulate(B, T, C, dtype):
+    torch.manual_seed(1)
+    inp = torch.randn((B, T, C), device="cuda", dtype=dtype)
+    weight = torch.randn((C,), device="cuda", dtype=dtype)
+    dout = torch.randn((B, T, C), device="cuda", dtype=dtype)
+    eps = 1e-6
+
+    _, rstd = _rmsnorm_reference(inp, weight, eps)
+    rstd = rstd.to(torch.float32).cuda()
+
+    dinp = torch.empty_like(inp)
+    dweight = torch.zeros((C,), device="cuda", dtype=dtype)
+    scratch = torch.zeros(K.get_rmsnorm_backward_scratch_size(C), device="cuda", dtype=torch.float32)
+
+    # Pre-fill dresidual with a non-zero sentinel so accumulation is detectable.
+    dresidual = torch.randn_like(inp)
+    dresidual_initial = dresidual.clone()
+    ref_dinp, _ = _rmsnorm_backward_reference(dout, inp, weight, rstd)
+    expected_dinp = dresidual_initial.float() + ref_dinp.float()
+
+    K.rmsnorm_backward(dinp, dweight, scratch, dresidual, dout, inp, weight, rstd, None)
+
+    rtol, atol = TOL[dtype]
+    if dtype == torch.bfloat16:
+        # TODO check why we need so much tolerance
+        atol = 8e-3
+        rtol = 0.015
+    assert dinp.float().cpu() == pytest.approx(
+        expected_dinp.cpu(), rel=rtol, abs=atol
+    )
+
 # ============================================================
 # swiglu_forward
 # ============================================================
@@ -258,6 +291,56 @@ def test_fill_normal_stats(mean, std):
     K.fill_normal(y, float(mean), float(std), seed, 0)
     assert x.cpu() == pytest.approx(y.cpu(), rel=0, abs=0)
 
+@pytest.mark.parametrize("mean,std", [(0.0, 1.0), (1.5, 0.25)])
+def test_fill_normal_subsequence_independence(mean, std):
+    """Different subsequence offsets with the same seed must produce
+    non-identical, uncorrelated draws."""
+    N = 64 * 1024
+    seed = 0xABCDEF01
+
+    tensors = []
+    for subseq in range(4):
+        x = torch.empty((N,), device="cuda", dtype=torch.float32)
+        K.fill_normal(x, float(mean), float(std), seed, subseq)
+        tensors.append(x.cpu())
+
+    for i in range(len(tensors)):
+        for j in range(i + 1, len(tensors)):
+            # Bit-identity: the subsequence argument must actually be used.
+            assert not torch.equal(tensors[i], tensors[j]), (
+                f"Subsequences {i} and {j} produced identical output"
+            )
+
+            # Pearson |r| < 0.05 is a very conservative bound at N=64k
+            # (3-sigma ≈ 0.012), so a genuine failure stands out clearly.
+            a = tensors[i] - tensors[i].mean()
+            b = tensors[j] - tensors[j].mean()
+            r = (a * b).mean() / (a.std() * b.std())
+            assert abs(r.item()) < 0.05, (
+                f"Subsequences {i} and {j} are correlated: r={r.item():.4f}"
+            )
+
+@pytest.mark.parametrize("mean,std", [(0.0, 1.0), (1.5, 0.25), (-1.0, 2.0)])
+def test_fill_normal_stats_bf16(mean, std):
+    """BF16 should satisfy the same mean/std checks as float32 with
+    tolerances relaxed to reflect its ~0.8 % per-value precision."""
+    N = 256 * 1024
+    seed = 0xABCDEF01
+    x = torch.empty((N,), device="cuda", dtype=torch.bfloat16)
+    K.fill_normal(x, float(mean), float(std), seed, 0)
+
+    # Upcast before reducing — BF16 accumulation is itself lossy.
+    xf = x.float()
+    m = xf.mean().item()
+    s = xf.std(unbiased=True).item()
+
+    assert abs(m - mean) < max(1e-2, 0.05 * abs(std))
+    assert abs(s - std) / max(std, 1e-12) < 0.05
+
+    # Determinism check mirrors the float32 test.
+    y = torch.empty_like(x)
+    K.fill_normal(y, float(mean), float(std), seed, 0)
+    assert torch.equal(x.cpu(), y.cpu())
 
 # ============================================================
 # rope forward + backward
