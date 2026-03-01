@@ -103,9 +103,13 @@ def grouped_loss_sum(out: torch.Tensor, per_token_loss: torch.Tensor, stream: in
 @torch.library.custom_op("llmq::matmul", mutates_args=("c", "workspace"))
 def matmul(c: torch.Tensor, a: torch.Tensor, b: torch.Tensor, bias: torch.Tensor | None,
            scale_a: torch.Tensor | None, scale_b: torch.Tensor | None,
-           cublaslt_handle: int, workspace: torch.Tensor, M: int, N: int, K: int, mode: int,
-           accumulate: bool = False, stream: int = 0) -> None:
-    _pyllmq.matmul(c, a, b, bias, scale_a, scale_b, cublaslt_handle, workspace, M, N, K, mode, accumulate, stream)
+           cublaslt_handle: int, workspace: torch.Tensor, mode: int,
+           accumulate: bool = False, stream: int = 0) -> None:    # For non-transposed: [..., rows, cols] -> [-1, cols] is correct
+    _pyllmq.matmul(c, a, b, bias, scale_a, scale_b, cublaslt_handle, workspace, mode, accumulate, stream)
+
+
+def create_cublas_handle() -> int:
+    return _pyllmq.create_cublas_handle()
 
 
 @torch.library.custom_op("llmq::backward_bias", mutates_args=("dbias", "dbias_buffer"))
