@@ -165,11 +165,13 @@ void matmul_dispatch(floatO* d, const FloatA* a, const FloatB* b, const FloatBia
 {
     static std::atomic<bool> warning{false};
     bool expected = false;
-    if(backend == EMatmulBackend::Custom && mode != EMMTranspose::TN && warning.compare_exchange_strong(expected, true)) {
-        fprintf(stderr, "WARNING: Custom matmuls are not supported for non-TN mode! Falling back to cublas.\n");
+    if(backend == EMatmulBackend::Custom && (mode != EMMTranspose::TN || m % 128 != 0 || n % 128 != 0 || k % 128 != 0)
+        && warning.compare_exchange_strong(expected, true))
+    {
+        fprintf(stderr, "WARNING: Custom matmuls are not supported for non-TN mode and multiples of 128! Falling back to cublas.\n");
     }
 
-    if(backend == EMatmulBackend::CuBLAS || mode != EMMTranspose::TN) {
+    if(backend == EMatmulBackend::CuBLAS || mode != EMMTranspose::TN || m % 128 != 0 || n % 128 != 0 || k % 128 != 0) {
         matmul_cublaslt(d, a, b, bias, workspace, workspace_size, m, n, k, stream, handle, scale_a, scale_b, mode, accumulate);
     } else if constexpr (std::is_same_v<floatO, nv_bfloat16> && std::is_same_v<FloatBias, nv_bfloat16> &&
                ((std::is_same_v<FloatA, nv_bfloat16> && std::is_same_v<FloatB, nv_bfloat16>) ||

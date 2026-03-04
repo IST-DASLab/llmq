@@ -19,13 +19,14 @@ template<typename T>
 std::type_identity<T> type_v = {};
 
 template<typename AType, typename BType, typename BiasType, typename AccType>
-__global__ __launch_bounds__(32*2*2, 2) void gemm_mma_tn_kernel(nv_bfloat16* __restrict__ out,
-                                                                const AType* __restrict__ a, const BType* __restrict__ b,
-                                                                int m, int n, int k,
-                                                                const float* __restrict__ scale_a, const float* __restrict__ scale_b,
-                                                                const BiasType* __restrict__ bias,
-                                                                bool accumulate,
-                                                                std::type_identity<AccType> acc_type) {
+__device__ void gemm_mma_tn_impl(nv_bfloat16* __restrict__ out,
+                                 const AType* __restrict__ a, const BType* __restrict__ b,
+                                 int m, int n, int k,
+                                 const float* __restrict__ scale_a, const float* __restrict__ scale_b,
+                                 const BiasType* __restrict__ bias,
+                                 bool accumulate,
+                                 std::type_identity<AccType> acc_type)
+{
     static_assert(sizeof(AType) == sizeof(BType), "index calculations assume sz(AType) == sz(BType)");
     // Note: you cannot change these numbers without breaking the kernel.
     // they are here only for convenience, not to parametrize the algorithm.
@@ -233,12 +234,36 @@ __global__ __launch_bounds__(32*2*2, 2) void gemm_mma_tn_kernel(nv_bfloat16* __r
     }
 }
 
+template<typename AType, typename BType, typename BiasType, typename AccType>
+__global__ __launch_bounds__(32*2*2, 2) void gemm_mma_tn_kernel(nv_bfloat16* __restrict__ out,
+                                                                const AType* __restrict__ a, const BType* __restrict__ b,
+                                                                int m, int n, int k,
+                                                                const float* __restrict__ scale_a, const float* __restrict__ scale_b,
+                                                                const BiasType* __restrict__ bias,
+                                                                bool accumulate,
+                                                                std::type_identity<AccType> acc_type) {
+    if constexpr(std::is_same_v<AType, __nv_fp8_e4m3> || std::is_same_v<AType, __nv_fp8_e5m2>) {
+#if defined(__CUDA_ARCH__) && (__CUDA_ARCH__ >= 890)
+        gemm_mma_tn_impl(out, a, b, m, n, k, scale_a, scale_b, bias, accumulate, acc_type);
+#else
+        __trap();
+#endif
+    } else {
+        gemm_mma_tn_impl(out, a, b, m, n, k, scale_a, scale_b, bias, accumulate, acc_type);
+    }
+
+}
+
+
 template<class AType, class BType, class BiasType, class AccType>
 void gemm_mma_tn_launcher(nv_bfloat16* out, const AType* a, const BType* b, int m, int n, int k, const float* scale_a, const float* scale_b, const BiasType* bias,
                           bool accumulate, std::type_identity<AccType>, cudaStream_t stream) {
     if (n % 128 != 0 || m % 128 != 0 || k % 128 != 0) {
         throw std::invalid_argument("gemm_mma_tn_launcher: n, m, k must be divisible by 128");
     }
+
+    if (bias && accumulate)
+        throw std::invalid_argument("gemm_mma_tn_launcher: cannot specify both bias and accumulate");
 
     // our kernel is row-major, so to match cublas, we need to transpose everything => swapped a<->b, m<->n
     dim3 grid;
