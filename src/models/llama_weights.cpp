@@ -19,6 +19,14 @@ void allocate_non_matrix_params(sLLamaBlockWeights<T>& target, const Transformer
 
     target.LN1_w = alloc.allocate_shard(dtype, shard_idx, num_shards, "ln1_w", {C}, kind);
     target.LN2_w = alloc.allocate_shard(dtype, shard_idx, num_shards, "ln2_w", {C}, kind);
+    if (config.UseQKNorm) {
+        target.QNorm_w = alloc.allocate_shard(dtype, shard_idx, num_shards, "qnorm_w", {HS}, kind);
+        target.KNorm_w = alloc.allocate_shard(dtype, shard_idx, num_shards, "knorm_w", {HS}, kind);
+    } else {
+        target.QNorm_w = Tensor{};
+        target.KNorm_w = Tensor{};
+    }
+
     long attn_intermediate_size = (config.NumQueryHeads + 2 * config.NumKeyValHeads) * HS;
     if(config.UseQKVBias) {
         target.Attn_QKV_b = alloc.allocate_shard(dtype, shard_idx, num_shards, "att_qkv_b", {attn_intermediate_size}, kind);
@@ -80,6 +88,8 @@ void fill_non_matrix_shapes(sLLamaBlockWeights<TensorShard>& target, const Trans
 
     create_vector_shard(target.LN1_w, C);
     create_vector_shard(target.LN2_w, C);
+    create_vector_shard(target.QNorm_w, config.UseQKNorm ? HS : 0);
+    create_vector_shard(target.KNorm_w, config.UseQKNorm ? HS : 0);
     long attn_intermediate_size = (config.NumQueryHeads + 2 * config.NumKeyValHeads) * HS;
     create_vector_shard(target.Attn_QKV_b, config.UseQKVBias ? attn_intermediate_size : 0);
 }
@@ -107,6 +117,8 @@ sLLamaBlockWeights<TensorShard> shard_block(const sLLamaBlockWeights<Tensor>& bl
     result.Attn_QKV_b = shard_view(block.Attn_QKV_b, shard_idx, num_shards);
     result.LN1_w = shard_view(block.LN1_w, shard_idx, num_shards);
     result.LN2_w = shard_view(block.LN2_w, shard_idx, num_shards);
+    result.QNorm_w = shard_view(block.QNorm_w, shard_idx, num_shards);
+    result.KNorm_w = shard_view(block.KNorm_w, shard_idx, num_shards);
     return result;
 }
 
@@ -221,7 +233,7 @@ LLamaWeightsManager::~LLamaWeightsManager() {
 
 void LLamaWeightsManager::setup_scales(TensorAllocator& alloc) {
     int layers = mMaster.Blocks.size();
-    mAbsMaxes = alloc.allocate(ETensorDType::FP32, "abs_maxes", EAllocationType::ON_DEVICE, {6 + layers * 14});
+    mAbsMaxes = alloc.allocate(ETensorDType::FP32, "abs_maxes", EAllocationType::ON_DEVICE, {6 + layers * 18});
     float* abs_maxes = mAbsMaxes.get<float>();
     mMaster.NonBlocks.Embeddings.Stats = abs_maxes + 0;
     mMaster.NonBlocks.LNF_w.Stats = abs_maxes + 2;
@@ -235,14 +247,16 @@ void LLamaWeightsManager::setup_scales(TensorAllocator& alloc) {
         mMaster.Blocks[i].Attn_QKV_b.Stats = a + 8;
         mMaster.Blocks[i].LN1_w.Stats = a + 10;
         mMaster.Blocks[i].LN2_w.Stats = a + 12;
+        mMaster.Blocks[i].QNorm_w.Stats = a + 14;
+        mMaster.Blocks[i].KNorm_w.Stats = a + 16;
     }
 }
 
 
 std::pair<float*, float*> LLamaWeightsManager::get_scales_for_block(int layer_idx) {
     float* abs_maxes = mAbsMaxes.get<float>();
-    float* begin = abs_maxes + 6 + layer_idx * 14;
-    return {begin + 0, begin + 14};
+    float* begin = abs_maxes + 6 + layer_idx * 18;
+    return {begin + 0, begin + 18};
 }
 
 
@@ -305,6 +319,8 @@ void LLamaWeightsManager::begin_optimizer(DeviceMemoryStack& memory, cudaStream_
                 buf.LN1_w = mMaster.Blocks[0].LN1_w;
                 buf.LN2_w = mMaster.Blocks[0].LN2_w;
                 buf.Attn_QKV_b = mMaster.Blocks[0].Attn_QKV_b;
+                buf.QNorm_w = mMaster.Blocks[0].QNorm_w;
+                buf.KNorm_w = mMaster.Blocks[0].KNorm_w;
             }
 
             mMasterDeviceDoubleBufferStorage[i] = alloc.commit(memory, "master");
@@ -555,6 +571,12 @@ void sLLamaWeights::iterate_tensors(const std::function<void(std::string, const 
         if (layer.Attn_QKV_b) {
             callback(prefix + ".self_attn.qkv.bias", layer.Attn_QKV_b);
         }
+        if (layer.QNorm_w) {
+            callback(prefix + ".self_attn.q_norm.weight", layer.QNorm_w);
+        }
+        if (layer.KNorm_w) {
+            callback(prefix + ".self_attn.k_norm.weight", layer.KNorm_w);
+        }
 
         callback(prefix + ".self_attn.o_proj.weight", layer.Attn_Out_w);
         callback(prefix + ".mlp.up.weight", up_proj);
@@ -751,6 +773,8 @@ void LLamaWeightsManager::random_init(int seed, const LLamaOptions& options, NCC
         auto& down_proj = layer.MLP_Down_w;
         auto& qkv_b = layer.Attn_QKV_b;
         auto& out_w = layer.Attn_Out_w;
+        auto& q_norm = layer.QNorm_w;
+        auto& k_norm = layer.KNorm_w;
 
         fill_constant(layer.LN1_w, 1.f, layer.LN1_w.nelem(), nullptr);
         fill_constant(layer.LN2_w, 1.f, layer.LN2_w.nelem(), nullptr);
@@ -767,6 +791,12 @@ void LLamaWeightsManager::random_init(int seed, const LLamaOptions& options, NCC
         }
         if (qkv_b) {
             fill_zero(qkv_b, nullptr);
+        }
+        if (q_norm) {
+            fill_constant(q_norm, 1.f, q_norm.nelem(), nullptr);
+        }
+        if (k_norm) {
+            fill_constant(k_norm, 1.f, k_norm.nelem(), nullptr);
         }
     }
 
