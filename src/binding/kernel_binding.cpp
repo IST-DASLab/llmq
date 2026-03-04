@@ -330,11 +330,12 @@ void bind_grouped_loss_sum(const CudaArray& out, const CudaArray& per_token_loss
 void bind_matmul(const CudaArray& c, const CudaArray& a, const CudaArray& b, const std::optional<CudaArray>& bias,
                  const std::optional<CudaArray>& scale_a, const std::optional<CudaArray>& scale_b,
                  std::uintptr_t cublaslt_handle, const CudaArray& workspace,
-                 int mode_, bool accumulate, const std::uintptr_t stream) {
+                 int mode_, bool accumulate, const std::uintptr_t stream, int backend_) {
     NB_CHECK_NDIMS(a, 2);
     NB_CHECK_NDIMS(b, 2);
     NB_CHECK_NDIMS(c, 2);
     EMMTranspose mode = static_cast<EMMTranspose>(mode_);
+    EMatmulBackend backend = static_cast<EMatmulBackend>(backend_);
 
     // torch vs cublas: a @ b <=> b^t @ a^ t
     const bool a_transposed = (mode == EMMTranspose::TN || mode == EMMTranspose::TT);
@@ -363,7 +364,7 @@ void bind_matmul(const CudaArray& c, const CudaArray& a, const CudaArray& b, con
     Tensor c_t = to_tensor(c);
     Tensor ws_t = to_tensor(workspace);
     matmul(c_t, to_tensor(b), to_tensor(a), to_tensor(bias), scale_b_ptr, scale_a_ptr,
-       reinterpret_cast<cublasLtHandle_t>(cublaslt_handle), ws_t, M, N, K, inv_mode, accumulate, as_stream(stream));
+       reinterpret_cast<cublasLtHandle_t>(cublaslt_handle), ws_t, M, N, K, inv_mode, accumulate, as_stream(stream), backend);
 }
 
 cublasLtHandle_t create_cublaslt_handle();
@@ -546,7 +547,9 @@ void register_kernels(nanobind::module_& m) {
     m.def("grouped_loss_sum", &bind_grouped_loss_sum, nb::arg("out"), nb::arg("per_token_loss"), nb::arg("stream") = 0);
 
     // Matmul
-    m.def("matmul", &bind_matmul, nb::arg("c"), nb::arg("a"), nb::arg("b"), nb::arg("bias") = std::nullopt, nb::arg("scale_a") = std::nullopt, nb::arg("scale_b") = std::nullopt, nb::arg("cublaslt_handle"), nb::arg("workspace"), nb::arg("mode"), nb::arg("accumulate") = false, nb::arg("stream") = 0);
+    m.def("matmul", &bind_matmul, nb::arg("c"), nb::arg("a"), nb::arg("b"), nb::arg("bias") = std::nullopt,
+        nb::arg("scale_a") = std::nullopt, nb::arg("scale_b") = std::nullopt, nb::arg("cublaslt_handle"), nb::arg("workspace"),
+        nb::arg("mode"), nb::arg("accumulate") = false, nb::arg("stream") = 0, nb::arg("backend") = EMatmulBackend::CuBLAS);
     m.def("create_cublas_handle", &bind_create_cublas_handle);
     m.def("destroy_cublas_handle", &bind_destroy_cublas_handle);
 

@@ -199,8 +199,7 @@ void TrainingRunner::load_training_config(int argc, const char** argv) {
     app.add_flag("--memcpy-send-recv", MemcpySendRecv, "Use memcpy to perform send/receive (all-to-all). Currently only supported by the threads backend.");
     app.add_flag("--all-to-all-reduce", Options.UseAllToAllReduce, "Uses an all-to-all-based reduce algorithm. Combine with --memcpy-send-recv.");
     app.add_flag("--write-combined", Options.UseWriteCombined, "Uses write-combined memory for offloaded tensors.");
-    app.add_flag("--custom-matmul", Options.UseCustomMatmul, "Use a self-written matmul instead of cuBLAS. This is *not* going to be faster, this "
-                                                     "option is mostly for the purists who want to minimize the dependencies.\n");
+    app.add_flag("--custom-matmul", Options.UseCustomMatmul, "Use a self-written matmul instead of cuBLAS.");
 
     try {
         app.parse(argc, argv);
