@@ -549,7 +549,7 @@ void register_kernels(nanobind::module_& m) {
     // Matmul
     m.def("matmul", &bind_matmul, nb::arg("c"), nb::arg("a"), nb::arg("b"), nb::arg("bias") = std::nullopt,
         nb::arg("scale_a") = std::nullopt, nb::arg("scale_b") = std::nullopt, nb::arg("cublaslt_handle"), nb::arg("workspace"),
-        nb::arg("mode"), nb::arg("accumulate") = false, nb::arg("stream") = 0, nb::arg("backend") = EMatmulBackend::CuBLAS);
+        nb::arg("mode"), nb::arg("accumulate") = false, nb::arg("stream") = 0, nb::arg("backend") = static_cast<int>(EMatmulBackend::CuBLAS));
     m.def("create_cublas_handle", &bind_create_cublas_handle);
     m.def("destroy_cublas_handle", &bind_destroy_cublas_handle);
 
