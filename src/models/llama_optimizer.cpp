@@ -39,6 +39,8 @@ void OptStateWrapper::iterate_tensors(const std::function<void(std::string, cons
         cb(prefix + ".self_attn.qkv.weight", layer.get_tensor(LLamaWeightID::QKV_W));
         cb(prefix + ".self_attn.qkv.bias", layer.get_tensor(LLamaWeightID::QKV_B));
         cb(prefix + ".self_attn.o_proj.weight", layer.get_tensor(LLamaWeightID::ATTO_W));
+        cb(prefix + ".self_attn.q_norm.weight", layer.get_tensor(LLamaWeightID::QNORM_W));
+        cb(prefix + ".self_attn.k_norm.weight", layer.get_tensor(LLamaWeightID::KNORM_W));
         cb(prefix + ".mlp.up.weight", layer.get_tensor(LLamaWeightID::UP_W));
         cb(prefix + ".mlp.down_proj.weight", layer.get_tensor(LLamaWeightID::DOWN_W));
         cb(prefix + ".input_layernorm.weight", layer.get_tensor(LLamaWeightID::LN1_W));

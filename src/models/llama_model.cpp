@@ -720,7 +720,7 @@ IRunState& LLamaModel::get_run_state() const {
 }
 
 std::size_t LLamaModel::num_block_tensors() const {
-    return 7;
+    return 9;
 }
 
 void LLamaModel::fill_block_shapes(GenericTensorContainer& target, const TransformerConfig& config,
@@ -746,6 +746,8 @@ void LLamaModel::fill_block_shapes(GenericTensorContainer& target, const Transfo
     create(target.get_tensor(LLamaWeightID::LN1_W), C, 0, other_dtype);
     create(target.get_tensor(LLamaWeightID::LN2_W), C, 0, other_dtype);
     create(target.get_tensor(LLamaWeightID::QKV_B), config.UseQKVBias ? attn_intermediate_size : 0, 0, other_dtype);
+    create(target.get_tensor(LLamaWeightID::QNORM_W), config.UseQKNorm ? HS : 0, 0, other_dtype);
+    create(target.get_tensor(LLamaWeightID::KNORM_W), config.UseQKNorm ? HS : 0, 0, other_dtype);
 }
 
 std::size_t LLamaModel::num_non_block_tensors() const {

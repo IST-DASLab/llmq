@@ -30,6 +30,8 @@ namespace LLamaWeightID {
     inline constexpr unsigned ATTO_W = 4;
     inline constexpr unsigned UP_W = 5;
     inline constexpr unsigned DOWN_W = 6;
+    inline constexpr unsigned QNORM_W = 7;
+    inline constexpr unsigned KNORM_W = 8;
     inline constexpr unsigned EMBEDDING = 0;
     inline constexpr unsigned LM_HEAD = 1;
     inline constexpr unsigned LNF_W = 2;
@@ -44,8 +46,10 @@ struct sLLamaBlockWeights : public SimpleTensorContainer {
     TTensor Attn_Out_w;      //
     TTensor MLP_Up_w;
     TTensor MLP_Down_w;
+    TTensor QNorm_w;         // Hd; optional
+    TTensor KNorm_w;         // Hd; optional
 
-    std::size_t num_tensors() const noexcept override { return 7; }
+    std::size_t num_tensors() const noexcept override { return 9; }
 
     const Tensor& get_tensor(std::size_t idx) const override {
         using namespace LLamaWeightID;
@@ -57,6 +61,8 @@ struct sLLamaBlockWeights : public SimpleTensorContainer {
             case ATTO_W: return Attn_Out_w;
             case UP_W: return MLP_Up_w;
             case DOWN_W: return MLP_Down_w;
+            case QNORM_W: return QNorm_w;
+            case KNORM_W: return KNorm_w;
             default:
                 throw std::out_of_range("Invalid tensor index");
         }
@@ -239,9 +245,5 @@ sLLamaNonBlockWeights<TensorShard> shard_non_block(const sLLamaNonBlockWeights<T
 
 void fill_matrix_shapes(sLLamaBlockWeights<TensorShard>& target, const TransformerConfig& config, ETensorDType dtype, int shard_idx, int num_shards);
 void fill_non_matrix_shapes(sLLamaBlockWeights<TensorShard>& target, const TransformerConfig& config, ETensorDType dtype, int shard_idx, int num_shards);
-
-std::size_t bytes_for_block(const TransformerConfig& config, ETensorDType matrix_dtype, ETensorDType other_dtype, int num_shards);
-std::size_t bytes_for_block_matrices(const TransformerConfig& config, ETensorDType dtype, int num_shards);
-std::size_t bytes_for_block_non_matrix(const TransformerConfig& config, ETensorDType dtype, int num_shards);
 
 #endif //LLMQ_LLAMA_WEIGHTS_H

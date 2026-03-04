@@ -21,6 +21,8 @@ void LLamaGradientsUnsharded::on_first_micro_step(cudaStream_t stream) {
         fill_zero(layer.get_tensor(LN1_W), stream);
         fill_zero(layer.get_tensor(LN2_W), stream);
         fill_zero(layer.get_tensor(QKV_B), stream);
+        fill_zero(layer.get_tensor(QNORM_W), stream);
+        fill_zero(layer.get_tensor(KNORM_W), stream);
         // no need to zero out the matrix weights, we'll just overwrite them on the first
         // grad accumulation step
     }
@@ -42,6 +44,8 @@ void LLamaGradientsBlockShardedBase::on_get_block(SimpleTensorContainer& block, 
     fill_zero(block.get_tensor(LLamaWeightID::LN1_W), stream);
     fill_zero(block.get_tensor(LLamaWeightID::LN2_W), stream);
     fill_zero(block.get_tensor(LLamaWeightID::QKV_B), stream);
+    fill_zero(block.get_tensor(LLamaWeightID::QNORM_W), stream);
+    fill_zero(block.get_tensor(LLamaWeightID::KNORM_W), stream);
 }
 
 
