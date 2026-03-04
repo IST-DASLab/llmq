@@ -160,17 +160,17 @@ const Tensor& GenericTensorContainer::get_tensor(std::size_t idx) const {
 
 GenericTensorContainer shard_empty_container(GenericTensorContainer&& c, int world) {
     // can't use visit here, because we explicitly want to iterate over empty tensors
-    for (int i = 0; i < c.num_tensors(); ++i) {
+    for (std::size_t i = 0; i < c.num_tensors(); ++i) {
         auto& t = c.get_tensor(i);
-        if (!t.empty()) { throw std::logic_error("shard_container called with non-empty tensor"); }
+        if (!t.empty()) { throw std::logic_error("shard_empty_container called with non-empty tensor"); }
         t.Sizes[0] = div_exact(t.Sizes[0], static_cast<long>(world));
     }
-    return c;
+    return std::move(c);
 }
 
 GenericTensorContainer shard_view(const GenericTensorContainer& c, int rank, int world) {
     std::vector<Tensor> shards(c.num_tensors());
-    for (int i = 0; i < c.num_tensors(); ++i) {
+    for (std::size_t i = 0; i < c.num_tensors(); ++i) {
         shards.at(i) = static_cast<Tensor>(shard_view(c.get_tensor(i), rank, world));
     }
     return GenericTensorContainer{shards};

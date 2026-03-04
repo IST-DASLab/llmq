@@ -5,7 +5,6 @@
 #include "gradients.h"
 
 #include "model.h"
-#include "models/llama_weights.h"
 #include "utilities/allocator.h"
 #include "utilities/comm.h"
 #include "utilities/lazy_allocator.h"
@@ -32,13 +31,13 @@ UnshardedGradientManager::UnshardedGradientManager(const TransformerConfig& cfg,
         mBlockGradients[i] = model.create_block_container(cfg, cfg.DType, cfg.DType);
         alloc_lazy.allocate(mBlockGradients[i]);
         alloc_lazy.commit(*alloc, EAllocationType::ON_DEVICE, "block_grad");
-        mBlockShards[i] = shard_view(GenericTensorContainer(mBlockGradients[i]), rank, world);
+        mBlockShards[i] = shard_view(mBlockGradients[i], rank, world);
     }
 
     mNonBlockGradients = model.create_non_block_container(cfg, cfg.DType, cfg.DType);
     alloc_lazy.allocate(mNonBlockGradients);
     alloc_lazy.commit(*alloc, EAllocationType::ON_DEVICE, "nonblock_grad");
-    mNonBlockShards = shard_view(GenericTensorContainer(mNonBlockGradients), rank, world);
+    mNonBlockShards = shard_view(mNonBlockGradients, rank, world);
 
     mGradEvent = create_named_event("grad_event");
 }
@@ -97,7 +96,7 @@ ShardedBlocksGradientManager::ShardedBlocksGradientManager(const TransformerConf
     mFullNonBlock = model.create_non_block_container(cfg, cfg.DType, cfg.DType);
     alloc_lazy.allocate(mFullNonBlock);
     alloc_lazy.commit(*alloc, EAllocationType::ON_DEVICE, "nonblock_grad");
-    mNonBlockShards = shard_view(GenericTensorContainer(mFullNonBlock), rank, world);
+    mNonBlockShards = shard_view(mFullNonBlock, rank, world);
 
     mGradBuffers[0] = model.create_block_container(cfg, cfg.DType, cfg.DType);
     mGradBuffers[1] = model.create_block_container(cfg, cfg.DType, cfg.DType);
