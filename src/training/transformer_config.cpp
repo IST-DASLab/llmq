@@ -27,6 +27,8 @@ TransformerConfig load_transformer_config(const char* file_name, ETensorDType dt
         arch_id = TransformerConfig::LLAMA;
     } else if(archs.front() == "Qwen2ForCausalLM") {
         arch_id = TransformerConfig::QWEN2;
+    }  else if(archs.front() == "Qwen3ForCausalLM") {
+        arch_id = TransformerConfig::QWEN3;
     } else {
         throw std::runtime_error(fmt::format("unknown architecture {}", archs.front()));
     }
@@ -55,6 +57,7 @@ TransformerConfig load_transformer_config(const char* file_name, ETensorDType dt
         result.RmsNormEps = result.Architecture == TransformerConfig::LLAMA ? 1e-5 : 1e-6;
     }
 
+    result.UseQKNorm = arch_id == TransformerConfig::QWEN3;
     result.UseQKVBias = arch_id == TransformerConfig::QWEN2;
 
     return result;
@@ -62,6 +65,8 @@ TransformerConfig load_transformer_config(const char* file_name, ETensorDType dt
 
 [[nodiscard]] std::string_view TransformerConfig::model_name() const {
     switch(Architecture) {
+        case TransformerConfig::QWEN3:
+            return "Qwen3";
         case TransformerConfig::QWEN2:
             return "Qwen2";
         case TransformerConfig::LLAMA:
@@ -78,8 +83,10 @@ void save_transformer_config(const TransformerConfig& config, const char* file_n
     }
 
     std::vector<std::string> archs;
-    if(config.Architecture == TransformerConfig::QWEN2) {
+    if (config.Architecture == TransformerConfig::QWEN2) {
         archs = {"Qwen2ForCausalLM"};
+    } else if(config.Architecture == TransformerConfig::QWEN3) {
+        archs = {"Qwen3ForCausalLM"};
     } else if (config.Architecture == TransformerConfig::LLAMA) {
         archs = {"LlamaForCausalLM"};
     }
@@ -104,8 +111,8 @@ void save_transformer_config(const TransformerConfig& config, const char* file_n
     config_json["initializer_range"] = 0.02f;
     config_json["hidden_act"] = "silu";
     config_json["use_cache"] = true;
-    if(config.Architecture == TransformerConfig::QWEN2) {
-        config_json["model_type"] = "qwen2";
+    if (config.Architecture == TransformerConfig::QWEN2 || config.Architecture == TransformerConfig::QWEN3) {
+        config_json["model_type"] = config.Architecture == TransformerConfig::QWEN2 ? "qwen2" : "qwen3";
         config_json["max_window_layers"] = config.NumLayers;
         config_json["sliding_window"] = config.MaxPositionEmbeddings;
         config_json["use_sliding_window"] = false;
@@ -119,7 +126,7 @@ void save_transformer_config(const TransformerConfig& config, const char* file_n
     file << config_json.dump(4);
 }
 
-static TransformerConfig create_qwen25_config(int hidden_size, int intermediate_size, int q_heads, int kv_heads, int depth, float rms, bool tied, ETensorDType dtype) {
+static TransformerConfig create_qwen2_config(int hidden_size, int intermediate_size, int q_heads, int kv_heads, int depth, float rms, bool tied, ETensorDType dtype) {
     return {
         .Architecture = TransformerConfig::QWEN2,
         .BosTokenId = 151643,
@@ -135,6 +142,27 @@ static TransformerConfig create_qwen25_config(int hidden_size, int intermediate_
         .RmsNormEps = rms,
         .TiedWordEmbeddings = tied,
         .UseQKVBias = true,
+        .DType = dtype
+    };
+}
+
+static TransformerConfig create_qwen3_config(int hidden_size, int intermediate_size, int q_heads, int kv_heads, int depth, float rms, bool tied, ETensorDType dtype) {
+    return {
+        .Architecture = TransformerConfig::QWEN3,
+        .BosTokenId = 151643,
+        .EosTokenId = 151645,
+        .HiddenSize = hidden_size,
+        .IntermediateSize = intermediate_size,
+        .VocabSize = 151936,
+        .NumQueryHeads = q_heads,
+        .NumKeyValHeads = kv_heads,
+        .NumLayers = depth,
+        .MaxPositionEmbeddings = 40960,
+        .RopeTheta = 1'000'000.f,
+        .RmsNormEps = rms,
+        .TiedWordEmbeddings = tied,
+        .UseQKVBias = false,
+        .UseQKNorm = true,
         .DType = dtype
     };
 }
@@ -182,20 +210,32 @@ static TransformerConfig create_llama3_config(int hidden_size, int intermediate_
 }
 
 TransformerConfig create_config_from_name(std::string_view name, ETensorDType dtype) {
-    if(iequals(name, "Qwen2.5-0.5B")) {
-        return create_qwen25_config(896, 4864, 14, 2, 24, 1e-06f, true, dtype);
-    } else if(iequals(name, "Qwen2.5-1.5B")) {
-        return create_qwen25_config(1536, 8960, 12, 2, 28, 1e-06f, true, dtype);
-    } else if(iequals(name, "Qwen2.5-3B")) {
-        return create_qwen25_config(2048, 11008, 16, 2, 36, 1e-06f, true, dtype);
-    } else if(iequals(name, "Qwen2.5-7B")) {
-        return create_qwen25_config(3584, 18944, 28, 4, 28, 1e-06f, false, dtype);
-    } else if(iequals(name, "Qwen2.5-14B")) {
-        return create_qwen25_config(5120, 13824, 40, 8, 48, 1e-05f, false, dtype);
-    } else if(iequals(name, "Qwen2.5-32B")) {
-        return create_qwen25_config(5120, 27648, 40, 8, 64, 1e-05f, false, dtype);
-    } else if(iequals(name, "Qwen2.5-72B")) {
-        return create_qwen25_config(8192, 29568, 64, 8, 80, 1e-05f, false, dtype);
+    if(iequals(name, "Qwen2.5-0.5B") || iequals(name, "Qwen2-0.5B")) {
+        return create_qwen2_config(896, 4864, 14, 2, 24, 1e-06f, true, dtype);
+    } else if(iequals(name, "Qwen2.5-1.5B") || iequals(name, "Qwen2-1.5B")) {
+        return create_qwen2_config(1536, 8960, 12, 2, 28, 1e-06f, true, dtype);
+    } else if(iequals(name, "Qwen2.5-3B") || iequals(name, "Qwen2-3B")) {
+        return create_qwen2_config(2048, 11008, 16, 2, 36, 1e-06f, true, dtype);
+    } else if(iequals(name, "Qwen2.5-7B") || iequals(name, "Qwen2-7B")) {
+        return create_qwen2_config(3584, 18944, 28, 4, 28, 1e-06f, false, dtype);
+    } else if(iequals(name, "Qwen2.5-14B") || iequals(name, "Qwen2-14B")) {
+        return create_qwen2_config(5120, 13824, 40, 8, 48, 1e-05f, false, dtype);
+    } else if(iequals(name, "Qwen2.5-32B") || iequals(name, "Qwen2-32B")) {
+        return create_qwen2_config(5120, 27648, 40, 8, 64, 1e-05f, false, dtype);
+    } else if(iequals(name, "Qwen2.5-72B") || iequals(name, "Qwen2-72B")) {
+        return create_qwen2_config(8192, 29568, 64, 8, 80, 1e-05f, false, dtype);
+    } else if (iequals(name, "Qwen3-0.6B")) {
+        return create_qwen3_config(1024, 3072, 16, 8, 28, 1e-6f, true, dtype);
+    } else if (iequals(name, "Qwen3-1.7B")) {
+        return create_qwen3_config(2048, 6144, 16, 8, 28, 1e-6f, true, dtype);
+    } else if (iequals(name, "Qwen3-4B")) {
+        return create_qwen3_config(2560, 9728, 32, 8, 36, 1e-6f, true, dtype);
+    } else if (iequals(name, "Qwen3-8B")) {
+        return create_qwen3_config(4096, 12288, 32, 8, 36, 1e-6f, false, dtype);
+    } else if (iequals(name, "Qwen3-14B")) {
+        return create_qwen3_config(5120, 17408, 40, 8, 40, 1e-6f, false, dtype);
+    }  else if (iequals(name, "Qwen3-32B")) {
+        return create_qwen3_config(5120, 25600, 64, 8, 64, 1e-6f, false, dtype);
     } else if (iequals(name, "llama-2-7b")) {
         return create_llama2_config(4096, 11008, 32, 32, dtype);
     } else if (iequals(name, "llama-2-13b")) {

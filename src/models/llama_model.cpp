@@ -17,6 +17,9 @@
 LLamaModel::LLamaModel(TransformerConfig config, const LLamaOptions& options, int rank, int world, const std::shared_ptr<TensorAllocator>& alloc) :
         Config(config), Options(options), Allocator(alloc ? alloc : std::make_shared<TensorAllocator>())
 {
+    if (Config.UseQKNorm)
+        throw std::runtime_error("UseQKNorm is not yet supported");
+
     Parameters = LLamaWeightsManager::create(Config, options, rank, world, *Allocator);
 }
 
