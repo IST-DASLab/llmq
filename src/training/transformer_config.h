@@ -16,6 +16,7 @@ struct TransformerConfig {
     enum EArchitecture {
         LLAMA,
         QWEN2,
+        QWEN3,
     } Architecture;
     int BosTokenId;
     int EosTokenId;
@@ -33,6 +34,7 @@ struct TransformerConfig {
     float RmsNormEps;
     bool TiedWordEmbeddings;
     bool UseQKVBias;
+    bool UseQKNorm = false;
 
     ETensorDType DType = ETensorDType::BF16;
 
