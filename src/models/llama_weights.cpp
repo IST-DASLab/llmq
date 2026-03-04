@@ -84,40 +84,6 @@ void fill_non_matrix_shapes(sLLamaBlockWeights<TensorShard>& target, const Trans
     create_vector_shard(target.Attn_QKV_b, config.UseQKVBias ? attn_intermediate_size : 0);
 }
 
-std::size_t aligned_size(std::size_t raw, int num_shards) {
-    return div_ceil(div_exact(raw, static_cast<std::size_t>(num_shards)), static_cast<std::size_t>(4096)) * 4096;
-}
-
-std::size_t bytes_for_block_matrices(const TransformerConfig& config, ETensorDType dtype, int num_shards) {
-    std::size_t C = config.HiddenSize;
-    std::size_t HS = config.head_size();
-
-    std::size_t total = 2 * aligned_size(C * get_dtype_size(dtype), num_shards);          // norms
-    long attn_intermediate_size = (config.NumQueryHeads + 2 * config.NumKeyValHeads) * HS;
-    if(config.UseQKVBias) {
-        total += aligned_size(attn_intermediate_size * get_dtype_size(dtype), num_shards); // QKV bias
-    }
-    return total;
-}
-
-std::size_t bytes_for_block_non_matrix(const TransformerConfig& config, ETensorDType dtype, int num_shards) {
-    std::size_t C = config.HiddenSize;
-    long H = config.IntermediateSize;
-    long HS = C / config.NumQueryHeads;
-    long attn_intermediate_size = (config.NumQueryHeads + 2 * config.NumKeyValHeads) * HS;
-
-    std::size_t total = 0;
-    total += aligned_size(attn_intermediate_size * C * get_dtype_size(dtype), num_shards); // QKV
-    total += aligned_size(C * C * get_dtype_size(dtype), num_shards); // out
-    total += aligned_size(2 * C * H * get_dtype_size(dtype), num_shards); // up
-    total += aligned_size(H * C * get_dtype_size(dtype), num_shards); // down
-    return total;
-}
-
-std::size_t bytes_for_block(const TransformerConfig& config, ETensorDType matrix_dtype, ETensorDType other_dtype, int num_shards) {
-    return bytes_for_block_non_matrix(config, other_dtype, num_shards) + bytes_for_block_matrices(config, matrix_dtype, num_shards);
-}
-
 sLLamaBlockWeights<Tensor> allocate_block_full(const TransformerConfig& config, ETensorDType matrix_dtype, ETensorDType other_dtype, EAllocationType kind, TensorAllocator& alloc) {
     sLLamaBlockWeights<Tensor> layer;
     allocate_matrix_params(layer, config, matrix_dtype, kind, 0, 1, alloc);
