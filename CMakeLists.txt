@@ -180,6 +180,7 @@ add_library(llmq-common SHARED
         src/kernels/fill.cu
         src/kernels/convert.cu
         src/kernels/gemm_mma.cu
+        src/kernels/qk_norm.cu
 )
 
 target_link_libraries(llmq-common PRIVATE ${CUFILE_LIBS} cudnn_frontend ${CUDNN_LIBRARY} nvidia::nccl fmt::fmt-header-only)
