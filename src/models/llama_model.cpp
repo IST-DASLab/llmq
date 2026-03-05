@@ -509,7 +509,16 @@ void LLamaModel::_backward_lmhead(long B, long T, float z_loss, int micro_step, 
 
         // handle the LM-head. We run the d_lmhead matmul first, so that the gradient reduction can overlap with the DLNF matmul.
         bool accumulate;
-        auto& d_lmhead = Grads->get_non_block_full(LLamaWeightID::LM_HEAD, main_stream, comm, accumulate);
+        // get the correct matrix depending on whether we have tied embeddings
+        auto& d_lmhead = [&]() -> Tensor& {
+            if (Config.TiedWordEmbeddings) {
+                return Grads->get_non_block_full(LLamaWeightID::EMBEDDING, main_stream, comm, accumulate);
+            } else {
+                return Grads->get_non_block_full(LLamaWeightID::LM_HEAD, main_stream, comm, accumulate);
+            }
+        }();
+
+        // even if we overwrite for first micro-batch, we need to accumulate on non-first nano batch
         accumulate |= nano_step != 0;
         matmul(d_lmhead, lnf_slice, rs->Output, Tensor{}, nullptr, nullptr,
                rs->CublasLtHandle, rs->CuBlasWorkspace, C, V, nano_batch_size, EMMTranspose::NT, accumulate, main_stream, rs->MatmulBackend);
@@ -757,6 +766,8 @@ void LLamaModel::fill_non_block_shapes(GenericTensorContainer& target, const Tra
     create(target.get_tensor(LLamaWeightID::LNF_W), C, 0, other_dtype);
     if(!config.TiedWordEmbeddings) {
         create(target.get_tensor(LLamaWeightID::LM_HEAD), V, C, matrix_dtype);
+    } else {
+        create(target.get_tensor(LLamaWeightID::LM_HEAD), 0, 0, matrix_dtype);
     }
 }
 

@@ -11,8 +11,7 @@
 void LLamaGradientsUnsharded::on_first_micro_step(cudaStream_t stream) {
     using namespace LLamaWeightID;
     fill_zero(mNonBlockGradients.get_tensor(LNF_W), stream);
-    if(mNonBlockGradients.get_tensor(LM_HEAD).Data != mNonBlockGradients.get_tensor(EMBEDDING).Data) {
-        fill_zero(mNonBlockGradients.get_tensor(LM_HEAD), stream);// TODO superfluous?
+    if(mNonBlockGradients.get_tensor(LM_HEAD).Data != nullptr) {
         fill_zero(mNonBlockGradients.get_tensor(EMBEDDING), stream);
     } else {
         // embedding backward comes after LMHead backward; and LMHead backward *sets* the gradient
@@ -32,8 +31,8 @@ void LLamaGradientsUnsharded::on_first_micro_step(cudaStream_t stream) {
 // shard the transformer blocks, but not the embeddings and lmhead.
 
 void LLamaGradientsBlockShardedBase::on_first_micro_step(cudaStream_t stream) {
-    // if we have untied embeddings, we need to zero them out
-    if(mFullNonBlock.get_tensor(LLamaWeightID::EMBEDDING).Data != mFullNonBlock.get_tensor(LLamaWeightID::LM_HEAD).Data) {
+    // if we have untied embeddings, we need to zero them out, same as above
+    if(mFullNonBlock.get_tensor(LLamaWeightID::LM_HEAD).Data != nullptr) {
         fill_zero(mFullNonBlock.get_tensor(LLamaWeightID::EMBEDDING), stream);
     }
     fill_zero(mFullNonBlock.get_tensor(LLamaWeightID::LNF_W), stream);
@@ -102,7 +101,6 @@ void LLamaGradientsBlockSharded_AllToAll::on_notify_block(int layer_idx, SimpleT
     }
 
     // make sure we've done the local accumulation before we allow communication to begin.
-
     CUDA_CHECK(cudaEventRecord(signal, stream));
     NvtxRange range("all-to-all-gradients", layer_idx);
 
