@@ -116,6 +116,19 @@ void rope_backward(float* dinp, const float* dout, const float *freqs_cis, float
 void rope_backward(nv_bfloat16* dinp, const nv_bfloat16* dout, const half *freqs_cis, float* abs_max_ptr, int B, int T, int Nq, int Nkv, int head_dim, cudaStream_t stream);
 void rope_backward(Tensor& dinp, const Tensor& dout, const Tensor& freqs_cis, float* abs_max_ptr, int B, int T, int Nq, int Nkv, int head_dim, cudaStream_t stream);
 
+void qk_norm_forward(float* out, float* r_std, const float* inp,
+                     const float* q_wgt, const float* k_wgt,
+                     float epsilon, int BT, int Nq, int Nkv, int HeadDim,
+                     cudaStream_t stream);
+void qk_norm_forward(nv_bfloat16* out, float* r_std, const nv_bfloat16* inp,
+                     const nv_bfloat16* q_wgt, const nv_bfloat16* k_wgt,
+                     float epsilon, int BT, int Nq, int Nkv, int HeadDim,
+                     cudaStream_t stream);
+void qk_norm_forward(Tensor& out, Tensor& r_std, const Tensor& inp,
+                     const Tensor& q_wgt, const Tensor& k_wgt,
+                     float epsilon, int BT, int Nq, int Nkv, int HeadDim,
+                     cudaStream_t stream);
+
 // swiglu assumes that input is the concatenation of gate and up projection.
 void swiglu_forward(nv_bfloat16* out, const nv_bfloat16* inp, float* abs_max_ptr, int B, int T, int C, cudaStream_t stream);
 void swiglu_forward(float* out, const float* inp, float* abs_max_ptr, int B, int T, int C, cudaStream_t stream);
