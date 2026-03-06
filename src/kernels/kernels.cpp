@@ -108,16 +108,16 @@ void rope_backward(Tensor& dinp, const Tensor& dout, const Tensor& freqs_cis, fl
     }
 }
 
-void qk_norm_forward(Tensor& out, Tensor& r_std, const Tensor& inp, const Tensor& q_wgt, const Tensor& k_wgt,
+void qk_norm_forward(Tensor& out, Tensor& r_rms, const Tensor& inp, const Tensor& q_wgt, const Tensor& k_wgt,
                      float epsilon, int BT, int Nq, int Nkv, int HeadDim, cudaStream_t stream) {
     if (out.DType == ETensorDType::BF16) {
-        qk_norm_forward(out.get<nv_bfloat16>(), r_std.get<float>(), inp.get<nv_bfloat16>(),
+        qk_norm_forward(out.get<nv_bfloat16>(), r_rms.get<float>(), inp.get<nv_bfloat16>(),
             q_wgt.get<nv_bfloat16>(), k_wgt.get<nv_bfloat16>(), epsilon, BT, Nq, Nkv, HeadDim, stream);
     } else if (out.DType == ETensorDType::FP32) {
-        qk_norm_forward(out.get<float>(), r_std.get<float>(), inp.get<float>(),
+        qk_norm_forward(out.get<float>(), r_rms.get<float>(), inp.get<float>(),
             q_wgt.get<float>(), k_wgt.get<float>(), epsilon, BT, Nq, Nkv, HeadDim, stream);
     } else {
-        UNSUPPORTED_DTYPE(out, r_std, inp, q_wgt, k_wgt);
+        UNSUPPORTED_DTYPE(out, r_rms, inp, q_wgt, k_wgt);
     }
 }
 

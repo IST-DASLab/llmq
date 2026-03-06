@@ -9,7 +9,7 @@
 constexpr const int GroupSize = 8;
 
 template<typename Float>
-__global__ void qk_norm_simple_kernel(Float* out, float* r_std, const Float* inp, const Float* q_wgt, const Float* k_wgt, float epsilon, int BT, int Nq, int Nkv, int HeadDim) {
+__global__ void qk_norm_simple_kernel(Float* out, float* r_rms, const Float* inp, const Float* q_wgt, const Float* k_wgt, float epsilon, int BT, int Nq, int Nkv, int HeadDim) {
    using x128 = GenericVector<Float, 16/sizeof(Float)>;
 
     const int lane = threadIdx.x % GroupSize;
@@ -86,17 +86,17 @@ __global__ void qk_norm_simple_kernel(Float* out, float* r_std, const Float* inp
             out_data[k] = (Float)n * (Float)w[k]; // scale
         }
 
-        out_data.store(out + c);    // TODO cs
+        out_data.store(out + c);
     }
 
     // store the rms, no need to cache it
-    if(lane == 0 && r_std != nullptr) {
-        __stcs(r_std + idx, s);
+    if(lane == 0 && r_rms != nullptr) {
+        __stcs(r_rms + idx, s);
     }
 }
 
 template<typename Float>
-void qk_norm_forward(Float* out, float* r_std,
+void qk_norm_forward(Float* out, float* r_rms,
                      const Float* inp,
                      const Float* q_wgt, const Float* k_wgt,
                      float epsilon,
@@ -118,22 +118,22 @@ void qk_norm_forward(Float* out, float* r_std,
         smem));
 
     qk_norm_simple_kernel<Float><<<grid_size, block_size, smem, stream>>>(
-        out, r_std, inp, q_wgt, k_wgt, epsilon, BT, Nq, Nkv, HeadDim);
+        out, r_rms, inp, q_wgt, k_wgt, epsilon, BT, Nq, Nkv, HeadDim);
 
     CUDA_CHECK(cudaGetLastError());
 }
 
 // Explicit instantiations
-void qk_norm_forward(float* out, float* r_std, const float* inp,
+void qk_norm_forward(float* out, float* r_rms, const float* inp,
                      const float* q_wgt, const float* k_wgt,
                      float epsilon, int BT, int Nq, int Nkv, int HeadDim,
                      cudaStream_t stream) {
-    qk_norm_forward<float>(out, r_std, inp, q_wgt, k_wgt, epsilon, BT, Nq, Nkv, HeadDim, stream);
+    qk_norm_forward<float>(out, r_rms, inp, q_wgt, k_wgt, epsilon, BT, Nq, Nkv, HeadDim, stream);
 }
 
-void qk_norm_forward(nv_bfloat16* out, float* r_std, const nv_bfloat16* inp,
+void qk_norm_forward(nv_bfloat16* out, float* r_rms, const nv_bfloat16* inp,
                      const nv_bfloat16* q_wgt, const nv_bfloat16* k_wgt,
                      float epsilon, int BT, int Nq, int Nkv, int HeadDim,
                      cudaStream_t stream) {
-    qk_norm_forward<nv_bfloat16>(out, r_std, inp, q_wgt, k_wgt, epsilon, BT, Nq, Nkv, HeadDim, stream);
+    qk_norm_forward<nv_bfloat16>(out, r_rms, inp, q_wgt, k_wgt, epsilon, BT, Nq, Nkv, HeadDim, stream);
 }

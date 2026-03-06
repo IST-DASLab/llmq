@@ -222,6 +222,29 @@ void bind_rope_backward(const CudaArray& dinp, const CudaArray& dout, const Cuda
         get_abs_max_ptr(abs_max), B, T, Nq, Nkv, head_dim, as_stream(stream));
 }
 
+// ---- QK Norm ----
+void bind_qk_norm_forward(const CudaArray& out, const CudaArray& r_std, const CudaArray& inp,
+                          const CudaArray& q_wgt, const CudaArray& k_wgt,
+                          float epsilon, int Nq, int Nkv, const std::uintptr_t stream) {
+    NB_CHECK_NDIMS(out, 3);
+    NB_CHECK_NDIMS(inp, 3);
+    NB_CHECK_NDIMS(r_std, 3);
+    NB_CHECK_NDIMS(q_wgt, 1);
+    NB_CHECK_NDIMS(k_wgt, 1);
+
+    const long B       = get_dimension_checked({out.shape(0), inp.shape(0), r_std.shape(0)}, "B");
+    const long T       = get_dimension_checked({out.shape(1), inp.shape(1), r_std.shape(1)}, "T");
+    const long HeadDim = get_dimension_checked({q_wgt.shape(0), k_wgt.shape(0)}, "HeadDim");
+    (void)get_dimension_checked({out.shape(2), inp.shape(2), (std::size_t)((Nq + 2 * Nkv) * HeadDim)}, "NTotal*HeadDim");
+    (void)get_dimension_checked({r_std.shape(2), (std::size_t)(Nq + 2 * Nkv)}, "Nq+2*Nkv");
+
+    Tensor out_t   = to_tensor(out);
+    Tensor r_std_t = to_tensor(r_std);
+    qk_norm_forward(out_t, r_std_t, to_tensor(inp), to_tensor(q_wgt), to_tensor(k_wgt),
+        epsilon, B * T, Nq, Nkv, HeadDim, as_stream(stream));
+}
+
+
 // ---- SwiGLU ----
 void bind_swiglu_forward(const CudaArray& out, const CudaArray& inp, const std::optional<CudaArray>& abs_max,
                          const std::uintptr_t stream) {
@@ -532,6 +555,10 @@ void register_kernels(nanobind::module_& m) {
     // Rope
     m.def("rope_forward", &bind_rope_forward, nb::arg("out"), nb::arg("in"), nb::arg("freqs_cis"), nb::arg("absmax") = std::nullopt, nb::arg("Nq"), nb::arg("Nkv"), nb::arg("stream") = 0);
     m.def("rope_backward", &bind_rope_backward, nb::arg("dinp"), nb::arg("dout"), nb::arg("freqs_cis"), nb::arg("absmax") = std::nullopt, nb::arg("Nq"), nb::arg("Nkv"),  nb::arg("stream") = 0);
+
+    // QK Norm
+    m.def("qk_norm_forward", &bind_qk_norm_forward, nb::arg("out"), nb::arg("r_rms"), nb::arg("inp"),
+        nb::arg("q_wgt"), nb::arg("k_wgt"), nb::arg("epsilon"), nb::arg("Nq"), nb::arg("Nkv"), nb::arg("stream") = 0);
 
     // SwiGLU
     m.def("swiglu_forward", &bind_swiglu_forward, nb::arg("out"), nb::arg("inp"), nb::arg("absmax") = std::nullopt, nb::arg("stream") = 0);
