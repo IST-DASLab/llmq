@@ -160,4 +160,6 @@ public:
 };
 
 TensorShard shard_view(const Tensor& src, int idx, int num);
+Tensor flat_view(const Tensor& src);
+
 #endif //LLMQ_SRC_UTILS_TENSOR_H
