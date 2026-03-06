@@ -177,17 +177,27 @@ void AdamWStateManager::allocate_state(IModel& model, cudaStream_t stream, EAllo
         }
 
         mBlocksMScales.resize(mConfig.NumLayers);
+
         if(mMType == ETensorDType::FP8_E4M3) {
+            auto prepare_shape_for_scales = [&](auto&& c) {
+                // creates shards same as main weight
+                auto sharded = shard_empty_container(flattened_view(c), mWorld);
+                // flatten the local shard
+                auto flattened = flattened_view(sharded);
+                // and group into scaling groups
+                auto grouped = shard_empty_container(std::move(flattened), 128);
+                return grouped;
+            };
             // we "shard" for 128 as many GPUs, so that we get 1 scale per 128 weights.
             for (int i = 0; i < mConfig.NumLayers; ++i) {
-                mBlocksMScales[i] = shard_empty_container(model.create_block_container(mConfig, ETensorDType::FP32, ETensorDType::FP32), 128 * mWorld);
+                mBlocksMScales[i] = prepare_shape_for_scales(model.create_block_container(mConfig, ETensorDType::FP32, ETensorDType::FP32));
                 alloc_lazy.allocate(mBlocksMScales[i]);
                 alloc_lazy.commit(alloc, EAllocationType::ON_DEVICE, "m_block_scales");
                 visit([stream](Tensor& t){
                     fill_constant(t, 1.f, t.nelem(), stream);
                 }, mBlocksMScales[i]);
             }
-            mNonBlockMScales = shard_empty_container(model.create_non_block_container(mConfig, ETensorDType::FP32, ETensorDType::FP32), 128 * mWorld);
+            mNonBlockMScales = prepare_shape_for_scales(model.create_non_block_container(mConfig, ETensorDType::FP32, ETensorDType::FP32));
             alloc_lazy.allocate(mNonBlockMScales);
             alloc_lazy.commit(alloc, EAllocationType::ON_DEVICE, "m_nonblock_scales");
             visit([stream](Tensor& t){
