@@ -230,15 +230,15 @@ public:
         return result;
     }
 
-    __host__ __device__ void store(ElementType* dst) {
+    __host__ __device__ void store(ElementType* dst) const {
         memcpy_aligned<size, detail::TransferMode::DEFAULT>(dst, values);
     }
 
-    __host__ __device__ void store_cg(ElementType* dst) {
+    __host__ __device__ void store_cg(ElementType* dst) const {
         memcpy_aligned<size, detail::TransferMode::STORE_CG>(dst, values);
     }
 
-    __host__ __device__ void store_cs(ElementType* dst) {
+    __host__ __device__ void store_cs(ElementType* dst) const {
         memcpy_aligned<size, detail::TransferMode::STORE_CS>(dst, values);
     }
 
