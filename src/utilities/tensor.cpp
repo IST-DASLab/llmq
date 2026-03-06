@@ -119,6 +119,14 @@ TensorShard shard_view(const Tensor& src, int idx, int num) {
     return TensorShard{shard, idx, num, src.Sizes};
 }
 
+Tensor flat_view(const Tensor& src) {
+    Tensor dst{src};
+    dst.Sizes.fill(0);
+    dst.Sizes[0] = src.nelem();
+    dst.Rank = 1;
+    return dst;
+}
+
 void visit(const std::function<void(Tensor&)>& func, SimpleTensorContainer& container) {
     auto cs = container.num_tensors();
     for(std::size_t i = 0; i < cs; ++i) {
@@ -166,6 +174,14 @@ GenericTensorContainer shard_empty_container(GenericTensorContainer&& c, int wor
         t.Sizes[0] = div_exact(t.Sizes[0], static_cast<long>(world));
     }
     return std::move(c);
+}
+
+GenericTensorContainer flattened_view(const GenericTensorContainer& c) {
+    std::vector<Tensor> flats(c.num_tensors());
+    for (std::size_t i = 0; i < c.num_tensors(); ++i) {
+        flats.at(i) = flat_view(c.get_tensor(i));
+    }
+    return GenericTensorContainer{flats};
 }
 
 GenericTensorContainer shard_view(const GenericTensorContainer& c, int rank, int world) {
