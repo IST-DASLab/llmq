@@ -58,6 +58,14 @@ def rope_backward(dinp: torch.Tensor, dout: torch.Tensor, freqs_cis: torch.Tenso
     _pyllmq.rope_backward(dinp, dout, freqs_cis, absmax, Nq, Nkv, stream)
 
 
+# QK Norm
+@torch.library.custom_op("llmq::qk_norm_forward", mutates_args=("out", "r_rms"))
+def qk_norm_forward(out: torch.Tensor, r_rms: torch.Tensor, inp: torch.Tensor,
+                    q_wgt: torch.Tensor, k_wgt: torch.Tensor,
+                    epsilon: float, Nq: int, Nkv: int, stream: int = 0) -> None:
+    _pyllmq.qk_norm_forward(out, r_rms, inp, q_wgt, k_wgt, epsilon, Nq, Nkv, stream)
+
+
 # SwiGLU
 @torch.library.custom_op("llmq::swiglu_forward", mutates_args=("out", "absmax"))
 def swiglu_forward(out: torch.Tensor, inp: torch.Tensor, absmax: torch.Tensor | None, stream: int = 0) -> None:
@@ -209,7 +217,7 @@ def adamw_update(params: torch.Tensor, grads: torch.Tensor, m: torch.Tensor, v: 
 __all__ = [
     'encoder_forward',
     'rmsnorm_forward', 'rmsnorm_backward', 'fused_residual_rmsnorm_forward',
-    'rope_forward', 'rope_backward',
+    'rope_forward', 'rope_backward', 'qk_norm_forward',
     'swiglu_forward', 'swiglu_forward_quant', 'swiglu_backward',
     'attention_forward', 'attention_backward',
     'fused_classifier', 'grouped_loss_sum',

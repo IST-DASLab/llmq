@@ -412,6 +412,69 @@ def test_rope_forward_backward_matches_python(B, T, Nq, Nkv, HD, dtype):
 
 
 # ============================================================
+# qk_norm_forward
+# ============================================================
+
+def _qk_norm_reference(inp, q_wgt, k_wgt, Nq, Nkv, eps):
+    B, T, _ = inp.shape
+    N = Nq + 2 * Nkv
+    HeadDim = q_wgt.shape[0]
+    x = inp.float().view(B, T, N, HeadDim)
+
+    # Only norm Q and K heads
+    Nqk = Nq + Nkv
+    x_qk = x[:, :, :Nqk, :]                                    # (B, T, Nq+Nkv, HeadDim)
+
+    var = (x_qk ** 2).mean(dim=-1, keepdim=True)
+    s = torch.rsqrt(var + eps)                                  # (B, T, Nq+Nkv, 1)
+
+    wgt = torch.cat([
+        q_wgt.float().unsqueeze(0).expand(Nq, -1),
+        k_wgt.float().unsqueeze(0).expand(Nkv, -1),
+    ], dim=0).view(1, 1, Nqk, HeadDim)
+
+    x_qk_normed = (x_qk * s * wgt).to(inp.dtype)               # (B, T, Nq+Nkv, HeadDim)
+
+    # V heads are passed through unchanged
+    x_v = x[:, :, Nqk:, :].to(inp.dtype)                       # (B, T, Nkv, HeadDim)
+
+    # r_rms: pad V slots with 1.0 (or zeros) since they aren't normed
+    r_rms_qk = s.squeeze(-1).float()                            # (B, T, Nq+Nkv)
+    r_rms_v  = torch.ones(B, T, Nkv, dtype=torch.float32, device=inp.device)
+    r_rms    = torch.cat([r_rms_qk, r_rms_v], dim=-1)          # (B, T, N)
+
+    out = torch.cat([x_qk_normed, x_v], dim=2).view(B, T, N * HeadDim)
+    return out, r_rms
+
+
+@pytest.mark.parametrize("B,T,Nq,Nkv,HeadDim", [
+    (1, 4, 2, 1, 16),
+    (2, 8, 4, 2, 64),
+    (4, 16, 8, 4, 128),
+])
+@pytest.mark.parametrize("dtype", DTYPES)
+def test_qk_norm_forward(B, T, Nq, Nkv, HeadDim, dtype):
+    torch.manual_seed(0)
+    device = "cuda"
+    N = Nq + 2 * Nkv
+    eps = 1e-6
+
+    inp    = torch.randn((B, T, N * HeadDim), device=device, dtype=dtype)
+    q_wgt  = torch.randn((HeadDim,), device=device, dtype=dtype)
+    k_wgt  = torch.randn((HeadDim,), device=device, dtype=dtype)
+    out    = torch.empty_like(inp)
+    # NOTE: the kernel does not write rrms for value heads at all; init to one to match reference
+    r_rms  = torch.ones((B, T, N), device=device, dtype=torch.float32)
+
+    K.qk_norm_forward(out, r_rms, inp, q_wgt, k_wgt, eps, Nq, Nkv)
+    ref_out, ref_r_std = _qk_norm_reference(inp, q_wgt, k_wgt, Nq, Nkv, eps)
+
+    rtol, atol = TOL[dtype]
+    assert r_rms.cpu().numpy() == pytest.approx(ref_r_std.cpu().numpy(), rel=rtol, abs=atol)
+    assert out.float().cpu().numpy() == pytest.approx(ref_out.float().cpu().numpy(), rel=rtol, abs=atol)
+
+
+# ============================================================
 # fused_residual_rmsnorm_forward
 # ============================================================
 
