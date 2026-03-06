@@ -17,6 +17,8 @@ __global__ void fill_kernel(floatX* dst, floatX value, std::size_t count) {
 
 template<typename floatX>
 void fill_imp(floatX* dst, floatX value, std::size_t count, cudaStream_t stream) {
+    if (count == 0) return;
+    if (dst == nullptr) throw std::invalid_argument("dst is nullptr");
     fill_kernel<<<div_ceil(count, static_cast<std::size_t>(256)), 256, 0, stream>>> (dst, value, count);
     CUDA_CHECK(cudaGetLastError());
 }
