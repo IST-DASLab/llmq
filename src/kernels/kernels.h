@@ -129,6 +129,29 @@ void qk_norm_forward(Tensor& out, Tensor& r_rms, const Tensor& inp,
                      float epsilon, int BT, int Nq, int Nkv, int HeadDim,
                      cudaStream_t stream);
 
+std::size_t qk_norm_backward_scratch_size(int Nq, int Nkv, int HeadDim, ETensorDType dtype, const cudaDeviceProp& dp);
+
+void qk_norm_backward(float* dinp, float* dq_wgt, float* dk_wgt, std::byte* scratch,
+                      const float* dout, const float* inp,
+                      const float* q_wgt, const float* k_wgt,
+                      const float* rstd, float* abs_max_ptr,
+                      float epsilon, int BT, int Nq, int Nkv, int HeadDim,
+                      const cudaDeviceProp& dp, cudaStream_t stream);
+
+void qk_norm_backward(nv_bfloat16* dinp, nv_bfloat16* dq_wgt, nv_bfloat16* dk_wgt, std::byte* scratch,
+                      const nv_bfloat16* dout, const nv_bfloat16* inp,
+                      const nv_bfloat16* q_wgt, const nv_bfloat16* k_wgt,
+                      const float* rstd, float* abs_max_ptr,
+                      float epsilon, int BT, int Nq, int Nkv, int HeadDim,
+                      const cudaDeviceProp& dp, cudaStream_t stream);
+
+void qk_norm_backward(Tensor& dinp, Tensor& dq_wgt, Tensor& dk_wgt, Tensor& scratch,
+                      const Tensor& dout, const Tensor& inp,
+                      const Tensor& q_wgt, const Tensor& k_wgt,
+                      const Tensor& rstd, float* abs_max_ptr,
+                      float epsilon, int BT, int Nq, int Nkv, int HeadDim,
+                      const cudaDeviceProp& dp, cudaStream_t stream);
+
 // swiglu assumes that input is the concatenation of gate and up projection.
 void swiglu_forward(nv_bfloat16* out, const nv_bfloat16* inp, float* abs_max_ptr, int B, int T, int C, cudaStream_t stream);
 void swiglu_forward(float* out, const float* inp, float* abs_max_ptr, int B, int T, int C, cudaStream_t stream);

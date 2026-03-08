@@ -65,6 +65,16 @@ def qk_norm_forward(out: torch.Tensor, r_rms: torch.Tensor, inp: torch.Tensor,
                     epsilon: float, Nq: int, Nkv: int, stream: int = 0) -> None:
     _pyllmq.qk_norm_forward(out, r_rms, inp, q_wgt, k_wgt, epsilon, Nq, Nkv, stream)
 
+@torch.library.custom_op("llmq::qk_norm_backward", mutates_args=("dinp", "dq_wgt", "dk_wgt"))
+def qk_norm_backward(dinp: torch.Tensor, dq_wgt: torch.Tensor, dk_wgt: torch.Tensor,
+                     scratch: torch.Tensor, dout: torch.Tensor, inp: torch.Tensor,
+                     q_wgt: torch.Tensor, k_wgt: torch.Tensor, rstd: torch.Tensor,
+                     abs_max: torch.Tensor | None,
+                     epsilon: float, Nq: int, Nkv: int, stream: int = 0) -> None:
+    _pyllmq.qk_norm_backward(dinp, dq_wgt, dk_wgt, scratch, dout, inp, q_wgt, k_wgt, rstd, abs_max, epsilon, Nq, Nkv, stream)
+
+def get_qknorm_backward_scratch_size(Nq: int, Nkv: int, HeadDim: int, dtype: torch.dtype):
+    return _pyllmq.get_qknorm_backward_scratch_size(Nq,  Nkv, HeadDim, _TORCH_TO_TYPE_NAME[dtype])
 
 # SwiGLU
 @torch.library.custom_op("llmq::swiglu_forward", mutates_args=("out", "absmax"))

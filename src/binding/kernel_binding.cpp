@@ -244,6 +244,46 @@ void bind_qk_norm_forward(const CudaArray& out, const CudaArray& r_std, const Cu
         epsilon, B * T, Nq, Nkv, HeadDim, as_stream(stream));
 }
 
+void bind_qk_norm_backward(const CudaArray& dinp, const CudaArray& dq_wgt, const CudaArray& dk_wgt,
+                           const CudaArray& scratch,
+                           const CudaArray& dout, const CudaArray& inp,
+                           const CudaArray& q_wgt, const CudaArray& k_wgt,
+                           const CudaArray& rstd,
+                           const std::optional<CudaArray>& abs_max,
+                           float epsilon, int Nq, int Nkv,
+                           const std::uintptr_t stream) {
+    NB_CHECK_NDIMS(dinp,   3);
+    NB_CHECK_NDIMS(dq_wgt, 1);
+    NB_CHECK_NDIMS(dk_wgt, 1);
+    NB_CHECK_NDIMS(scratch, 1);
+    NB_CHECK_NDIMS(dout,   3);
+    NB_CHECK_NDIMS(inp,    3);
+    NB_CHECK_NDIMS(q_wgt,  1);
+    NB_CHECK_NDIMS(k_wgt,  1);
+    NB_CHECK_NDIMS(rstd,   3);
+
+    auto dp = get_device_prop(inp.device_id());
+    const long B       = get_dimension_checked({dinp.shape(0), dout.shape(0), inp.shape(0), rstd.shape(0)}, "B");
+    const long T       = get_dimension_checked({dinp.shape(1), dout.shape(1), inp.shape(1), rstd.shape(1)}, "T");
+    const long HeadDim = get_dimension_checked({q_wgt.shape(0), k_wgt.shape(0), dq_wgt.shape(0), dk_wgt.shape(0)}, "HeadDim");
+    (void)get_dimension_checked({dinp.shape(2), dout.shape(2), inp.shape(2), (std::size_t)((Nq + 2 * Nkv) * HeadDim)}, "NTotal*HeadDim");
+    (void)get_dimension_checked({rstd.shape(2), (std::size_t)(Nq + 2 * Nkv)}, "Nq+2*Nkv");
+
+    Tensor dinp_t   = to_tensor(dinp);
+    Tensor dq_wgt_t = to_tensor(dq_wgt);
+    Tensor dk_wgt_t = to_tensor(dk_wgt);
+    Tensor scratch_t = to_tensor(scratch);
+    qk_norm_backward(dinp_t, dq_wgt_t, dk_wgt_t, scratch_t,
+        to_tensor(dout), to_tensor(inp), to_tensor(q_wgt), to_tensor(k_wgt), to_tensor(rstd),
+        get_abs_max_ptr(abs_max), epsilon, B * T, Nq, Nkv, HeadDim,
+        dp, as_stream(stream));
+}
+
+long bind_get_qknorm_backward_scratch_size(int Nq, int Nkv, int HeadDim, std::string dtype) {
+    int did;
+    CUDA_CHECK(cudaGetDevice(&did));
+    return qk_norm_backward_scratch_size(Nq, Nkv, HeadDim, dtype_from_str(dtype), get_device_prop(did));
+}
 
 // ---- SwiGLU ----
 void bind_swiglu_forward(const CudaArray& out, const CudaArray& inp, const std::optional<CudaArray>& abs_max,
@@ -559,6 +599,10 @@ void register_kernels(nanobind::module_& m) {
     // QK Norm
     m.def("qk_norm_forward", &bind_qk_norm_forward, nb::arg("out"), nb::arg("r_rms"), nb::arg("inp"),
         nb::arg("q_wgt"), nb::arg("k_wgt"), nb::arg("epsilon"), nb::arg("Nq"), nb::arg("Nkv"), nb::arg("stream") = 0);
+    m.def("qk_norm_backward", &bind_qk_norm_backward, nb::arg("dinp"), nb::arg("dq_wgt"), nb::arg("dk_wgt"),
+        nb::arg("scratch"), nb::arg("dout"), nb::arg("inp"), nb::arg("q_wgt"), nb::arg("k_wgt"),
+        nb::arg("rstd"), nb::arg("abs_max") = std::nullopt, nb::arg("epsilon"), nb::arg("Nq"),  nb::arg("Nkv"), nb::arg("stream") = 0);
+    m.def("get_qknorm_backward_scratch_size", &bind_get_qknorm_backward_scratch_size, nb::arg("Nq"), nb::arg("Nkv"), nb::arg("HeadDim"), nb::arg("dtype"));
 
     // SwiGLU
     m.def("swiglu_forward", &bind_swiglu_forward, nb::arg("out"), nb::arg("inp"), nb::arg("absmax") = std::nullopt, nb::arg("stream") = 0);

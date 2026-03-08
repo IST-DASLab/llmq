@@ -473,6 +473,53 @@ def test_qk_norm_forward(B, T, Nq, Nkv, HeadDim, dtype):
     assert r_rms.cpu().numpy() == pytest.approx(ref_r_std.cpu().numpy(), rel=rtol, abs=atol)
     assert out.float().cpu().numpy() == pytest.approx(ref_out.float().cpu().numpy(), rel=rtol, abs=atol)
 
+@pytest.mark.parametrize("B,T,Nq,Nkv,HeadDim", [
+    (1, 4, 2, 1, 16),
+    (2, 8, 4, 2, 64),
+    (4, 16, 8, 4, 128),
+])
+@pytest.mark.parametrize("dtype", DTYPES)
+def test_qk_norm_backward(B, T, Nq, Nkv, HeadDim, dtype):
+    torch.manual_seed(0)
+    device = "cuda"
+    N = Nq + 2 * Nkv
+    eps = 1e-6
+
+    inp   = torch.randn((B, T, N * HeadDim), device=device, dtype=dtype, requires_grad=True)
+    q_wgt = torch.randn((HeadDim,), device=device, dtype=dtype, requires_grad=True)
+    k_wgt = torch.randn((HeadDim,), device=device, dtype=dtype, requires_grad=True)
+    dout  = torch.randn((B, T, N * HeadDim), device=device, dtype=dtype)
+
+    # reference: autograd through the reference forward
+    ref_out, _ = _qk_norm_reference(inp, q_wgt, k_wgt, Nq, Nkv, eps)
+    ref_out.backward(dout)
+    ref_dinp   = inp.grad.clone()
+    ref_dq_wgt = q_wgt.grad.clone()
+    ref_dk_wgt = k_wgt.grad.clone()
+
+    # kernel
+    inp.grad   = None
+    q_wgt.grad = None
+    k_wgt.grad = None
+
+    scratch_size = K.get_qknorm_backward_scratch_size(Nq, Nkv, HeadDim, inp.dtype)
+    scratch  = torch.zeros((scratch_size,), device=device, dtype=torch.uint8)
+    dinp     = torch.zeros_like(inp)
+    dq_wgt_k = torch.zeros_like(q_wgt)
+    dk_wgt_k = torch.zeros_like(k_wgt)
+    r_rms    = torch.ones((B, T, N), device=device, dtype=torch.float32)
+    K.qk_norm_forward(torch.empty_like(inp), r_rms, inp, q_wgt, k_wgt, eps, Nq, Nkv)
+
+    K.qk_norm_backward(dinp, dq_wgt_k, dk_wgt_k, scratch,
+                       dout, inp, q_wgt, k_wgt, r_rms,
+                       None, eps, Nq, Nkv)
+
+    rtol, atol = TOL[dtype]
+    assert dinp.float().cpu().numpy()     == pytest.approx(ref_dinp.float().cpu().numpy(),   rel=rtol, abs=atol)
+    assert dq_wgt_k.float().cpu().numpy() == pytest.approx(ref_dq_wgt.float().cpu().numpy(), rel=rtol, abs=atol)
+    assert dk_wgt_k.float().cpu().numpy() == pytest.approx(ref_dk_wgt.float().cpu().numpy(), rel=rtol, abs=atol)
+
+
 
 # ============================================================
 # fused_residual_rmsnorm_forward
