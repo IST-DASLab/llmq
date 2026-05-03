@@ -17,6 +17,47 @@ __device__ float reduce_group_sum(float acc, unsigned int active_mask) {
 }
 
 template<typename Float>
+struct QKHelpers {
+    using x128 = GenericVector<Float, 16/sizeof(Float)>;
+
+    static __device__ __forceinline__ float norm_head(Float* out, x128* s_in, const x128* wgt_src, const Float* inp, int HeadDim, float epsilon) {
+        using x128 = GenericVector<Float, 16/sizeof(Float)>;
+        const int lane = threadIdx.x % GroupSize;
+
+        float acc = 0.f;
+
+        for(int c = lane * x128::size; c < HeadDim; c += GroupSize * x128::size) {
+            const x128 in_data = x128::load_cs(inp + c);
+            s_in[c / x128::size] = in_data;
+            for(int k = 0; k < x128::size; ++k) {
+                float data_k = (float)in_data[k];
+                acc += data_k * data_k;
+            }
+        }
+
+        acc = reduce_group_sum(acc, 0xffffffff) / HeadDim;
+        float s = rsqrtf(acc + epsilon);
+
+        for(int c = lane * x128::size; c < HeadDim; c += GroupSize * x128::size) {
+            const x128 in_data = s_in[c / x128::size];
+            const x128 w = wgt_src[c / x128::size];
+            x128 out_data;
+            for(int k = 0; k < x128::size; ++k) {
+                float n = s * (float)in_data[k]; // normalized output
+                // Note: would make sense to do this in fp32, but transformers uses bf16 here,
+                // so we try to match
+                out_data[k] = (Float)n * (Float)w[k]; // scale
+            }
+
+            out_data.store(out + c);
+        }
+
+        return s;
+    }
+};
+
+
+template<typename Float>
 __global__ void qk_norm_forward_simple_kernel(Float* out, float* r_rms, const Float* inp, const Float* q_wgt, const Float* k_wgt, float epsilon, int BT, int Nq, int Nkv, int HeadDim) {
     using x128 = GenericVector<Float, 16/sizeof(Float)>;
 
@@ -65,33 +106,7 @@ __global__ void qk_norm_forward_simple_kernel(Float* out, float* r_rms, const Fl
         return;
     }
 
-    float acc = 0.f;
-
-    for(int c = lane * x128::size; c < HeadDim; c += GroupSize * x128::size) {
-        const x128 in_data = x128::load_cs(inp + c);
-        s_in[c / x128::size] = in_data;
-        for(int k = 0; k < x128::size; ++k) {
-            float data_k = (float)in_data[k];
-            acc += data_k * data_k;
-        }
-    }
-
-    acc = reduce_group_sum(acc, 0xffffffff) / HeadDim;
-    float s = rsqrtf(acc + epsilon);
-
-    for(int c = lane * x128::size; c < HeadDim; c += GroupSize * x128::size) {
-        const x128 in_data = s_in[c / x128::size];
-        const x128 w = wgt_src[c / x128::size];
-        x128 out_data;
-        for(int k = 0; k < x128::size; ++k) {
-            float n = s * (float)in_data[k]; // normalized output
-            // Note: would make sense to do this in fp32, but transformers uses bf16 here,
-            // so we try to match
-            out_data[k] = (Float)n * (Float)w[k]; // scale
-        }
-
-        out_data.store(out + c);
-    }
+    float s = QKHelpers<Float>::norm_head(out, s_in, wgt_src, inp, HeadDim, epsilon);
 
     // store the rms, no need to cache it
     if(lane == 0 && r_rms != nullptr) {
