@@ -20,7 +20,7 @@ template<typename Float>
 struct QKHelpers {
     using x128 = GenericVector<Float, 16/sizeof(Float)>;
 
-    static __device__ __forceinline__ float norm_head(Float* out, x128* s_in, const x128* wgt_src, const Float* inp, int HeadDim, float epsilon) {
+    static __device__ __forceinline__ float norm_head(Float* out, x128* s_in, const x128* wgt_src, const Float* inp, int HeadDim, float epsilon, int active_mask) {
         using x128 = GenericVector<Float, 16/sizeof(Float)>;
         const int lane = threadIdx.x % GroupSize;
 
@@ -35,7 +35,7 @@ struct QKHelpers {
             }
         }
 
-        acc = reduce_group_sum(acc, 0xffffffff) / HeadDim;
+        acc = reduce_group_sum(acc, active_mask) / HeadDim;
         float s = rsqrtf(acc + epsilon);
 
         for(int c = lane * x128::size; c < HeadDim; c += GroupSize * x128::size) {
@@ -106,7 +106,7 @@ __global__ void qk_norm_forward_simple_kernel(Float* out, float* r_rms, const Fl
         return;
     }
 
-    float s = QKHelpers<Float>::norm_head(out, s_in, wgt_src, inp, HeadDim, epsilon);
+    float s = QKHelpers<Float>::norm_head(out, s_in, wgt_src, inp, HeadDim, epsilon, 0xffffffff);
 
     // store the rms, no need to cache it
     if(lane == 0 && r_rms != nullptr) {
@@ -307,6 +307,119 @@ qk_norm_backward_reduce_kernel(Float* dq_wgt, Float* dk_wgt, const std::byte* sc
     }
 }
 
+// fused kernels
+
+template<typename Float, typename FloatFreq>
+__global__ void qk_norm_and_rope_fwd_kernel(Float* out, float* r_rms, float* abs_max_ptr,
+                                            const Float* inp,
+                                            const Float* q_wgt, const Float* k_wgt,
+                                            const FloatFreq* freqs_cis,
+                                            float epsilon, int BT, int T, int Nq, int Nkv, int HeadDim) {
+    static_assert(sizeof(Float) == sizeof(FloatFreq), "Float and FloatFreq must have the same size");
+    using x128 = GenericVector<Float, 16/sizeof(Float)>;
+    using freq128 = GenericVector<FloatFreq, 16/sizeof(FloatFreq)>;
+
+    const int lane = threadIdx.x % GroupSize;
+    const int group = threadIdx.x / GroupSize;
+    __shared__ float block_abs_max;
+    if (abs_max_ptr && threadIdx.x == 0) {
+        block_abs_max = 0.f;
+    }
+    float thread_abs_max = 0.f;
+
+    // load weights into shared memory
+    // do this before we allow any threads to exit!
+    extern __shared__ char* smem[];
+
+    // load128/store128 sometimes generated multiple instructions when the types here were floatX*, so
+    // let's keep everything as x128
+    x128* s_q_wgt = reinterpret_cast<x128*>(smem);
+    x128* s_k_wgt = reinterpret_cast<x128*>(smem) + (HeadDim / x128::size);
+    x128* s_in = reinterpret_cast<x128*>(s_k_wgt) + (HeadDim / x128::size) + group * (HeadDim / x128::size);
+
+    for(int i =  threadIdx.x * x128::size; i < HeadDim; i += blockDim.x * x128::size) {
+        s_q_wgt[i/x128::size] = x128::load(q_wgt + i);
+        s_k_wgt[i/x128::size] = x128::load(k_wgt + i);
+    }
+
+    __syncthreads();
+    int idx = blockIdx.x * (blockDim.x / GroupSize) + group;
+
+    int h = idx % (Nq + 2 * Nkv);
+    int bt = idx / (Nq + 2 * Nkv);
+    int t = bt % T;
+
+    if (bt >= BT) return;
+
+    // adjust pointers to current token
+    const Float* inp_h = inp + idx * HeadDim;
+    Float*       out_h = out + idx * HeadDim;
+
+    const x128* wgt_src = nullptr;
+    bool is_value_head = false;
+    if (h < Nq) {
+        wgt_src = s_q_wgt;
+    } else if (h < Nq + Nkv) {
+        wgt_src = s_k_wgt;
+    } else {
+        is_value_head = true;
+    }
+
+    unsigned int active_mask = __ballot_sync(0xffffffffu, !is_value_head);
+    if (is_value_head) {
+        // ---- value head: pass-through, but still contribute to abs-max ----
+        for (int c = lane * x128::size; c < HeadDim; c += GroupSize * x128::size) {
+            x128 v = x128::load_cs(inp_h + c);
+            for (int k = 0; k < x128::size; ++k) {
+                thread_abs_max = fmaxf(thread_abs_max, fabsf((float)v[k]));
+            }
+            if (inp_h != out_h) v.store(out_h + c);
+        }
+    } else {
+        // ---- Q or K head: norm + scale + RoPE ----
+
+        float s = QKHelpers<Float>::norm_head(&s_in[0][0], s_in, wgt_src, inp_h, HeadDim, epsilon, active_mask);
+        __syncwarp(active_mask);
+
+        int head_dim_half = HeadDim / 2;
+        using x64 = GenericVector<Float, 8/sizeof(Float)>;
+        Float* s_in_f = reinterpret_cast<Float*>(s_in);
+        for (int c = lane * x64::size; c < head_dim_half; c += GroupSize * x64::size) {
+            x64 v_real = x64::load(s_in_f + c);
+            x64 v_imag = x64::load(s_in_f + c + head_dim_half);
+
+            freq128 freqs_vec = freq128::load_ldg(freqs_cis + t * HeadDim + 2 * c);
+
+            x64 o_real, o_imag;
+            for (int k = 0; k < x64::size; ++k) {
+                float cos = (float)freqs_vec[2*k];
+                float sin = (float)freqs_vec[2*k+1];
+                float real = (float)v_real[k];
+                float imag = (float)v_imag[k];
+                float or_ = real * cos - imag * sin;
+                float oi_ = real * sin + imag * cos;
+                o_real[k] = (Float)or_;
+                o_imag[k] = (Float)oi_;
+                if (abs_max_ptr) {
+                    thread_abs_max = fmaxf(thread_abs_max, fabsf(or_));
+                    thread_abs_max = fmaxf(thread_abs_max, fabsf(oi_));
+                }
+            }
+            o_real.store(out_h + c);
+            o_imag.store(out_h + c + head_dim_half);
+        }
+
+        // store the rms, no need to cache it
+        if (lane == 0 && r_rms != nullptr) {
+            __stcs(r_rms + idx, s);
+        }
+    }
+
+    if (abs_max_ptr) {
+        handle_absmax_reduction(abs_max_ptr, &block_abs_max, thread_abs_max);
+    }
+}
+
 template<typename Float>
 void qk_norm_forward_imp(Float* out, float* r_rms,
                          const Float* inp,
@@ -335,6 +448,38 @@ void qk_norm_forward_imp(Float* out, float* r_rms,
 
     qk_norm_forward_simple_kernel<Float><<<grid_size, block_size, smem, stream>>>(
         out, r_rms, inp, q_wgt, k_wgt, epsilon, BT, Nq, Nkv, HeadDim);
+
+    CUDA_CHECK(cudaGetLastError());
+}
+
+template<typename Float, typename FloatFreq>
+void qk_norm_and_rope_forward(Float* out, float* r_rms, float* abs_max_ptr,
+                              const Float* inp,
+                              const Float* q_wgt, const Float* k_wgt,
+                              const FloatFreq* freqs_cis,
+                              float epsilon,
+                              int B, int T, int Nq, int Nkv, int HeadDim,
+                              cudaStream_t stream) {
+    static_assert(sizeof(Float) == sizeof(FloatFreq), "Float and FloatFreq must have the same size");
+    constexpr int block_size = 512; // larger blocks mean fewer redundant weight loads
+    static_assert(block_size % GroupSize == 0);
+
+    const int BT = B * T;
+    const int groups_per_block = block_size / GroupSize;
+    const int total_heads = BT * (Nq + 2 * Nkv);
+    const int grid_size = div_ceil(total_heads, groups_per_block);
+
+    // smem: q_wgt + k_wgt + one input buffer per group
+    size_t smem = (2 + groups_per_block) * HeadDim * sizeof(Float);
+
+    CUDA_CHECK(cudaFuncSetAttribute(
+        qk_norm_and_rope_fwd_kernel<Float, FloatFreq>,
+        cudaFuncAttributeMaxDynamicSharedMemorySize,
+        smem));
+
+    qk_norm_and_rope_fwd_kernel<Float, FloatFreq><<<grid_size, block_size, smem, stream>>>(
+        out, r_rms, abs_max_ptr, inp, q_wgt, k_wgt, freqs_cis,
+        epsilon, BT, T, Nq, Nkv, HeadDim);
 
     CUDA_CHECK(cudaGetLastError());
 }
@@ -425,6 +570,29 @@ void qk_norm_forward(nv_bfloat16* out, float* r_rms, const nv_bfloat16* inp,
                      float epsilon, int BT, int Nq, int Nkv, int HeadDim,
                      cudaStream_t stream) {
     qk_norm_forward_imp<nv_bfloat16>(out, r_rms, inp, q_wgt, k_wgt, epsilon, BT, Nq, Nkv, HeadDim, stream);
+}
+
+
+void qk_norm_and_rope_forward(float* out, float* r_rms, float* abs_max_ptr,
+                              const float* inp,
+                              const float* q_wgt, const float* k_wgt,
+                              const float* freqs_cis,
+                              float epsilon,
+                              int B, int T, int Nq, int Nkv, int HeadDim,
+                              cudaStream_t stream) {
+    qk_norm_and_rope_forward<float, float>(out, r_rms, abs_max_ptr, inp, q_wgt, k_wgt,
+                                           freqs_cis, epsilon, B, T, Nq, Nkv, HeadDim, stream);
+}
+
+void qk_norm_and_rope_forward(nv_bfloat16* out, float* r_rms, float* abs_max_ptr,
+                              const nv_bfloat16* inp,
+                              const nv_bfloat16* q_wgt, const nv_bfloat16* k_wgt,
+                              const half* freqs_cis,
+                              float epsilon,
+                              int B, int T, int Nq, int Nkv, int HeadDim,
+                              cudaStream_t stream) {
+    qk_norm_and_rope_forward<nv_bfloat16, half>(out, r_rms, abs_max_ptr, inp, q_wgt, k_wgt,
+                                                freqs_cis, epsilon, B, T, Nq, Nkv, HeadDim, stream);
 }
 
 void qk_norm_backward(float* dinp, float* dq_wgt, float* dk_wgt, std::byte* scratch,
