@@ -244,6 +244,33 @@ void bind_qk_norm_forward(const CudaArray& out, const CudaArray& r_std, const Cu
         epsilon, B * T, Nq, Nkv, HeadDim, as_stream(stream));
 }
 
+void bind_qk_norm_and_rope_forward(const CudaArray& out, const CudaArray& r_std,
+                                   const CudaArray& inp,
+                                   const CudaArray& q_wgt, const CudaArray& k_wgt,
+                                   const CudaArray& freqs_cis,
+                                   const std::optional<CudaArray>& abs_max,
+                                   float epsilon, int Nq, int Nkv,
+                                   const std::uintptr_t stream) {
+    NB_CHECK_NDIMS(out, 3);
+    NB_CHECK_NDIMS(inp, 3);
+    NB_CHECK_NDIMS(r_std, 3);
+    NB_CHECK_NDIMS(q_wgt, 1);
+    NB_CHECK_NDIMS(k_wgt, 1);
+    NB_CHECK_NDIMS(freqs_cis, 2);
+
+    const long B       = get_dimension_checked({out.shape(0), inp.shape(0), r_std.shape(0)}, "B");
+    const long T       = get_dimension_checked({out.shape(1), inp.shape(1), r_std.shape(1), freqs_cis.shape(0)}, "T");
+    const long HeadDim = get_dimension_checked({q_wgt.shape(0), k_wgt.shape(0), freqs_cis.shape(1)}, "HeadDim");
+    (void)get_dimension_checked({out.shape(2), inp.shape(2), (std::size_t)((Nq + 2 * Nkv) * HeadDim)}, "NTotal*HeadDim");
+    (void)get_dimension_checked({r_std.shape(2), (std::size_t)(Nq + 2 * Nkv)}, "Nq+2*Nkv");
+
+    Tensor out_t   = to_tensor(out);
+    Tensor r_std_t = to_tensor(r_std);
+    qk_norm_and_rope_forward(out_t, r_std_t, get_abs_max_ptr(abs_max),
+        to_tensor(inp), to_tensor(q_wgt), to_tensor(k_wgt), to_tensor(freqs_cis),
+        epsilon, B, T, Nq, Nkv, HeadDim, as_stream(stream));
+}
+
 void bind_qk_norm_backward(const CudaArray& dinp, const CudaArray& dq_wgt, const CudaArray& dk_wgt,
                            const CudaArray& scratch,
                            const CudaArray& dout, const CudaArray& inp,
@@ -599,6 +626,9 @@ void register_kernels(nanobind::module_& m) {
     // QK Norm
     m.def("qk_norm_forward", &bind_qk_norm_forward, nb::arg("out"), nb::arg("r_rms"), nb::arg("inp"),
         nb::arg("q_wgt"), nb::arg("k_wgt"), nb::arg("epsilon"), nb::arg("Nq"), nb::arg("Nkv"), nb::arg("stream") = 0);
+    m.def("qk_norm_and_rope_forward", &bind_qk_norm_and_rope_forward, nb::arg("out"), nb::arg("r_rms"), nb::arg("inp"),
+        nb::arg("q_wgt"), nb::arg("k_wgt"), nb::arg("freqs_cis"), nb::arg("abs_max") = std::nullopt,
+        nb::arg("epsilon"), nb::arg("Nq"), nb::arg("Nkv"), nb::arg("stream") = 0);
     m.def("qk_norm_backward", &bind_qk_norm_backward, nb::arg("dinp"), nb::arg("dq_wgt"), nb::arg("dk_wgt"),
         nb::arg("scratch"), nb::arg("dout"), nb::arg("inp"), nb::arg("q_wgt"), nb::arg("k_wgt"),
         nb::arg("rstd"), nb::arg("abs_max") = std::nullopt, nb::arg("Nq"),  nb::arg("Nkv"), nb::arg("stream") = 0);
