@@ -65,6 +65,14 @@ def qk_norm_forward(out: torch.Tensor, r_rms: torch.Tensor, inp: torch.Tensor,
                     epsilon: float, Nq: int, Nkv: int, stream: int = 0) -> None:
     _pyllmq.qk_norm_forward(out, r_rms, inp, q_wgt, k_wgt, epsilon, Nq, Nkv, stream)
 
+@torch.library.custom_op("llmq::qk_norm_and_rope_forward", mutates_args=("out", "r_rms", "abs_max"))
+def qk_norm_and_rope_forward(out: torch.Tensor, r_rms: torch.Tensor, inp: torch.Tensor,
+                             q_wgt: torch.Tensor, k_wgt: torch.Tensor, freqs_cis: torch.Tensor,
+                             abs_max: torch.Tensor | None,
+                             epsilon: float, Nq: int, Nkv: int, stream: int = 0) -> None:
+    _pyllmq.qk_norm_and_rope_forward(out, r_rms, inp, q_wgt, k_wgt, freqs_cis, abs_max,
+                                     epsilon, Nq, Nkv, stream)
+
 @torch.library.custom_op("llmq::qk_norm_backward", mutates_args=("dinp", "dq_wgt", "dk_wgt", "scratch", "abs_max"))
 def qk_norm_backward(dinp: torch.Tensor, dq_wgt: torch.Tensor, dk_wgt: torch.Tensor,
                      scratch: torch.Tensor, dout: torch.Tensor, inp: torch.Tensor,
