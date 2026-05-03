@@ -129,6 +129,32 @@ void qk_norm_forward(Tensor& out, Tensor& r_rms, const Tensor& inp,
                      float epsilon, int BT, int Nq, int Nkv, int HeadDim,
                      cudaStream_t stream);
 
+
+void qk_norm_and_rope_forward(float* out, float* r_rms, float* abs_max_ptr,
+                              const float* inp,
+                              const float* q_wgt, const float* k_wgt,
+                              const float* freqs_cis,
+                              float epsilon,
+                              int B, int T, int Nq, int Nkv, int HeadDim,
+                              cudaStream_t stream);
+
+void qk_norm_and_rope_forward(nv_bfloat16* out, float* r_rms, float* abs_max_ptr,
+                              const nv_bfloat16* inp,
+                              const nv_bfloat16* q_wgt, const nv_bfloat16* k_wgt,
+                              const half* freqs_cis,
+                              float epsilon,
+                              int B, int T, int Nq, int Nkv, int HeadDim,
+                              cudaStream_t stream);
+
+void qk_norm_and_rope_forward(Tensor& out, Tensor& r_rms, float* abs_max_ptr,
+                              const Tensor& inp,
+                              const Tensor& q_wgt, const Tensor& k_wgt,
+                              const Tensor& freqs_cis,
+                              float epsilon,
+                              int B, int T, int Nq, int Nkv, int HeadDim,
+                              cudaStream_t stream);
+
+
 std::size_t qk_norm_backward_scratch_size(int Nq, int Nkv, int HeadDim, ETensorDType dtype, const cudaDeviceProp& dp);
 
 void qk_norm_backward(float* dinp, float* dq_wgt, float* dk_wgt, std::byte* scratch,

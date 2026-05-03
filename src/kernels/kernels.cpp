@@ -121,6 +121,26 @@ void qk_norm_forward(Tensor& out, Tensor& r_rms, const Tensor& inp, const Tensor
     }
 }
 
+void qk_norm_and_rope_forward(Tensor& out, Tensor& r_rms, float* abs_max_ptr,
+                              const Tensor& inp,
+                              const Tensor& q_wgt, const Tensor& k_wgt,
+                              const Tensor& freqs_cis,
+                              float epsilon,
+                              int B, int T, int Nq, int Nkv, int HeadDim,
+                              cudaStream_t stream) {
+    if (out.DType == ETensorDType::BF16) {
+        qk_norm_and_rope_forward(out.get<nv_bfloat16>(), r_rms.get<float>(), abs_max_ptr,
+            inp.get<nv_bfloat16>(), q_wgt.get<nv_bfloat16>(), k_wgt.get<nv_bfloat16>(),
+            freqs_cis.get<half>(), epsilon, B, T, Nq, Nkv, HeadDim, stream);
+    } else if (out.DType == ETensorDType::FP32) {
+        qk_norm_and_rope_forward(out.get<float>(), r_rms.get<float>(), abs_max_ptr,
+            inp.get<float>(), q_wgt.get<float>(), k_wgt.get<float>(),
+            freqs_cis.get<float>(), epsilon, B, T, Nq, Nkv, HeadDim, stream);
+    } else {
+        UNSUPPORTED_DTYPE(out, r_rms, inp, q_wgt, k_wgt, freqs_cis);
+    }
+}
+
 void qk_norm_backward(Tensor& dinp, Tensor& dq_wgt, Tensor& dk_wgt, Tensor& scratch,
                       const Tensor& dout, const Tensor& inp,
                       const Tensor& q_wgt, const Tensor& k_wgt,
