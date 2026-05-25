@@ -250,7 +250,7 @@ void bind_qk_norm_backward(const CudaArray& dinp, const CudaArray& dq_wgt, const
                            const CudaArray& q_wgt, const CudaArray& k_wgt,
                            const CudaArray& rstd,
                            const std::optional<CudaArray>& abs_max,
-                           float epsilon, int Nq, int Nkv,
+                           int Nq, int Nkv,
                            const std::uintptr_t stream) {
     NB_CHECK_NDIMS(dinp,   3);
     NB_CHECK_NDIMS(dq_wgt, 1);
@@ -275,7 +275,7 @@ void bind_qk_norm_backward(const CudaArray& dinp, const CudaArray& dq_wgt, const
     Tensor scratch_t = to_tensor(scratch);
     qk_norm_backward(dinp_t, dq_wgt_t, dk_wgt_t, scratch_t,
         to_tensor(dout), to_tensor(inp), to_tensor(q_wgt), to_tensor(k_wgt), to_tensor(rstd),
-        get_abs_max_ptr(abs_max), epsilon, B * T, Nq, Nkv, HeadDim,
+        get_abs_max_ptr(abs_max), B * T, Nq, Nkv, HeadDim,
         dp, as_stream(stream));
 }
 
@@ -601,7 +601,7 @@ void register_kernels(nanobind::module_& m) {
         nb::arg("q_wgt"), nb::arg("k_wgt"), nb::arg("epsilon"), nb::arg("Nq"), nb::arg("Nkv"), nb::arg("stream") = 0);
     m.def("qk_norm_backward", &bind_qk_norm_backward, nb::arg("dinp"), nb::arg("dq_wgt"), nb::arg("dk_wgt"),
         nb::arg("scratch"), nb::arg("dout"), nb::arg("inp"), nb::arg("q_wgt"), nb::arg("k_wgt"),
-        nb::arg("rstd"), nb::arg("abs_max") = std::nullopt, nb::arg("epsilon"), nb::arg("Nq"),  nb::arg("Nkv"), nb::arg("stream") = 0);
+        nb::arg("rstd"), nb::arg("abs_max") = std::nullopt, nb::arg("Nq"),  nb::arg("Nkv"), nb::arg("stream") = 0);
     m.def("get_qknorm_backward_scratch_size", &bind_get_qknorm_backward_scratch_size, nb::arg("Nq"), nb::arg("Nkv"), nb::arg("HeadDim"), nb::arg("dtype"));
 
     // SwiGLU

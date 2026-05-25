@@ -473,54 +473,97 @@ def test_qk_norm_forward(B, T, Nq, Nkv, HeadDim, dtype):
     assert r_rms.cpu().numpy() == pytest.approx(ref_r_std.cpu().numpy(), rel=rtol, abs=atol)
     assert out.float().cpu().numpy() == pytest.approx(ref_out.float().cpu().numpy(), rel=rtol, abs=atol)
 
+
+# ---- In-place forward: out is inp ----
+# Exercises the early-return path for V-heads (inp == out) and the normalization path for QK-heads.
+@pytest.mark.parametrize("B,T,Nq,Nkv,HeadDim", [
+    (1, 1, 4, 2, 64),
+    (2, 4, 2, 1, 128),
+])
+@pytest.mark.parametrize("dtype", DTYPES)
+def test_qk_norm_forward_inplace(B, T, Nq, Nkv, HeadDim, dtype):
+    torch.manual_seed(0)
+    device = "cuda"
+    N = Nq + 2 * Nkv
+    eps = 1e-6
+
+    inp = torch.randn((B, T, N * HeadDim), device=device, dtype=dtype)
+    q_wgt = torch.randn((HeadDim,), device=device, dtype=dtype)
+    k_wgt = torch.randn((HeadDim,), device=device, dtype=dtype)
+    v_start = Nq + Nkv
+    v_end = N
+
+    inp_copy = inp.clone()
+
+    out = inp
+    r_rms = torch.ones((B, T, N), device=device, dtype=torch.float32)
+
+    K.qk_norm_forward(out, r_rms, inp, q_wgt, k_wgt, eps, Nq, Nkv)
+
+    actual_v = out[:, :, v_start * HeadDim : v_end * HeadDim]
+    orig_v   = inp_copy[:, :, v_start * HeadDim : v_end * HeadDim]
+    assert torch.allclose(actual_v, orig_v, rtol=0, atol=0), "V-heads changed in in-place forward"
+
+    ref_out, _ = _qk_norm_reference(inp_copy, q_wgt, k_wgt, Nq, Nkv, eps)
+    rtol, atol = TOL[dtype]
+    assert out.float().cpu().numpy() == pytest.approx(ref_out.float().cpu().numpy(), rel=rtol, abs=atol)
+
 @pytest.mark.parametrize("B,T,Nq,Nkv,HeadDim", [
     (1, 4, 2, 1, 16),
     (2, 8, 4, 2, 64),
     (4, 16, 8, 4, 64),
     (1, 1, 4, 2, 128),
 ])
-@pytest.mark.parametrize("dtype", [torch.float32])
-def test_qk_norm_backward(B, T, Nq, Nkv, HeadDim, dtype):
+@pytest.mark.parametrize("dtype", DTYPES)
+@pytest.mark.parametrize("in_place", [True, False])
+def test_qk_norm_backward(B, T, Nq, Nkv, HeadDim, dtype, in_place: bool):
     torch.manual_seed(0)
     device = "cuda"
     N = Nq + 2 * Nkv
     eps = 1e-6
 
-    inp   = torch.randn((B, T, N * HeadDim), device=device, dtype=dtype, requires_grad=True)
-    q_wgt = torch.randn((HeadDim,), device=device, dtype=dtype, requires_grad=True)
-    k_wgt = torch.randn((HeadDim,), device=device, dtype=dtype, requires_grad=True)
+    inp   = torch.randn((B, T, N * HeadDim), device=device, dtype=dtype)
+    q_wgt = torch.randn((HeadDim,),          device=device, dtype=dtype)
+    k_wgt = torch.randn((HeadDim,),          device=device, dtype=dtype)
     dout  = torch.randn((B, T, N * HeadDim), device=device, dtype=dtype)
 
-    # reference: autograd through the reference forward
-    ref_out, _ = _qk_norm_reference(inp, q_wgt, k_wgt, Nq, Nkv, eps)
-    ref_out.backward(dout)
-    ref_dinp   = inp.grad.clone()
-    ref_dq_wgt = q_wgt.grad.clone()
-    ref_dk_wgt = k_wgt.grad.clone()
+    # Reference in fp32
+    inp_f   = inp.float().detach().requires_grad_(True)
+    q_wgt_f = q_wgt.float().detach().requires_grad_(True)
+    k_wgt_f = k_wgt.float().detach().requires_grad_(True)
+    ref_out_f, _ = _qk_norm_reference(inp_f, q_wgt_f, k_wgt_f, Nq, Nkv, eps)
+    ref_out_f.backward(dout.float())
+    ref_dinp   = inp_f.grad
+    ref_dq_wgt = q_wgt_f.grad
+    ref_dk_wgt = k_wgt_f.grad
 
-    # kernel
-    inp.grad   = None
-    q_wgt.grad = None
-    k_wgt.grad = None
+    # Run forward to get the kernel's rstd.
+    r_rms = torch.empty((B, T, N), device=device, dtype=torch.float32)
+    r_rms.fill_(1.0)  # V-slot sentinel; kernel only writes QK slots
+    K.qk_norm_forward(torch.empty_like(inp), r_rms, inp, q_wgt, k_wgt, eps, Nq, Nkv)
 
     scratch_size = K.get_qknorm_backward_scratch_size(Nq, Nkv, HeadDim, inp.dtype)
     scratch  = torch.zeros((scratch_size,), device=device, dtype=torch.uint8)
-    dinp     = torch.zeros_like(inp)
     dq_wgt_k = torch.zeros_like(q_wgt)
     dk_wgt_k = torch.zeros_like(k_wgt)
-    r_rms    = torch.ones((B, T, N), device=device, dtype=torch.float32)
-    K.qk_norm_forward(torch.empty_like(inp), r_rms, inp, q_wgt, k_wgt, eps, Nq, Nkv)
 
-    K.qk_norm_backward(dinp, dq_wgt_k, dk_wgt_k, scratch,
-                       dout, inp, q_wgt, k_wgt, r_rms,
-                       None, eps, Nq, Nkv)
-
+    if in_place:
+        dinp_buf = dout.clone()
+        K.qk_norm_backward(dinp_buf, dq_wgt_k, dk_wgt_k, scratch,
+                           dinp_buf, inp, q_wgt, k_wgt, r_rms,
+                           None, Nq, Nkv)
+        dinp = dinp_buf
+    else:
+        dinp = torch.zeros_like(inp)
+        K.qk_norm_backward(dinp, dq_wgt_k, dk_wgt_k, scratch,
+                           dout, inp, q_wgt, k_wgt, r_rms,
+                           None, Nq, Nkv)
 
     rtol, atol = TOL[dtype]
-    assert dinp.float().cpu().numpy()     == pytest.approx(ref_dinp.float().cpu().numpy(),   rel=rtol, abs=atol)
-    assert dq_wgt_k.float().cpu().numpy() == pytest.approx(ref_dq_wgt.float().cpu().numpy(), rel=rtol, abs=atol)
-    assert dk_wgt_k.float().cpu().numpy() == pytest.approx(ref_dk_wgt.float().cpu().numpy(), rel=rtol, abs=atol)
 
+    assert dinp.float().cpu().numpy()     == pytest.approx(ref_dinp.cpu().numpy(),   rel=rtol, abs=atol)
+    assert dq_wgt_k.float().cpu().numpy() == pytest.approx(ref_dq_wgt.cpu().numpy(), rel=rtol, abs=atol)
+    assert dk_wgt_k.float().cpu().numpy() == pytest.approx(ref_dk_wgt.cpu().numpy(), rel=rtol, abs=atol)
 
 
 # ============================================================

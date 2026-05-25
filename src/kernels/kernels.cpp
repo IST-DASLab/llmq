@@ -125,20 +125,20 @@ void qk_norm_backward(Tensor& dinp, Tensor& dq_wgt, Tensor& dk_wgt, Tensor& scra
                       const Tensor& dout, const Tensor& inp,
                       const Tensor& q_wgt, const Tensor& k_wgt,
                       const Tensor& rstd, float* abs_max_ptr,
-                      float epsilon, int BT, int Nq, int Nkv, int HeadDim,
+                      int BT, int Nq, int Nkv, int HeadDim,
                       const cudaDeviceProp& dp, cudaStream_t stream) {
     if (dinp.DType == ETensorDType::FP32) {
         qk_norm_backward(dinp.get<float>(), dq_wgt.get<float>(), dk_wgt.get<float>(), scratch.get<std::byte>(),
             dout.get<float>(), inp.get<float>(),
             q_wgt.get<float>(), k_wgt.get<float>(),
             rstd.get<float>(), abs_max_ptr,
-            epsilon, BT, Nq, Nkv, HeadDim, dp, stream);
+            BT, Nq, Nkv, HeadDim, dp, stream);
     } else if (dinp.DType == ETensorDType::BF16) {
         qk_norm_backward(dinp.get<nv_bfloat16>(), dq_wgt.get<nv_bfloat16>(), dk_wgt.get<nv_bfloat16>(), scratch.get<std::byte>(),
             dout.get<nv_bfloat16>(), inp.get<nv_bfloat16>(),
             q_wgt.get<nv_bfloat16>(), k_wgt.get<nv_bfloat16>(),
             rstd.get<float>(), abs_max_ptr,
-            epsilon, BT, Nq, Nkv, HeadDim, dp, stream);
+            BT, Nq, Nkv, HeadDim, dp, stream);
     } else {
         UNSUPPORTED_DTYPE(dinp, dq_wgt, dk_wgt, scratch, dout, inp, q_wgt, k_wgt);
     }
