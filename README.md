@@ -103,7 +103,7 @@ and sets this in relation to the GPU's speed of light (SOL), i.e., the fastest p
 
 ### Inspecting the logs
 After 50 steps, the training will finish, and save the final model to `model.safetensors`. In addition, a log file will be created,
-which contains the training log in JSON format. We can visualize the log using the [plot_training_run.py](scripts/plot_training_run.py) utility script:`
+which contains the training log in JSON format. We can visualize the log using the [plot_training_run.py](scripts/plot_training_run.py) utility script:
 ```shell
 uv run scripts/plot_training_run.py log.json
 ```
@@ -281,14 +281,14 @@ For the optimizer state, this will slow down the optimizer step drastically (mem
 ## Python bindings
 While it is nice to demonstrate training in pure C++/Cuda, there are scenarios where it is desirable to use Python for training, e.g., when using an alternative learning-rate schedule.
 
-The Python bindings are provided in the `src/bindings` directory, and can be built using the
+The Python bindings are provided in the `src/binding` directory, and can be built using the
 `_pyllmq` target. The library can be built manually (`-DPYTHON_BINDING=ON`), or directly into a wheel file
 using `uv build --wheel`.
 The [demo.py](scripts/demo.py) script provides an example of how to use the bindings. Running it with `uv run pyllmq-demo` will trigger the wheel build automatically.
 
 Pre-built wheels are available from [GitHub Releases](https://github.com/IST-DASLab/llmq/releases) for convenience.
-Download the latest `.whl` file and install it with `uv pip install 'pyllmq-0.2.0-cp312-abi3-linux_x86_64.whl[scripts]'`,
-or run example scripts directly: `uv run --with 'pyllmq-0.2.0+cu128-cp312-abi3-linux_x86_64.whl[scripts]' pyllmq-demo`, replacing the file name as appropriate. The `[scripts]` extra installs additional packages that aren't strictly required for pyllmq, but are used in the utility scripts, such as `datasets` and `matplotlib`.
+Download the latest `.whl` file and install it with `uv pip install 'pyllmq-0.3.2-cp312-abi3-linux_x86_64.whl[scripts]'`,
+or run example scripts directly: `uv run --with 'pyllmq-0.3.2+cu128-cp312-abi3-linux_x86_64.whl[scripts]' pyllmq-demo`, replacing the file name as appropriate. The `[scripts]` extra installs additional packages that aren't strictly required for pyllmq, but are used in the utility scripts, such as `datasets` and `matplotlib`.
 The wheels are built against CUDA 12.8 and 13.0 and support compute capabilities 89, 90, 100f, and 120f.
 
 By design, the bindings expose only coarse-grained operations; that is, the minimum unit

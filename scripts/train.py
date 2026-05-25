@@ -265,7 +265,7 @@ def run_training_loop(config: pyllmq.TrainingConfig, trainer: pyllmq.LLMQTrainer
 
     # Final evaluation
     print("\nRunning final evaluation...")
-    final_loss, _ = run_evaluation(trainer, eval_loader, in_tokens, out_tokens, eval_loader.num_chunks)
+    final_loss, final_loss_1k, eval_ms = run_evaluation(trainer, eval_loader, in_tokens, out_tokens, eval_loader.num_chunks)
     print(f"Final validation loss: {final_loss:.4f}")
 
 
