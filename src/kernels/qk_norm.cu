@@ -120,7 +120,7 @@ template<class Float>
 __global__ void __launch_bounds__(512, 2)
 qk_norm_backward_kernel(Float* dinp, std::byte* scratch,
                         const Float* dout, const Float* inp, const Float* q_wgt, const Float* k_wgt,
-                        const float* rstd, float* abs_max_ptr, float epsilon, int BT, int Nq, int Nkv, int HeadDim) {
+                        const float* rstd, float* abs_max_ptr, int BT, int Nq, int Nkv, int HeadDim) {
     // formulas:
     //   rms = sqrt(sum x_j^2 / C + eps)
     //   y_i = w_i x_i / rms
@@ -195,14 +195,19 @@ qk_norm_backward_kernel(Float* dinp, std::byte* scratch,
 
         // V heads
         if (h >= Nq + Nkv) {
-            if (dout_i != dinp_i) {
-                for(int c = lane * x128::size; c < HeadDim; c += GroupSize * x128::size) {
+            if (abs_max_ptr) {
+                for (int c = lane * x128::size; c < HeadDim; c += GroupSize * x128::size) {
                     x128 in_data = x128::load_cs(dout_i + c);
-                    if (abs_max_ptr) {
-                        for (int k = 0; k < x128::size; k++) {
-                            thread_abs_max = fmaxf(thread_abs_max, fabsf(in_data[k]));
-                        }
+                    for (int k = 0; k < x128::size; k++) {
+                        thread_abs_max = fmaxf(thread_abs_max, fabsf(in_data[k]));
                     }
+                    if (dout_i != dinp_i) {
+                        in_data.store(dinp_i + c);
+                    }
+                }
+            } else if (dout_i != dinp_i) {
+                for (int c = lane * x128::size; c < HeadDim; c += GroupSize * x128::size) {
+                    x128 in_data = x128::load_cs(dout_i + c);
                     in_data.store(dinp_i + c);
                 }
             }
@@ -227,7 +232,7 @@ qk_norm_backward_kernel(Float* dinp, std::byte* scratch,
             x128 o = x128::load_cs(dout_i + i);
             x128 x = x128::load_cs(inp_i + i);
             x128 w = x128::load(s_wgt + i);
-            x128 dx = x128::load(dinp_i + i);
+            x128 dx = x128::zeros();
 
             fvec dw = fvec::load(s_d_wgt + i);
             for (int k = 0; k < x128::size; k++) {
@@ -303,14 +308,18 @@ qk_norm_backward_reduce_kernel(Float* dq_wgt, Float* dk_wgt, const std::byte* sc
 }
 
 template<typename Float>
-void qk_norm_forward(Float* out, float* r_rms,
-                     const Float* inp,
-                     const Float* q_wgt, const Float* k_wgt,
-                     float epsilon,
-                     int BT, int Nq, int Nkv, int HeadDim,
-                     cudaStream_t stream) {
+void qk_norm_forward_imp(Float* out, float* r_rms,
+                         const Float* inp,
+                         const Float* q_wgt, const Float* k_wgt,
+                         float epsilon,
+                         int BT, int Nq, int Nkv, int HeadDim,
+                         cudaStream_t stream) {
     constexpr int block_size = 512; // larger blocks mean fewer redundant weight loads
     static_assert(block_size % GroupSize == 0);
+
+    if (HeadDim % 16 != 0) {
+        throw std::invalid_argument("HeadDim must be a multiple of 16");
+    }
 
     const int groups_per_block = block_size / GroupSize;
     const int total_heads = BT * (Nq + 2 * Nkv);
@@ -379,9 +388,13 @@ void qk_norm_backward_imp(Float* dinp, Float* dq_wgt, Float* dk_wgt, std::byte* 
                           const Float* dout, const Float* inp,
                           const Float* q_wgt, const Float* k_wgt,
                           const float* rstd, float* abs_max_ptr,
-                          float epsilon, int BT, int Nq, int Nkv, int HeadDim,
+                          int BT, int Nq, int Nkv, int HeadDim,
                           const cudaDeviceProp& dp, cudaStream_t stream)
 {
+    if (HeadDim % 16 != 0) {
+        throw std::invalid_argument("HeadDim must be a multiple of 16");
+    }
+
     constexpr int block_size = 512;
     const int Nh = Nq + 2 * Nkv;
     const size_t smem = qk_norm_backward_smem<Float>(HeadDim);
@@ -390,7 +403,7 @@ void qk_norm_backward_imp(Float* dinp, Float* dq_wgt, Float* dk_wgt, std::byte* 
     dim3 grid(x_blocks, Nh);
     qk_norm_backward_kernel<Float><<<grid, block_size, smem, stream>>>(
         dinp, scratch, dout, inp, q_wgt, k_wgt, rstd, abs_max_ptr,
-        epsilon, BT, Nq, Nkv, HeadDim);
+        BT, Nq, Nkv, HeadDim);
     CUDA_CHECK(cudaGetLastError());
 
     dim3 reduce_grid(1, 2);
@@ -404,30 +417,30 @@ void qk_norm_forward(float* out, float* r_rms, const float* inp,
                      const float* q_wgt, const float* k_wgt,
                      float epsilon, int BT, int Nq, int Nkv, int HeadDim,
                      cudaStream_t stream) {
-    qk_norm_forward<float>(out, r_rms, inp, q_wgt, k_wgt, epsilon, BT, Nq, Nkv, HeadDim, stream);
+    qk_norm_forward_imp<float>(out, r_rms, inp, q_wgt, k_wgt, epsilon, BT, Nq, Nkv, HeadDim, stream);
 }
 
 void qk_norm_forward(nv_bfloat16* out, float* r_rms, const nv_bfloat16* inp,
                      const nv_bfloat16* q_wgt, const nv_bfloat16* k_wgt,
                      float epsilon, int BT, int Nq, int Nkv, int HeadDim,
                      cudaStream_t stream) {
-    qk_norm_forward<nv_bfloat16>(out, r_rms, inp, q_wgt, k_wgt, epsilon, BT, Nq, Nkv, HeadDim, stream);
+    qk_norm_forward_imp<nv_bfloat16>(out, r_rms, inp, q_wgt, k_wgt, epsilon, BT, Nq, Nkv, HeadDim, stream);
 }
 
 void qk_norm_backward(float* dinp, float* dq_wgt, float* dk_wgt, std::byte* scratch,
                       const float* dout, const float* inp,
                       const float* q_wgt, const float* k_wgt,
                       const float* rstd, float* abs_max_ptr,
-                      float epsilon, int BT, int Nq, int Nkv, int HeadDim,
+                      int BT, int Nq, int Nkv, int HeadDim,
                       const cudaDeviceProp& dp, cudaStream_t stream) {
-    qk_norm_backward_imp<float>(dinp, dq_wgt, dk_wgt, scratch, dout, inp, q_wgt, k_wgt, rstd, abs_max_ptr, epsilon, BT, Nq, Nkv, HeadDim, dp, stream);
+    qk_norm_backward_imp<float>(dinp, dq_wgt, dk_wgt, scratch, dout, inp, q_wgt, k_wgt, rstd, abs_max_ptr, BT, Nq, Nkv, HeadDim, dp, stream);
 }
 
 void qk_norm_backward(nv_bfloat16* dinp, nv_bfloat16* dq_wgt, nv_bfloat16* dk_wgt, std::byte* scratch,
                       const nv_bfloat16* dout, const nv_bfloat16* inp,
                       const nv_bfloat16* q_wgt, const nv_bfloat16* k_wgt,
                       const float* rstd, float* abs_max_ptr,
-                      float epsilon, int BT, int Nq, int Nkv, int HeadDim,
+                      int BT, int Nq, int Nkv, int HeadDim,
                       const cudaDeviceProp& dp, cudaStream_t stream) {
-    qk_norm_backward_imp<nv_bfloat16>(dinp, dq_wgt, dk_wgt, scratch, dout, inp, q_wgt, k_wgt, rstd, abs_max_ptr, epsilon, BT, Nq, Nkv, HeadDim, dp, stream);
+    qk_norm_backward_imp<nv_bfloat16>(dinp, dq_wgt, dk_wgt, scratch, dout, inp, q_wgt, k_wgt, rstd, abs_max_ptr, BT, Nq, Nkv, HeadDim, dp, stream);
 }

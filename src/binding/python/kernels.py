@@ -65,13 +65,13 @@ def qk_norm_forward(out: torch.Tensor, r_rms: torch.Tensor, inp: torch.Tensor,
                     epsilon: float, Nq: int, Nkv: int, stream: int = 0) -> None:
     _pyllmq.qk_norm_forward(out, r_rms, inp, q_wgt, k_wgt, epsilon, Nq, Nkv, stream)
 
-@torch.library.custom_op("llmq::qk_norm_backward", mutates_args=("dinp", "dq_wgt", "dk_wgt"))
+@torch.library.custom_op("llmq::qk_norm_backward", mutates_args=("dinp", "dq_wgt", "dk_wgt", "scratch", "abs_max"))
 def qk_norm_backward(dinp: torch.Tensor, dq_wgt: torch.Tensor, dk_wgt: torch.Tensor,
                      scratch: torch.Tensor, dout: torch.Tensor, inp: torch.Tensor,
                      q_wgt: torch.Tensor, k_wgt: torch.Tensor, rstd: torch.Tensor,
                      abs_max: torch.Tensor | None,
-                     epsilon: float, Nq: int, Nkv: int, stream: int = 0) -> None:
-    _pyllmq.qk_norm_backward(dinp, dq_wgt, dk_wgt, scratch, dout, inp, q_wgt, k_wgt, rstd, abs_max, epsilon, Nq, Nkv, stream)
+                     Nq: int, Nkv: int, stream: int = 0) -> None:
+    _pyllmq.qk_norm_backward(dinp, dq_wgt, dk_wgt, scratch, dout, inp, q_wgt, k_wgt, rstd, abs_max, Nq, Nkv, stream)
 
 def get_qknorm_backward_scratch_size(Nq: int, Nkv: int, HeadDim: int, dtype: torch.dtype):
     return _pyllmq.get_qknorm_backward_scratch_size(Nq,  Nkv, HeadDim, _TORCH_TO_TYPE_NAME[dtype])
@@ -227,7 +227,7 @@ def adamw_update(params: torch.Tensor, grads: torch.Tensor, m: torch.Tensor, v: 
 __all__ = [
     'encoder_forward',
     'rmsnorm_forward', 'rmsnorm_backward', 'fused_residual_rmsnorm_forward',
-    'rope_forward', 'rope_backward', 'qk_norm_forward',
+    'rope_forward', 'rope_backward', 'qk_norm_forward', 'qk_norm_backward',
     'swiglu_forward', 'swiglu_forward_quant', 'swiglu_backward',
     'attention_forward', 'attention_backward',
     'fused_classifier', 'grouped_loss_sum',
@@ -236,4 +236,5 @@ __all__ = [
     'transpose', 'vector_add_sr', 'vector_reduce_sr',
     'fill_normal', 'fill_constant',
     'encoder_backward', 'global_norm_squared', 'adamw_update',
+    'get_qknorm_backward_scratch_size',
 ]
