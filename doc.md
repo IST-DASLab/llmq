@@ -11,7 +11,7 @@ for (int step = latest_step; step < MaxSteps; ++step) {
     for (int j = 0; j < GradAccSteps; ++j) {
         train_loader.load_batch(inputs, targets);
         model.forward(inputs, comm, j);
-        model.backward(inputs, targets, comm, GradAccSteps, j);
+        model.backward(inputs, targets, comm, 0.0f, GradAccSteps, j);
     }
 
     float lr = schedule.get_lr(step);

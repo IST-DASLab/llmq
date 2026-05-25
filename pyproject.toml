@@ -47,7 +47,6 @@ scripts = [
     "wandb>=0.21.1",
     "lm-eval>=0.4.9",
     "pandas>=2.3.1",
-    "plotly[express]>=6.3.0",
 ]
 
 [project.urls]

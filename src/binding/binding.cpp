@@ -122,7 +122,7 @@ NB_MODULE(_pyllmq, m) {
         .def_rw("num_hidden_layers", &TransformerConfig::NumLayers)
         .def_rw("max_position_embeddings", &TransformerConfig::MaxPositionEmbeddings)
         .def_rw("rope_theta", &TransformerConfig::RopeTheta)
-        .def_rw("rms_norm_eps", &TransformerConfig::RopeTheta)
+        .def_rw("rms_norm_eps", &TransformerConfig::RmsNormEps)
         .def_rw("tie_word_embeddings", &TransformerConfig::TiedWordEmbeddings)
         .def_rw("use_qkv_bias", &TransformerConfig::UseQKVBias)
         .def_prop_rw("dtype",
