@@ -66,7 +66,7 @@ __global__ void qk_norm_forward_simple_kernel(Float* out, float* r_rms, const Fl
 
     // load weights into shared memory
     // do this before we allow any threads to exit!
-    extern __shared__ char* smem[];
+    extern __shared__ int4 smem[];
 
     // load128/store128 sometimes generated multiple instructions when the types here were floatX*, so
     // let's keep everything as x128
@@ -147,7 +147,7 @@ qk_norm_backward_kernel(Float* dinp, std::byte* scratch,
 
     // load weights into shared memory
     // do this before we allow any threads to exit!
-    extern __shared__ char* smem[];
+    extern __shared__ int4 smem[];
 
     __shared__ float block_abs_max;
     float thread_abs_max = 0.f;
@@ -329,7 +329,7 @@ __global__ void qk_norm_and_rope_fwd_kernel(Float* out, float* r_rms, float* abs
 
     // load weights into shared memory
     // do this before we allow any threads to exit!
-    extern __shared__ char* smem[];
+    extern __shared__ int4 smem[];
 
     // load128/store128 sometimes generated multiple instructions when the types here were floatX*, so
     // let's keep everything as x128
