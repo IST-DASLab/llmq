@@ -436,54 +436,49 @@ qk_norm_and_rope_backward_kernel(Float* dinp, std::byte* scratch,
                                  const float* rstd, const FloatFreq* freqs_cis,
                                  float* abs_max_ptr,
                                  int BT, int T, int Nq, int Nkv, int HeadDim) {
-    // formulas:
-    //   rms = sqrt(sum x_j^2 / C + eps)
-    //   y_i = w_i x_i / rms
-    //
-    //   o_i := dL/dy_i
-    //   dw_i = sum (x_i o_i / rms)
-    //   xow := sum x_i o_i w_i
-    //   dy_j/drms = - w_j x_j / rms²
-    //   drms/dx_j = x_j/(C rms)
-    //   dx_i = dL/dy_j (dy_j/dx_i + dy_j/drms drms/dx_i)
-    //        = o_i w_i / rms - sum_j o_j w_j x_j / rms² x_i/(C rms)
-    //        = o_i w_i / rms - x_i (xow/C) / rms³
-    // strategy: y-dimension of block indicates which head is operated on
-    //           x-dimension goes over tokens in groups of eight threads
-    using x128 = GenericVector<Float, 16/sizeof(Float)>;
-    using f128 = GenericVector<float, 16/sizeof(float)>;
-    using fvec = GenericVector<float, x128::size>;
+    static_assert(sizeof(Float) == sizeof(FloatFreq),
+                  "Float and FloatFreq must have the same size");
 
-    const int lane = threadIdx.x % GroupSize;
-    const int group = threadIdx.x / GroupSize;
+    using x64     = GenericVector<Float, 8 / sizeof(Float)>;
+    using x128    = GenericVector<Float, 16 / sizeof(Float)>;
+    using f128    = GenericVector<float, 16 / sizeof(float)>;
+    using freq128 = GenericVector<FloatFreq, 16 / sizeof(FloatFreq)>;
+    using fvec64  = GenericVector<float, x64::size>;
+
+    const int lane       = threadIdx.x % GroupSize;
+    const int group      = threadIdx.x / GroupSize;
     const int num_groups = blockDim.x / GroupSize;
-    const int h = blockIdx.y;
-    const int Nh = Nq + 2 * Nkv;
+    const int h          = blockIdx.y;
+    const int Nh         = Nq + 2 * Nkv;
+    const int HDh        = HeadDim / 2;
 
-    // load weights into shared memory
-    // do this before we allow any threads to exit!
+    // Shared memory layout (matches non-fused qk_norm_backward_kernel):
+    //   s_wgt:        HeadDim * sizeof(Float)
+    //   s_d_wgt_base: HeadDim * num_groups * sizeof(float)
+    //   s_in_base:    HeadDim * num_groups * sizeof(Float)   (caches x per group)
     extern __shared__ int4 smem[];
 
     __shared__ float block_abs_max;
     float thread_abs_max = 0.f;
 
-    Float* s_wgt = reinterpret_cast<Float*>(smem);
+    Float* s_wgt        = reinterpret_cast<Float*>(smem);
     float* s_d_wgt_base = reinterpret_cast<float*>(s_wgt + HeadDim);
-    float* s_d_wgt = s_d_wgt_base + HeadDim * group;
-    // Per-group cache for input x, to avoid the second global load.
-    x128* s_in_base = reinterpret_cast<x128*>(s_d_wgt_base + HeadDim * num_groups);
-    x128* s_in = s_in_base + group * (HeadDim / x128::size);
+    float* s_d_wgt      = s_d_wgt_base + HeadDim * group;
+    x64*   s_in_base    = reinterpret_cast<x64*>(s_d_wgt_base + HeadDim * num_groups);
+    x64*   s_in         = s_in_base + group * (HeadDim / x64::size);
 
-    for(int i = threadIdx.x * x128::size; i < HeadDim; i += blockDim.x * x128::size) {
-        if(h < Nq) {
+    // Load weights for this head (QK only; V leaves s_wgt undefined and untouched).
+    for (int i = threadIdx.x * x128::size; i < HeadDim; i += blockDim.x * x128::size) {
+        if (h < Nq) {
             x128::load(q_wgt + i).store(s_wgt + i);
-        } else if (h < Nq + Nkv){
+        } else if (h < Nq + Nkv) {
             x128::load(k_wgt + i).store(s_wgt + i);
         }
         // v-heads need no loading
     }
 
-    for(int i = threadIdx.x * f128::size; i < HeadDim * num_groups; i += blockDim.x * f128::size) {
+    // Zero per-group dweight accumulator.
+    for (int i = threadIdx.x * f128::size; i < HeadDim * num_groups; i += blockDim.x * f128::size) {
         f128::zeros().store(s_d_wgt_base + i);
     }
 
@@ -494,30 +489,29 @@ qk_norm_and_rope_backward_kernel(Float* dinp, std::byte* scratch,
     __syncthreads();
 
     const int groups_in_grid = num_groups * gridDim.x;
-    const int start_idx = blockIdx.x * (blockDim.x / GroupSize) + group;
+    const int start_idx      = blockIdx.x * (blockDim.x / GroupSize) + group;
 
     for (int bt = start_idx; ; bt += groups_in_grid) {
-        bool valid = bt < BT;
+        bool valid              = bt < BT;
         unsigned int active_mask = __ballot_sync(0xffffffffu, valid);
-        bool all_finished = !__any_sync(0xffffffffu, valid);
-        if (all_finished)
-            break;
-        if (!valid)
-            continue;
+        bool all_finished       = !__any_sync(0xffffffffu, valid);
+        if (all_finished) break;
+        if (!valid) continue;
 
-        // adjusted pointers to current token
-        const Float* inp_i = inp + bt * Nh * HeadDim + h * HeadDim;
+        const int t = bt % T;
+
+        const Float* inp_i  = inp  + bt * Nh * HeadDim + h * HeadDim;
         const Float* dout_i = dout + bt * Nh * HeadDim + h * HeadDim;
-        Float* dinp_i = dinp + bt * Nh * HeadDim + h * HeadDim;
-        const float rstd_i = rstd[bt * Nh + h];
+        Float*       dinp_i = dinp + bt * Nh * HeadDim + h * HeadDim;
+        const float  rstd_i = rstd[bt * Nh + h];
 
-        // V heads
+        // -------- V heads: pass-through (identical to non-fused) --------
         if (h >= Nq + Nkv) {
             if (abs_max_ptr) {
                 for (int c = lane * x128::size; c < HeadDim; c += GroupSize * x128::size) {
                     x128 in_data = x128::load_cs(dout_i + c);
                     for (int k = 0; k < x128::size; k++) {
-                        thread_abs_max = fmaxf(thread_abs_max, fabsf(in_data[k]));
+                        thread_abs_max = fmaxf(thread_abs_max, fabsf((float)in_data[k]));
                     }
                     if (dout_i != dinp_i) {
                         in_data.store(dinp_i + c);
@@ -532,51 +526,104 @@ qk_norm_and_rope_backward_kernel(Float* dinp, std::byte* scratch,
             continue;
         }
 
-        // QK heads
+        // -------- QK heads --------
+        //
+        // load_and_derotate(c):
+        //   Loads the two halves of dout at (c, c + HD/2), derotates by -theta_{t,c},
+        //   returns the two halves as fp32 vectors. Equivalent to rope-backward fused
+        //   into the load. Called once per (token, channel-pair) per pass; the rotation
+        //   itself is cheap (two muls per element + one freq128 load).
+        auto load_and_derotate = [=] (int c, fvec64& o_r, fvec64& o_i) {
+            x64 dy_r = x64::load(dout_i + c);
+            x64 dy_i = x64::load(dout_i + c + HDh);
+            freq128 f = freq128::load_ldg(freqs_cis + t * HeadDim + 2 * c);
+            #pragma unroll
+            for (int k = 0; k < x64::size; ++k) {
+                float cs = (float)f[2 * k];
+                float sn = (float)f[2 * k + 1];
+                float r  = (float)dy_r[k];
+                float im = (float)dy_i[k];
+                // rope^T: rotate by -theta  <=>  sin negated relative to forward
+                o_r[k] =  r * cs + im * sn;
+                o_i[k] = -r * sn + im * cs;
+            }
+        };
+
+        // Phase A: sum_xow reduction. Also primes s_in with x.
         float sum_xow = 0.0f;
-        for (int i = lane * x128::size; i < HeadDim; i += GroupSize * x128::size) {
-            x128 o = x128::load(dout_i + i);
-            x128 x = x128::load(inp_i  + i);
-            x128 w = x128::load(s_wgt  + i);
-            s_in[i / x128::size] = x;
-            for (int k = 0; k < x128::size; k++) {
-                sum_xow += (float)w[k] * (float)o[k] * (float)x[k];
+        for (int c = lane * x64::size; c < HDh; c += GroupSize * x64::size) {
+            fvec64 o_r, o_i;
+            load_and_derotate(c, o_r, o_i);
+
+            x64 x_r = x64::load(inp_i + c);
+            x64 x_i = x64::load(inp_i + c + HDh);
+            s_in[c / x64::size]                  = x_r;
+            s_in[c / x64::size + HDh / x64::size] = x_i;
+
+            x64 w_r = x64::load(s_wgt + c);
+            x64 w_i = x64::load(s_wgt + c + HDh);
+
+            #pragma unroll
+            for (int k = 0; k < x64::size; ++k) {
+                sum_xow += (float)w_r[k] * o_r[k] * (float)x_r[k];
+                sum_xow += (float)w_i[k] * o_i[k] * (float)x_i[k];
             }
         }
 
         sum_xow = reduce_group_sum(sum_xow, active_mask);
         const float xow_norm = sum_xow / HeadDim * rstd_i;
 
-        for (int i = lane * x128::size; i < HeadDim; i += GroupSize * x128::size) {
-            x128 o = x128::load_cs(dout_i + i);
-            x128 x = s_in[i / x128::size];
-            x128 w = x128::load(s_wgt + i);
-            x128 dx = x128::zeros();
+        // Phase B: per-element dx, dw. Rotates dout again (matches design choice;
+        // freq128 is small and cache-friendly, so the second freqs load is cheap).
+        for (int c = lane * x64::size; c < HDh; c += GroupSize * x64::size) {
+            fvec64 o_r, o_i;
+            load_and_derotate(c, o_r, o_i);
 
-            fvec dw = fvec::load(s_d_wgt + i);
-            for (int k = 0; k < x128::size; k++) {
-                float xn = (float)x[k] * rstd_i;
-                dw[k] += xn * (float)o[k];
-                float dx_k = ((float)o[k] * (float)w[k] - xn * xow_norm) * rstd_i + (float)dx[k];
-                thread_abs_max = fmaxf(thread_abs_max, fabsf(dx_k));
-                dx[k] = static_cast<Float>(dx_k);
+            x64 x_r = s_in[c / x64::size];
+            x64 x_i = s_in[c / x64::size + HDh / x64::size];
+            x64 w_r = x64::load(s_wgt + c);
+            x64 w_i = x64::load(s_wgt + c + HDh);
+
+            fvec64 dw_r = fvec64::load(s_d_wgt + c);
+            fvec64 dw_i = fvec64::load(s_d_wgt + c + HDh);
+            x64 dx_r, dx_i;
+
+            #pragma unroll
+            for (int k = 0; k < x64::size; ++k) {
+                float xn_r = (float)x_r[k] * rstd_i;
+                float xn_i = (float)x_i[k] * rstd_i;
+                dw_r[k] += xn_r * o_r[k];
+                dw_i[k] += xn_i * o_i[k];
+
+                float dxk_r = (o_r[k] * (float)w_r[k] - xn_r * xow_norm) * rstd_i;
+                float dxk_i = (o_i[k] * (float)w_i[k] - xn_i * xow_norm) * rstd_i;
+
+                thread_abs_max = fmaxf(thread_abs_max, fabsf(dxk_r));
+                thread_abs_max = fmaxf(thread_abs_max, fabsf(dxk_i));
+
+                dx_r[k] = (Float)dxk_r;
+                dx_i[k] = (Float)dxk_i;
             }
 
-            dx.store(dinp_i + i);
-
-            // Cache per-warp partial dweight in shared memory
-            dw.store(s_d_wgt_base + group * HeadDim + i);
+            dx_r.store(dinp_i + c);
+            dx_i.store(dinp_i + c + HDh);
+            dw_r.store(s_d_wgt + c);
+            dw_i.store(s_d_wgt + c + HDh);
         }
     }
 
     __syncthreads();
-    // reduce across the block
+
+    // Reduce per-group dweight to per-block scratch (identical to non-fused;
+    // f128-stride reads are independent of the per-group write stride).
     if (threadIdx.x < 32) {
-        float* scratch_dweight = reinterpret_cast<float*>(scratch) + HeadDim * (blockIdx.x + blockIdx.y * gridDim.x);
+        float* scratch_dweight = reinterpret_cast<float*>(scratch)
+                                 + HeadDim * (blockIdx.x + blockIdx.y * gridDim.x);
         for (int i = threadIdx.x * f128::size; i < HeadDim; i += 32 * f128::size) {
             f128 accumulated = f128::zeros();
             for (int g = 0; g < num_groups; ++g) {
                 f128 dw_128 = f128::load(s_d_wgt_base + g * HeadDim + i);
+                #pragma unroll
                 for (int k = 0; k < f128::size; k++) {
                     accumulated[k] += dw_128[k];
                 }
@@ -733,6 +780,83 @@ void qk_norm_backward_imp(Float* dinp, Float* dq_wgt, Float* dk_wgt, std::byte* 
     CUDA_CHECK(cudaGetLastError());
 }
 
+
+// ------------------------------------------------------------
+// Host-side launch wrapper + explicit instantiations.
+// Scratch sizing is identical to non-fused qk_norm_backward; we reuse
+// qk_norm_backward_smem<Float>() and qk_norm_backward_x_blocks<Float>().
+// ------------------------------------------------------------
+
+template<class Float>
+static int qk_norm_and_rope_backward_x_blocks(int Nq, int Nkv, int HeadDim,
+                                              const cudaDeviceProp& dp) {
+    const int Nh = Nq + 2 * Nkv;
+    const size_t smem = qk_norm_backward_smem<Float>(HeadDim);
+    int blocks_per_sm;
+    // FloatFreq parametrization doesn't affect occupancy: same kernel size,
+    // same smem, same launch bounds. Use the bf16-freq variant as representative.
+    using FloatFreq = std::conditional_t<std::is_same_v<Float, float>, float, half>;
+    CUDA_CHECK(cudaOccupancyMaxActiveBlocksPerMultiprocessor(
+        &blocks_per_sm,
+        qk_norm_and_rope_backward_kernel<Float, FloatFreq>,
+        512, smem));
+    int total_blocks = blocks_per_sm * dp.multiProcessorCount;
+    if (total_blocks < Nh) {
+        return 1;
+    }
+    return total_blocks / Nh;
+}
+
+std::size_t qk_norm_and_rope_backward_scratch_size(int Nq, int Nkv, int HeadDim,
+                                                   ETensorDType dtype,
+                                                   const cudaDeviceProp& dp) {
+    const int Nh = Nq + 2 * Nkv;
+    int x_blocks;
+    switch (dtype) {
+        case ETensorDType::FP32:
+            x_blocks = qk_norm_and_rope_backward_x_blocks<float>(Nq, Nkv, HeadDim, dp);
+            break;
+        case ETensorDType::BF16:
+            x_blocks = qk_norm_and_rope_backward_x_blocks<nv_bfloat16>(Nq, Nkv, HeadDim, dp);
+            break;
+        default:
+            throw std::invalid_argument("Unsupported dtype");
+    }
+    return (size_t)HeadDim * x_blocks * Nh * sizeof(float);
+}
+
+template<class Float, class FloatFreq>
+void qk_norm_and_rope_backward_imp(Float* dinp, Float* dq_wgt, Float* dk_wgt,
+                                   std::byte* scratch,
+                                   const Float* dout, const Float* inp,
+                                   const Float* q_wgt, const Float* k_wgt,
+                                   const float* rstd, const FloatFreq* freqs_cis,
+                                   float* abs_max_ptr,
+                                   int B, int T, int Nq, int Nkv, int HeadDim,
+                                   const cudaDeviceProp& dp, cudaStream_t stream) {
+    if (HeadDim % 16 != 0) {
+        throw std::invalid_argument("HeadDim must be a multiple of 16");
+    }
+
+    constexpr int block_size = 512;
+    const int BT = B * T;
+    const int Nh = Nq + 2 * Nkv;
+    const size_t smem = qk_norm_backward_smem<Float>(HeadDim);
+    const int x_blocks = qk_norm_and_rope_backward_x_blocks<Float>(Nq, Nkv, HeadDim, dp);
+
+    dim3 grid(x_blocks, Nh);
+    qk_norm_and_rope_backward_kernel<Float, FloatFreq><<<grid, block_size, smem, stream>>>(
+        dinp, scratch, dout, inp, q_wgt, k_wgt, rstd, freqs_cis, abs_max_ptr,
+        BT, T, Nq, Nkv, HeadDim);
+    CUDA_CHECK(cudaGetLastError());
+
+    // Final reduction across blocks_x into dq_wgt / dk_wgt -- reuse non-fused reducer.
+    dim3 reduce_grid(1, 2);
+    qk_norm_backward_reduce_kernel<Float><<<reduce_grid, 32, 0, stream>>>(
+        dq_wgt, dk_wgt, scratch, x_blocks, Nq, Nkv, HeadDim);
+    CUDA_CHECK(cudaGetLastError());
+}
+
 // Explicit instantiations
 void qk_norm_forward(float* out, float* r_rms, const float* inp,
                      const float* q_wgt, const float* k_wgt,
@@ -787,4 +911,30 @@ void qk_norm_backward(nv_bfloat16* dinp, nv_bfloat16* dq_wgt, nv_bfloat16* dk_wg
                       int BT, int Nq, int Nkv, int HeadDim,
                       const cudaDeviceProp& dp, cudaStream_t stream) {
     qk_norm_backward_imp<nv_bfloat16>(dinp, dq_wgt, dk_wgt, scratch, dout, inp, q_wgt, k_wgt, rstd, abs_max_ptr, BT, Nq, Nkv, HeadDim, dp, stream);
+}
+
+void qk_norm_and_rope_backward(float* dinp, float* dq_wgt, float* dk_wgt,
+                               std::byte* scratch,
+                               const float* dout, const float* inp,
+                               const float* q_wgt, const float* k_wgt,
+                               const float* rstd, const float* freqs_cis,
+                               float* abs_max_ptr,
+                               int B, int T, int Nq, int Nkv, int HeadDim,
+                               const cudaDeviceProp& dp, cudaStream_t stream) {
+    qk_norm_and_rope_backward_imp<float, float>(
+        dinp, dq_wgt, dk_wgt, scratch, dout, inp, q_wgt, k_wgt, rstd, freqs_cis,
+        abs_max_ptr, B, T, Nq, Nkv, HeadDim, dp, stream);
+}
+
+void qk_norm_and_rope_backward(nv_bfloat16* dinp, nv_bfloat16* dq_wgt, nv_bfloat16* dk_wgt,
+                               std::byte* scratch,
+                               const nv_bfloat16* dout, const nv_bfloat16* inp,
+                               const nv_bfloat16* q_wgt, const nv_bfloat16* k_wgt,
+                               const float* rstd, const half* freqs_cis,
+                               float* abs_max_ptr,
+                               int B, int T, int Nq, int Nkv, int HeadDim,
+                               const cudaDeviceProp& dp, cudaStream_t stream) {
+    qk_norm_and_rope_backward_imp<nv_bfloat16, half>(
+        dinp, dq_wgt, dk_wgt, scratch, dout, inp, q_wgt, k_wgt, rstd, freqs_cis,
+        abs_max_ptr, B, T, Nq, Nkv, HeadDim, dp, stream);
 }
