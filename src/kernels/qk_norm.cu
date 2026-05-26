@@ -155,6 +155,9 @@ qk_norm_backward_kernel(Float* dinp, std::byte* scratch,
     Float* s_wgt = reinterpret_cast<Float*>(smem);
     float* s_d_wgt_base = reinterpret_cast<float*>(s_wgt + HeadDim);
     float* s_d_wgt = s_d_wgt_base + HeadDim * group;
+    // Per-group cache for input x, to avoid the second global load.
+    x128* s_in_base = reinterpret_cast<x128*>(s_d_wgt_base + HeadDim * num_groups);
+    x128* s_in = s_in_base + group * (HeadDim / x128::size);
 
     for(int i = threadIdx.x * x128::size; i < HeadDim; i += blockDim.x * x128::size) {
         if(h < Nq) {
@@ -220,6 +223,7 @@ qk_norm_backward_kernel(Float* dinp, std::byte* scratch,
             x128 o = x128::load(dout_i + i);
             x128 x = x128::load(inp_i  + i);
             x128 w = x128::load(s_wgt  + i);
+            s_in[i / x128::size] = x;
             for (int k = 0; k < x128::size; k++) {
                 sum_xow += (float)w[k] * (float)o[k] * (float)x[k];
             }
@@ -230,7 +234,7 @@ qk_norm_backward_kernel(Float* dinp, std::byte* scratch,
 
         for (int i = lane * x128::size; i < HeadDim; i += GroupSize * x128::size) {
             x128 o = x128::load_cs(dout_i + i);
-            x128 x = x128::load_cs(inp_i + i);
+            x128 x = s_in[i / x128::size];
             x128 w = x128::load(s_wgt + i);
             x128 dx = x128::zeros();
 
@@ -486,10 +490,12 @@ void qk_norm_and_rope_forward(Float* out, float* r_rms, float* abs_max_ptr,
 
 // Get the amount of smem per block for backward
 template<typename Float>
- size_t qk_norm_backward_smem(int HeadDim) {
+size_t qk_norm_backward_smem(int HeadDim) {
     constexpr int block_size = 512;
     constexpr int num_groups = block_size / GroupSize;
-    return HeadDim * sizeof(Float) + num_groups * HeadDim * sizeof(float);
+    return HeadDim * sizeof(Float)                       // s_wgt
+         + num_groups * HeadDim * sizeof(float)          // s_d_wgt
+         + num_groups * HeadDim * sizeof(Float);         // s_in
 }
 
 // Get the maximum number of concurrent blocks in x direction
@@ -543,6 +549,12 @@ void qk_norm_backward_imp(Float* dinp, Float* dq_wgt, Float* dk_wgt, std::byte* 
     constexpr int block_size = 512;
     const int Nh = Nq + 2 * Nkv;
     const size_t smem = qk_norm_backward_smem<Float>(HeadDim);
+
+    CUDA_CHECK(cudaFuncSetAttribute(
+        qk_norm_backward_kernel<Float>,
+        cudaFuncAttributeMaxDynamicSharedMemorySize,
+        smem));
+
     const int x_blocks = qk_norm_backward_x_blocks<Float>(Nq, Nkv, HeadDim, dp);
 
     dim3 grid(x_blocks, Nh);
