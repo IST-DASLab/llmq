@@ -424,6 +424,170 @@ __global__ void qk_norm_and_rope_fwd_kernel(Float* out, float* r_rms, float* abs
     }
 }
 
+// ============================================================
+// Fused QK-norm + RoPE backward
+// ============================================================
+
+template<class Float, class FloatFreq>
+__global__ void __launch_bounds__(512, 2)
+qk_norm_and_rope_backward_kernel(Float* dinp, std::byte* scratch,
+                                 const Float* dout, const Float* inp,
+                                 const Float* q_wgt, const Float* k_wgt,
+                                 const float* rstd, const FloatFreq* freqs_cis,
+                                 float* abs_max_ptr,
+                                 int BT, int T, int Nq, int Nkv, int HeadDim) {
+    // formulas:
+    //   rms = sqrt(sum x_j^2 / C + eps)
+    //   y_i = w_i x_i / rms
+    //
+    //   o_i := dL/dy_i
+    //   dw_i = sum (x_i o_i / rms)
+    //   xow := sum x_i o_i w_i
+    //   dy_j/drms = - w_j x_j / rms²
+    //   drms/dx_j = x_j/(C rms)
+    //   dx_i = dL/dy_j (dy_j/dx_i + dy_j/drms drms/dx_i)
+    //        = o_i w_i / rms - sum_j o_j w_j x_j / rms² x_i/(C rms)
+    //        = o_i w_i / rms - x_i (xow/C) / rms³
+    // strategy: y-dimension of block indicates which head is operated on
+    //           x-dimension goes over tokens in groups of eight threads
+    using x128 = GenericVector<Float, 16/sizeof(Float)>;
+    using f128 = GenericVector<float, 16/sizeof(float)>;
+    using fvec = GenericVector<float, x128::size>;
+
+    const int lane = threadIdx.x % GroupSize;
+    const int group = threadIdx.x / GroupSize;
+    const int num_groups = blockDim.x / GroupSize;
+    const int h = blockIdx.y;
+    const int Nh = Nq + 2 * Nkv;
+
+    // load weights into shared memory
+    // do this before we allow any threads to exit!
+    extern __shared__ int4 smem[];
+
+    __shared__ float block_abs_max;
+    float thread_abs_max = 0.f;
+
+    Float* s_wgt = reinterpret_cast<Float*>(smem);
+    float* s_d_wgt_base = reinterpret_cast<float*>(s_wgt + HeadDim);
+    float* s_d_wgt = s_d_wgt_base + HeadDim * group;
+    // Per-group cache for input x, to avoid the second global load.
+    x128* s_in_base = reinterpret_cast<x128*>(s_d_wgt_base + HeadDim * num_groups);
+    x128* s_in = s_in_base + group * (HeadDim / x128::size);
+
+    for(int i = threadIdx.x * x128::size; i < HeadDim; i += blockDim.x * x128::size) {
+        if(h < Nq) {
+            x128::load(q_wgt + i).store(s_wgt + i);
+        } else if (h < Nq + Nkv){
+            x128::load(k_wgt + i).store(s_wgt + i);
+        }
+        // v-heads need no loading
+    }
+
+    for(int i = threadIdx.x * f128::size; i < HeadDim * num_groups; i += blockDim.x * f128::size) {
+        f128::zeros().store(s_d_wgt_base + i);
+    }
+
+    if (abs_max_ptr && threadIdx.x == 0) {
+        block_abs_max = 0.f;
+    }
+
+    __syncthreads();
+
+    const int groups_in_grid = num_groups * gridDim.x;
+    const int start_idx = blockIdx.x * (blockDim.x / GroupSize) + group;
+
+    for (int bt = start_idx; ; bt += groups_in_grid) {
+        bool valid = bt < BT;
+        unsigned int active_mask = __ballot_sync(0xffffffffu, valid);
+        bool all_finished = !__any_sync(0xffffffffu, valid);
+        if (all_finished)
+            break;
+        if (!valid)
+            continue;
+
+        // adjusted pointers to current token
+        const Float* inp_i = inp + bt * Nh * HeadDim + h * HeadDim;
+        const Float* dout_i = dout + bt * Nh * HeadDim + h * HeadDim;
+        Float* dinp_i = dinp + bt * Nh * HeadDim + h * HeadDim;
+        const float rstd_i = rstd[bt * Nh + h];
+
+        // V heads
+        if (h >= Nq + Nkv) {
+            if (abs_max_ptr) {
+                for (int c = lane * x128::size; c < HeadDim; c += GroupSize * x128::size) {
+                    x128 in_data = x128::load_cs(dout_i + c);
+                    for (int k = 0; k < x128::size; k++) {
+                        thread_abs_max = fmaxf(thread_abs_max, fabsf(in_data[k]));
+                    }
+                    if (dout_i != dinp_i) {
+                        in_data.store(dinp_i + c);
+                    }
+                }
+            } else if (dout_i != dinp_i) {
+                for (int c = lane * x128::size; c < HeadDim; c += GroupSize * x128::size) {
+                    x128 in_data = x128::load_cs(dout_i + c);
+                    in_data.store(dinp_i + c);
+                }
+            }
+            continue;
+        }
+
+        // QK heads
+        float sum_xow = 0.0f;
+        for (int i = lane * x128::size; i < HeadDim; i += GroupSize * x128::size) {
+            x128 o = x128::load(dout_i + i);
+            x128 x = x128::load(inp_i  + i);
+            x128 w = x128::load(s_wgt  + i);
+            s_in[i / x128::size] = x;
+            for (int k = 0; k < x128::size; k++) {
+                sum_xow += (float)w[k] * (float)o[k] * (float)x[k];
+            }
+        }
+
+        sum_xow = reduce_group_sum(sum_xow, active_mask);
+        const float xow_norm = sum_xow / HeadDim * rstd_i;
+
+        for (int i = lane * x128::size; i < HeadDim; i += GroupSize * x128::size) {
+            x128 o = x128::load_cs(dout_i + i);
+            x128 x = s_in[i / x128::size];
+            x128 w = x128::load(s_wgt + i);
+            x128 dx = x128::zeros();
+
+            fvec dw = fvec::load(s_d_wgt + i);
+            for (int k = 0; k < x128::size; k++) {
+                float xn = (float)x[k] * rstd_i;
+                dw[k] += xn * (float)o[k];
+                float dx_k = ((float)o[k] * (float)w[k] - xn * xow_norm) * rstd_i + (float)dx[k];
+                thread_abs_max = fmaxf(thread_abs_max, fabsf(dx_k));
+                dx[k] = static_cast<Float>(dx_k);
+            }
+
+            dx.store(dinp_i + i);
+
+            // Cache per-warp partial dweight in shared memory
+            dw.store(s_d_wgt_base + group * HeadDim + i);
+        }
+    }
+
+    __syncthreads();
+    // reduce across the block
+    if (threadIdx.x < 32) {
+        float* scratch_dweight = reinterpret_cast<float*>(scratch) + HeadDim * (blockIdx.x + blockIdx.y * gridDim.x);
+        for (int i = threadIdx.x * f128::size; i < HeadDim; i += 32 * f128::size) {
+            f128 accumulated = f128::zeros();
+            for (int g = 0; g < num_groups; ++g) {
+                f128 dw_128 = f128::load(s_d_wgt_base + g * HeadDim + i);
+                for (int k = 0; k < f128::size; k++) {
+                    accumulated[k] += dw_128[k];
+                }
+            }
+            accumulated.store(scratch_dweight + i);
+        }
+    }
+
+    handle_absmax_reduction(abs_max_ptr, &block_abs_max, thread_abs_max);
+}
+
 template<typename Float>
 void qk_norm_forward_imp(Float* out, float* r_rms,
                          const Float* inp,
