@@ -182,13 +182,13 @@ void AdamWStateManager::allocate_state(IModel& model, cudaStream_t stream, EAllo
             auto prepare_shape_for_scales = [&](auto&& c) {
                 // creates shards same as main weight
                 auto sharded = shard_empty_container(flattened_view(c), mWorld);
-                // flatten the local shard
-                auto flattened = flattened_view(sharded);
                 // and group into scaling groups
-                auto grouped = shard_empty_container(std::move(flattened), 128);
+                auto grouped = shard_empty_container(std::move(sharded), 128);
                 return grouped;
             };
-            // we "shard" for 128 as many GPUs, so that we get 1 scale per 128 weights.
+            // we first shard by mWorld (matching main weights), then shard the local
+            // flattened view by 128 to get 1 scale per 128 weights.
+
             for (int i = 0; i < mConfig.NumLayers; ++i) {
                 mBlocksMScales[i] = prepare_shape_for_scales(model.create_block_container(mConfig, ETensorDType::FP32, ETensorDType::FP32));
                 alloc_lazy.allocate(mBlocksMScales[i]);

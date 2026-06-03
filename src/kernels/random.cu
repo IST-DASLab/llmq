@@ -28,6 +28,7 @@ __global__ void rng_normal_kernel(floatX* dst, std::size_t count, float mean, fl
 template<typename floatX>
 void rng_normal_imp(floatX* dst, std::size_t count, float mean, float std, unsigned long long seed, unsigned long long subsequence, cudaStream_t stream) {
     assert(count % 4 == 0);
+    if (count == 0) return;
     rng_normal_kernel<<<div_ceil(count, static_cast<std::size_t>(4*256)), 256, 0, stream>>> (dst, count, mean, std, seed, subsequence);
     CUDA_CHECK(cudaGetLastError());
 }
