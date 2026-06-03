@@ -61,7 +61,7 @@ private:
 //! are `nullptr`, but sizes have been set up.
 GenericTensorContainer shard_empty_container(GenericTensorContainer&& c, int world);
 
-//! Flattens all tensors is the container.
+//! Flattens all tensors in the container.
 GenericTensorContainer flattened_view(const GenericTensorContainer& c);
 
 //! Shards a non-empty tensor container. The returned container's tensors are _views_ into

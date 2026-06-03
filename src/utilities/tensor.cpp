@@ -121,7 +121,7 @@ TensorShard shard_view(const Tensor& src, int idx, int num) {
 
 Tensor flat_view(const Tensor& src) {
     Tensor dst{src};
-    dst.Sizes.fill(0);
+    dst.Sizes.fill(1);
     dst.Sizes[0] = src.nelem();
     dst.Rank = 1;
     return dst;
