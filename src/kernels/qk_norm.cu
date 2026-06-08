@@ -715,6 +715,7 @@ static int qk_norm_backward_x_blocks(int Nq, int Nkv, int HeadDim,
                                      const cudaDeviceProp& dp) {
     const int Nh = Nq + 2 * Nkv;
     const size_t smem = qk_norm_backward_smem<Float>(HeadDim);
+    CUDA_CHECK(cudaFuncSetAttribute(qk_norm_backward_kernel<Float>, cudaFuncAttributeMaxDynamicSharedMemorySize, smem));
     int blocks_per_sm;
     CUDA_CHECK(cudaOccupancyMaxActiveBlocksPerMultiprocessor(
         &blocks_per_sm, qk_norm_backward_kernel<Float>, 512, smem));
