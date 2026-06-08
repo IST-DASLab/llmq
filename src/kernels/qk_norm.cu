@@ -6,21 +6,18 @@
 #include "utilities/utils.h"
 #include "utilities/dtype.h"
 #include "utilities/vec.cuh"
+#include <cooperative_groups.h>
+#include <cooperative_groups/reduce.h>
+
+namespace cg = cooperative_groups;
 
 constexpr const int GroupSize = 8;
-
-__device__ float reduce_group_sum(float acc, unsigned int active_mask) {
-    for (int offset = GroupSize / 2; offset > 0; offset >>= 1) {
-        acc += __shfl_xor_sync(active_mask, acc, offset);
-    }
-    return acc;
-}
 
 template<typename Float>
 struct QKHelpers {
     using x128 = GenericVector<Float, 16/sizeof(Float)>;
 
-    static __device__ __forceinline__ float norm_head(Float* out, x128* s_in, const x128* wgt_src, const Float* inp, int HeadDim, float epsilon, int active_mask) {
+    static __device__ __forceinline__ float norm_head(Float* out, x128* s_in, const x128* wgt_src, const Float* inp, int HeadDim, float epsilon, const cg::thread_block_tile<8, cg::thread_block>& tile) {
         using x128 = GenericVector<Float, 16/sizeof(Float)>;
         const int lane = threadIdx.x % GroupSize;
 
@@ -35,7 +32,7 @@ struct QKHelpers {
             }
         }
 
-        acc = reduce_group_sum(acc, active_mask) / HeadDim;
+        acc = cg::reduce(tile, acc, cg::plus<float>{}) / HeadDim;
         float s = rsqrtf(acc + epsilon);
 
         for(int c = lane * x128::size; c < HeadDim; c += GroupSize * x128::size) {
@@ -59,10 +56,12 @@ struct QKHelpers {
 
 template<typename Float>
 __global__ void qk_norm_forward_simple_kernel(Float* out, float* r_rms, const Float* inp, const Float* q_wgt, const Float* k_wgt, float epsilon, int BT, int Nq, int Nkv, int HeadDim) {
+    cg::thread_block block = cg::this_thread_block();
+    cg::thread_block_tile<8, cg::thread_block> tile = cg::tiled_partition<GroupSize>(block);
     using x128 = GenericVector<Float, 16/sizeof(Float)>;
 
-    const int lane = threadIdx.x % GroupSize;
-    const int group = threadIdx.x / GroupSize;
+    const int lane = tile.thread_rank();
+    const int group = tile.meta_group_rank();
 
     // load weights into shared memory
     // do this before we allow any threads to exit!
@@ -74,7 +73,7 @@ __global__ void qk_norm_forward_simple_kernel(Float* out, float* r_rms, const Fl
     x128* s_k_wgt = reinterpret_cast<x128*>(smem) + (HeadDim / x128::size);
     x128* s_in = reinterpret_cast<x128*>(s_k_wgt) + (HeadDim / x128::size) + group * (HeadDim / x128::size);
 
-    for(int i =  threadIdx.x * x128::size; i < HeadDim; i += blockDim.x * x128::size) {
+    for(int i = threadIdx.x * x128::size; i < HeadDim; i += blockDim.x * x128::size) {
         s_q_wgt[i/x128::size] = x128::load(q_wgt + i);
         s_k_wgt[i/x128::size] = x128::load(k_wgt + i);
     }
@@ -106,7 +105,7 @@ __global__ void qk_norm_forward_simple_kernel(Float* out, float* r_rms, const Fl
         return;
     }
 
-    float s = QKHelpers<Float>::norm_head(out, s_in, wgt_src, inp, HeadDim, epsilon, 0xffffffff);
+    float s = QKHelpers<Float>::norm_head(out, s_in, wgt_src, inp, HeadDim, epsilon, tile);
 
     // store the rms, no need to cache it
     if(lane == 0 && r_rms != nullptr) {
@@ -139,8 +138,11 @@ qk_norm_backward_kernel(Float* dinp, std::byte* scratch,
     using f128 = GenericVector<float, 16/sizeof(float)>;
     using fvec = GenericVector<float, x128::size>;
 
-    const int lane = threadIdx.x % GroupSize;
-    const int group = threadIdx.x / GroupSize;
+    cg::thread_block block = cg::this_thread_block();
+    cg::thread_block_tile<8, cg::thread_block> tile = cg::tiled_partition<GroupSize>(block);
+
+    const int lane = tile.thread_rank();
+    const int group = tile.meta_group_rank();
     const int num_groups = blockDim.x / GroupSize;
     const int h = blockIdx.y;
     const int Nh = Nq + 2 * Nkv;
@@ -181,15 +183,7 @@ qk_norm_backward_kernel(Float* dinp, std::byte* scratch,
     const int groups_in_grid = num_groups * gridDim.x;
     const int start_idx = blockIdx.x * (blockDim.x / GroupSize) + group;
 
-    for (int bt = start_idx; ; bt += groups_in_grid) {
-        bool valid = bt < BT;
-        unsigned int active_mask = __ballot_sync(0xffffffffu, valid);
-        bool all_finished = !__any_sync(0xffffffffu, valid);
-        if (all_finished)
-            break;
-        if (!valid)
-            continue;
-
+    for (int bt = start_idx; bt < BT; bt += groups_in_grid) {
         // adjusted pointers to current token
         const Float* inp_i = inp + bt * Nh * HeadDim + h * HeadDim;
         const Float* dout_i = dout + bt * Nh * HeadDim + h * HeadDim;
@@ -229,7 +223,7 @@ qk_norm_backward_kernel(Float* dinp, std::byte* scratch,
             }
         }
 
-        sum_xow = reduce_group_sum(sum_xow, active_mask);
+        sum_xow = cg::reduce(tile, sum_xow, cg::plus<float>{});
         const float xow_norm = sum_xow / HeadDim * rstd_i;
 
         for (int i = lane * x128::size; i < HeadDim; i += GroupSize * x128::size) {
@@ -242,7 +236,7 @@ qk_norm_backward_kernel(Float* dinp, std::byte* scratch,
             for (int k = 0; k < x128::size; k++) {
                 float xn = (float)x[k] * rstd_i;
                 dw[k] += xn * (float)o[k];
-                float dx_k = ((float)o[k] * (float)w[k] - xn * xow_norm) * rstd_i + (float)dx[k];
+                float dx_k = ((float)o[k] * (float)w[k] - xn * xow_norm) * rstd_i;// + (float)dx[k];
                 thread_abs_max = fmaxf(thread_abs_max, fabsf(dx_k));
                 dx[k] = static_cast<Float>(dx_k);
             }
@@ -323,8 +317,11 @@ __global__ void qk_norm_and_rope_fwd_kernel(Float* out, float* r_rms, float* abs
     using x128 = GenericVector<Float, 16/sizeof(Float)>;
     using freq128 = GenericVector<FloatFreq, 16/sizeof(FloatFreq)>;
 
-    const int lane = threadIdx.x % GroupSize;
-    const int group = threadIdx.x / GroupSize;
+    cg::thread_block block = cg::this_thread_block();
+    cg::thread_block_tile<8, cg::thread_block> tile = cg::tiled_partition<GroupSize>(block);
+
+    const int lane = tile.thread_rank();
+    const int group = tile.meta_group_rank();
     __shared__ float block_abs_max;
     if (abs_max_ptr && threadIdx.x == 0) {
         block_abs_max = 0.f;
@@ -369,7 +366,6 @@ __global__ void qk_norm_and_rope_fwd_kernel(Float* out, float* r_rms, float* abs
         is_value_head = true;
     }
 
-    unsigned int active_mask = __ballot_sync(0xffffffffu, !is_value_head);
     if (is_value_head) {
         // ---- value head: pass-through, but still contribute to abs-max ----
         for (int c = lane * x128::size; c < HeadDim; c += GroupSize * x128::size) {
@@ -382,8 +378,8 @@ __global__ void qk_norm_and_rope_fwd_kernel(Float* out, float* r_rms, float* abs
     } else {
         // ---- Q or K head: norm + scale + RoPE ----
 
-        float s = QKHelpers<Float>::norm_head(&s_in[0][0], s_in, wgt_src, inp_h, HeadDim, epsilon, active_mask);
-        __syncwarp(active_mask);
+        float s = QKHelpers<Float>::norm_head(&s_in[0][0], s_in, wgt_src, inp_h, HeadDim, epsilon, tile);
+        tile.sync();
 
         int head_dim_half = HeadDim / 2;
         using x64 = GenericVector<Float, 8/sizeof(Float)>;
@@ -445,8 +441,11 @@ qk_norm_and_rope_backward_kernel(Float* dinp, std::byte* scratch,
     using freq128 = GenericVector<FloatFreq, 16 / sizeof(FloatFreq)>;
     using fvec64  = GenericVector<float, x64::size>;
 
-    const int lane       = threadIdx.x % GroupSize;
-    const int group      = threadIdx.x / GroupSize;
+    cg::thread_block block = cg::this_thread_block();
+    cg::thread_block_tile<8, cg::thread_block> tile = cg::tiled_partition<GroupSize>(block);
+
+    const int lane       = tile.thread_rank();
+    const int group      = tile.meta_group_rank();
     const int num_groups = blockDim.x / GroupSize;
     const int h          = blockIdx.y;
     const int Nh         = Nq + 2 * Nkv;
@@ -491,12 +490,7 @@ qk_norm_and_rope_backward_kernel(Float* dinp, std::byte* scratch,
     const int groups_in_grid = num_groups * gridDim.x;
     const int start_idx      = blockIdx.x * (blockDim.x / GroupSize) + group;
 
-    for (int bt = start_idx; ; bt += groups_in_grid) {
-        bool valid              = bt < BT;
-        unsigned int active_mask = __ballot_sync(0xffffffffu, valid);
-        bool all_finished       = !__any_sync(0xffffffffu, valid);
-        if (all_finished) break;
-        if (!valid) continue;
+    for (int bt = start_idx; bt < BT; bt += groups_in_grid) {
 
         const int t = bt % T;
 
@@ -570,7 +564,7 @@ qk_norm_and_rope_backward_kernel(Float* dinp, std::byte* scratch,
             }
         }
 
-        sum_xow = reduce_group_sum(sum_xow, active_mask);
+        sum_xow = cg::reduce(tile, sum_xow, cg::plus<float>{});
         const float xow_norm = sum_xow / HeadDim * rstd_i;
 
         // Phase B: per-element dx, dw. Rotates dout again (matches design choice;
