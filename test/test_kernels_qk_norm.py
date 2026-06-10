@@ -143,6 +143,11 @@ def test_qk_norm_and_rope_forward(B, T, Nq, Nkv, HeadDim, dtype, with_abs_max):
         ref_abs_max = ref_out.float().abs().max().item()
         assert abs_max.item() == pytest.approx(ref_abs_max, rel=rtol, abs=atol)
 
+
+# ============================================================
+# qk_norm_backward
+# ============================================================
+
 @pytest.mark.parametrize("B,T,Nq,Nkv,HeadDim", [
     (1, 4, 2, 1, 16),
     (2, 8, 4, 2, 64),
@@ -196,6 +201,82 @@ def test_qk_norm_backward(B, T, Nq, Nkv, HeadDim, dtype, in_place: bool):
 
     rtol, atol = TOL[dtype]
 
+    assert dinp.float().cpu().numpy()     == pytest.approx(ref_dinp.cpu().numpy(),   rel=rtol, abs=atol)
+    assert dq_wgt_k.float().cpu().numpy() == pytest.approx(ref_dq_wgt.cpu().numpy(), rel=rtol, abs=atol)
+    assert dk_wgt_k.float().cpu().numpy() == pytest.approx(ref_dk_wgt.cpu().numpy(), rel=rtol, abs=atol)
+
+@pytest.mark.parametrize("B,T,Nq,Nkv,HeadDim", [
+    (1, 4, 2, 1, 16),
+    (2, 8, 4, 2, 64),
+    (4, 16, 8, 4, 64),
+    (1, 1, 4, 2, 128),
+])
+@pytest.mark.parametrize("dtype", DTYPES)
+@pytest.mark.parametrize("in_place", [True, False])
+def test_qk_norm_and_rope_backward(B, T, Nq, Nkv, HeadDim, dtype, in_place: bool):
+    torch.manual_seed(0)
+    device = "cuda"
+    N = Nq + 2 * Nkv
+    eps = 1e-6
+
+    inp   = torch.randn((B, T, N * HeadDim), device=device, dtype=dtype)
+    q_wgt = torch.randn((HeadDim,),          device=device, dtype=dtype)
+    k_wgt = torch.randn((HeadDim,),          device=device, dtype=dtype)
+    dout  = torch.randn((B, T, N * HeadDim), device=device, dtype=dtype)
+
+    freq_dtype = torch.float32 if dtype == torch.float32 else torch.float16
+    freqs = _make_rope_freqs(T, HeadDim, 1_000_000.0, freq_dtype, device)
+
+    # Reference in fp32: qk-norm then rope, backprop through both.
+    inp_f   = inp.float().detach().requires_grad_(True)
+    q_wgt_f = q_wgt.float().detach().requires_grad_(True)
+    k_wgt_f = k_wgt.float().detach().requires_grad_(True)
+    ref_normed_f, _ = _qk_norm_reference(inp_f, q_wgt_f, k_wgt_f, Nq, Nkv, eps)
+    ref_out_f = _rope_python(
+        ref_normed_f.view(B, T, N, HeadDim), freqs, Nq, Nkv
+    ).view(B, T, N * HeadDim)
+    ref_out_f.backward(dout.float())
+    ref_dinp   = inp_f.grad
+    ref_dq_wgt = q_wgt_f.grad
+    ref_dk_wgt = k_wgt_f.grad
+
+    # Run the fused forward to populate r_rms (kernel only writes QK slots).
+    r_rms = torch.empty((B, T, N), device=device, dtype=torch.float32)
+    r_rms.fill_(1.0)
+    K.qk_norm_and_rope_forward(
+        torch.empty_like(inp), r_rms, inp, q_wgt, k_wgt, freqs, None, eps, Nq, Nkv,
+    )
+
+    scratch_size = K.get_qknorm_and_rope_backward_scratch_size(Nq, Nkv, HeadDim, inp.dtype)
+    scratch  = torch.zeros((scratch_size,), device=device, dtype=torch.uint8)
+    dq_wgt_k = torch.zeros_like(q_wgt)
+    dk_wgt_k = torch.zeros_like(k_wgt)
+
+    v_slice = slice((Nq + Nkv) * HeadDim, N * HeadDim)
+
+    if in_place:
+        dinp_buf = dout.clone()
+        v_before = dinp_buf[:, :, v_slice].clone()
+        K.qk_norm_and_rope_backward(
+            dinp_buf, dq_wgt_k, dk_wgt_k, scratch,
+            dinp_buf, inp, q_wgt, k_wgt, r_rms, freqs,
+            None, Nq, Nkv,
+        )
+        dinp = dinp_buf
+        # In-place V pass-through: kernel must not write V slots
+        # (mirrors qk_norm_backward_kernel's `if (dout_i != dinp_i)` guard).
+        assert torch.equal(dinp[:, :, v_slice], v_before)
+    else:
+        dinp = torch.zeros_like(inp)
+        K.qk_norm_and_rope_backward(
+            dinp, dq_wgt_k, dk_wgt_k, scratch,
+            dout, inp, q_wgt, k_wgt, r_rms, freqs,
+            None, Nq, Nkv,
+        )
+        # Out-of-place V pass-through: dtype copy is bit-exact.
+        assert torch.equal(dinp[:, :, v_slice], dout[:, :, v_slice])
+
+    rtol, atol = TOL[dtype]
     assert dinp.float().cpu().numpy()     == pytest.approx(ref_dinp.cpu().numpy(),   rel=rtol, abs=atol)
     assert dq_wgt_k.float().cpu().numpy() == pytest.approx(ref_dq_wgt.cpu().numpy(), rel=rtol, abs=atol)
     assert dk_wgt_k.float().cpu().numpy() == pytest.approx(ref_dk_wgt.cpu().numpy(), rel=rtol, abs=atol)
