@@ -84,6 +84,18 @@ def qk_norm_backward(dinp: torch.Tensor, dq_wgt: torch.Tensor, dk_wgt: torch.Ten
 def get_qknorm_backward_scratch_size(Nq: int, Nkv: int, HeadDim: int, dtype: torch.dtype):
     return _pyllmq.get_qknorm_backward_scratch_size(Nq,  Nkv, HeadDim, _TORCH_TO_TYPE_NAME[dtype])
 
+@torch.library.custom_op("llmq::qk_norm_and_rope_backward", mutates_args=("dinp", "dq_wgt", "dk_wgt", "scratch", "abs_max"))
+def qk_norm_and_rope_backward(dinp: torch.Tensor, dq_wgt: torch.Tensor, dk_wgt: torch.Tensor,
+                              scratch: torch.Tensor, dout: torch.Tensor, inp: torch.Tensor,
+                              q_wgt: torch.Tensor, k_wgt: torch.Tensor, rstd: torch.Tensor,
+                              freqs_cis: torch.Tensor, abs_max: torch.Tensor | None,
+                              Nq: int, Nkv: int, stream: int = 0) -> None:
+    _pyllmq.qk_norm_and_rope_backward(dinp, dq_wgt, dk_wgt, scratch, dout, inp, q_wgt, k_wgt,
+                                      rstd, freqs_cis, abs_max, Nq, Nkv, stream)
+
+def get_qknorm_and_rope_backward_scratch_size(Nq: int, Nkv: int, HeadDim: int, dtype: torch.dtype):
+    return _pyllmq.get_qknorm_and_rope_backward_scratch_size(Nq, Nkv, HeadDim, _TORCH_TO_TYPE_NAME[dtype])
+
 # SwiGLU
 @torch.library.custom_op("llmq::swiglu_forward", mutates_args=("out", "absmax"))
 def swiglu_forward(out: torch.Tensor, inp: torch.Tensor, absmax: torch.Tensor | None, stream: int = 0) -> None:
@@ -236,6 +248,8 @@ __all__ = [
     'encoder_forward',
     'rmsnorm_forward', 'rmsnorm_backward', 'fused_residual_rmsnorm_forward',
     'rope_forward', 'rope_backward', 'qk_norm_forward', 'qk_norm_backward',
+    'qk_norm_and_rope_forward', 'qk_norm_and_rope_backward',
+    'get_qknorm_and_rope_backward_scratch_size',
     'swiglu_forward', 'swiglu_forward_quant', 'swiglu_backward',
     'attention_forward', 'attention_backward',
     'fused_classifier', 'grouped_loss_sum',
