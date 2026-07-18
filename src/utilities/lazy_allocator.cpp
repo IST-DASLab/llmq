@@ -39,6 +39,9 @@ Tensor LazyAllocator::commit(TensorAllocator& storage, EAllocationType type, con
     Tensor backing = storage.allocate(ETensorDType::BYTE, name, type, {(long)total_size});
     auto* ptr = backing.get<std::byte>();
     for(auto& target: mTargets) {
+        // zero-size tensors keep Data == nullptr; a null Data pointer is the sentinel for
+        // "disabled" tensors (e.g., QKV bias, tied LM head) that `visit` and other checks rely on
+        if(target->bytes() == 0) continue;
         target->Data = ptr;
         target->Device = backing.Device;
         ptr += div_ceil(target->bytes(), page_size) * page_size;
@@ -63,6 +66,8 @@ Tensor LazyAllocator::commit(DeviceMemoryStack& storage, const char* name) {
     if (backing) {
         auto* ptr = backing.get<std::byte>();
         for(auto& target: mTargets) {
+            // zero-size tensors keep Data == nullptr, see above
+            if(target->bytes() == 0) continue;
             target->Data = ptr;
             target->Device = backing.Device;
             ptr += div_ceil(target->bytes(), page_size) * page_size;

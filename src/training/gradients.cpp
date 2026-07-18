@@ -167,8 +167,10 @@ SimpleTensorContainer& ShardedBlocksGradientManager::get_block_full(int layer_id
 
 void ShardedBlocksGradientManager::notify_non_block(std::size_t index, cudaStream_t stream, NCCLCommunicator& comm) {
     if(!is_last_micro_step()) return;
-    NvtxRange r{"notify"};
-    comm.reduce_scatter(mFullNonBlock.get_tensor(index), stream, mNonBlockEvent);
+    if (comm.world_size() != 1) {
+        NvtxRange r{"notify"};
+        comm.reduce_scatter(mFullNonBlock.get_tensor(index), stream, mNonBlockEvent);
+    }
 }
 
 void ShardedBlocksGradientManager::notify_block(int layer_idx, cudaStream_t stream, NCCLCommunicator& comm) {
