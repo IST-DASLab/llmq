@@ -128,7 +128,11 @@ void GPUUtilTrackerNVML::setup_tracking_thread() {
     // TODO should this be one thread for all devices?
     mThread = std::jthread([this](std::stop_token stop_token)
     {
-        NVML_CHECK(nvmlDeviceSetCpuAffinity(mDevice));
+        // best-effort: sandboxed environments (e.g. gVisor on Modal) reject
+        // affinity operations, and a monitoring thread must not kill training
+        if (nvmlDeviceSetCpuAffinity(mDevice) != NVML_SUCCESS) {
+            fprintf(stderr, "[NVML WARNING] could not set CPU affinity for GPU monitoring thread\n");
+        }
 
         nvmlFieldValue_t fields[] = {{NVML_FI_DEV_PCIE_COUNT_RX_BYTES}, {NVML_FI_DEV_PCIE_COUNT_TX_BYTES}, {NVML_FI_DEV_TOTAL_ENERGY_CONSUMPTION, 0}};
         while (true) {
