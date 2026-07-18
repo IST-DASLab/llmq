@@ -791,6 +791,8 @@ static int qk_norm_and_rope_backward_x_blocks(int Nq, int Nkv, int HeadDim,
     // FloatFreq parametrization doesn't affect occupancy: same kernel size,
     // same smem, same launch bounds. Use the bf16-freq variant as representative.
     using FloatFreq = std::conditional_t<std::is_same_v<Float, float>, float, half>;
+    CUDA_CHECK(cudaFuncSetAttribute(qk_norm_and_rope_backward_kernel<Float, FloatFreq>,
+                                    cudaFuncAttributeMaxDynamicSharedMemorySize, smem));
     CUDA_CHECK(cudaOccupancyMaxActiveBlocksPerMultiprocessor(
         &blocks_per_sm,
         qk_norm_and_rope_backward_kernel<Float, FloatFreq>,
@@ -838,6 +840,11 @@ void qk_norm_and_rope_backward_imp(Float* dinp, Float* dq_wgt, Float* dk_wgt,
     const int Nh = Nq + 2 * Nkv;
     const size_t smem = qk_norm_backward_smem<Float>(HeadDim);
     const int x_blocks = qk_norm_and_rope_backward_x_blocks<Float>(Nq, Nkv, HeadDim, dp);
+
+    CUDA_CHECK(cudaFuncSetAttribute(
+        qk_norm_and_rope_backward_kernel<Float, FloatFreq>,
+        cudaFuncAttributeMaxDynamicSharedMemorySize,
+        smem));
 
     dim3 grid(x_blocks, Nh);
     qk_norm_and_rope_backward_kernel<Float, FloatFreq><<<grid, block_size, smem, stream>>>(
