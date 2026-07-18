@@ -85,7 +85,6 @@ class LLamaOptimizerStateManager;
 struct LLamaRunState;
 struct sLLamaWeights;
 class NCCLCommunicator;
-using sLLamaGradBlock = sLLamaBlockWeights<Tensor>;
 
 //! \brief LLama (1,2,3) and related models (e.g., Qwen)
 //! \details Implements a transformer model with a gated linear unit in the feed-forward layer and RoPE attention.

@@ -249,7 +249,6 @@ sLLamaNonBlockWeights<TensorShard> allocate_non_block_shard(TransformerConfig co
 sLLamaBlockWeights<Tensor> allocate_block_full(const TransformerConfig& config, ETensorDType matrix_dtype, ETensorDType other_dtype, EAllocationType kind, TensorAllocator& alloc);
 sLLamaBlockWeights<TensorShard> allocate_block_shard(const TransformerConfig& config, ETensorDType matrix_dtype, ETensorDType other_dtype, EAllocationType kind, int shard_idx, int num_shards, TensorAllocator& alloc);
 
-sLLamaWeightsSet<Tensor> allocate_full_weights(const TransformerConfig& config, EAllocationType kind, TensorAllocator& alloc);
 sLLamaWeights allocate_weights(const TransformerConfig& config, EAllocationType kind, int shard_idx, int num_shards, TensorAllocator& alloc);
 
 sLLamaBlockWeights<TensorShard> shard_block(const sLLamaBlockWeights<Tensor>& block, int shard_idx, int num_shards);
