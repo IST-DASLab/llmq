@@ -206,7 +206,7 @@ void LLamaModel::_forward_block(sLLamaBlockWeights<Tensor>& weights, sLLamaLayer
 
     forward_qmm(acts.AttO, acts.Att, weights.Attn_Out_w, Tensor{},
                 rs->CublasLtHandle, rs->CuBlasWorkspace,
-                B, T, C, C,
+                B, T, Hq * Hs, C,
                 rs->DeviceProp, false, main_stream, rs->MatmulBackend);
 
     fused_residual_rmsnorm_forward(acts.ResidualAtt, acts.LN2.Value, acts.LN2_Rstd, residual, acts.AttO, weights.LN2_w,
@@ -590,7 +590,7 @@ void LLamaModel::_recompute_block(sLLamaBlockWeights<Tensor>& weights, sLLamaLay
         if (opt.RecomputeBlock) {
             forward_qmm(acts.AttO, acts.Att, weights.Attn_Out_w, Tensor{},
                          rs->CublasLtHandle, rs->CuBlasWorkspace,
-                         B, T, C, C,
+                         B, T, Hq * Hs, C,
                          rs->DeviceProp, false, main_stream, rs->MatmulBackend);
         }
     }
@@ -660,7 +660,7 @@ void LLamaModel::_backward_block(bool accumulate, sLLamaBlockWeights<Tensor>& we
 
     bool recompute_ln1 = rs->Options.RecomputeRMSNorm || rs->Options.RecomputeAtt;
     backward_qmm(d_acts.DAttY, d_weights.get_tensor(ATTO_W), Tensor{}, d_acts.DResAtt, acts.Att, weights.Attn_Out_w, Tensor{},
-                 accumulate, *rs, B, T, C, C, false, main_stream);
+                 accumulate, *rs, B, T, Hq * Hs, C, false, main_stream);
 
     rs->temp_acquire(d_acts.DQKV.Value);
     rs->temp_acquire(rs->CuDNNWorkspace);
@@ -739,7 +739,7 @@ void LLamaModel::fill_block_shapes(GenericTensorContainer& target, const Transfo
 
     long attn_intermediate_size = (config.NumQueryHeads + 2 * config.NumKeyValHeads) * HS;
     create(target.get_tensor(LLamaWeightID::QKV_W), attn_intermediate_size, C, matrix_dtype);
-    create(target.get_tensor(LLamaWeightID::ATTO_W), C, C, matrix_dtype);
+    create(target.get_tensor(LLamaWeightID::ATTO_W), C, config.attn_channels(), matrix_dtype);
     create(target.get_tensor(LLamaWeightID::UP_W), 2 * H, C, matrix_dtype);
     create(target.get_tensor(LLamaWeightID::DOWN_W), C, H, matrix_dtype);
 

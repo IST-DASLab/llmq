@@ -17,7 +17,7 @@ constexpr const int QWEN2_NUM_LINEAR_OPS = 4;
 class RunStateBuilder {
 public:
     RunStateBuilder(TransformerConfig config, LLamaOptions options, int B, int T, std::shared_ptr<TensorAllocator> alloc)
-        : Config(config), Options(options), B(B), T(T), C(config.HiddenSize), H(config.IntermediateSize), Alloc(alloc)
+        : Config(config), Options(options), B(B), T(T), C(config.HiddenSize), H(config.IntermediateSize), AC(config.attn_channels()), Alloc(alloc)
     {
     }
 
@@ -56,6 +56,7 @@ private:
     long T;
     long C;     // Config.HiddenSize;
     long H;     // Config.IntermediateSize;
+    long AC;    // Config.attn_channels();
     std::shared_ptr<TensorAllocator> Alloc;
 
     Tensor tSwiGluBuffer;
@@ -96,7 +97,7 @@ LLamaRunState::LayerActivations RunStateBuilder::allocate_basic_fwd_tensors(Tens
     Tensor qkv = allocate_or_reuse(Options.RecomputeQKV, tQKVBuffer, Config.DType, "qkv", B, T, Config.qkv_channels());
     Tensor res_att = allocate_or_reuse(Options.RecomputeBlock, tResAttBuffer, Config.DType, "res_att", B, T, C);
     Tensor lse = allocate(ETensorDType::FP32, "lse", B, T, Config.NumQueryHeads);
-    Tensor att_v = allocate_or_reuse(Options.RecomputeAtt, tAttBuffer, Config.DType, "att_v", B, T, C);
+    Tensor att_v = allocate_or_reuse(Options.RecomputeAtt, tAttBuffer, Config.DType, "att_v", B, T, AC);
     // not needed for backward, so can reuse an existing buffer
     // we can use the same buffer as for the rms norms, because those support
     // inplace transforms.
@@ -123,7 +124,7 @@ void RunStateBuilder::allocate_fwd_quant_tensors(LLamaRunState::LayerActivations
     // allocate a new buffer for every forward quantization
     act.LN1.Quant = allocate(matmul_dtype, "ln1.q", B, T, C);
     act.LN2.Quant = allocate(matmul_dtype, "ln2.q", B, T, C);
-    act.Att.Quant = allocate(matmul_dtype, "att.q", B, T, C);
+    act.Att.Quant = allocate(matmul_dtype, "att.q", B, T, AC);
     act.SwiGLu.Quant = allocate(matmul_dtype, "swiglu.q", B, T, H);
 }
 
@@ -163,7 +164,8 @@ LLamaRunState::LayerGradients RunStateBuilder::allocate_basic_bwd_tensors(Tensor
     Tensor d_swiglu = Tensor{Config.DType, {B, T, H}, nullptr, nullptr, 3, d_lnf.Device};
     QuantizableTensor d_mlp_up{};   // this will be handled in-place
     Tensor d_ln2 = Options.KeepAllActivations ? allocate(Config.DType, "d_ln2", B, T, C) : d_lnf;
-    Tensor d_att_y = Options.KeepAllActivations ? allocate(Config.DType, "d_att_y", B, T, C) : d_lnf;
+    // d_lnf has shape (B, T, C), so it can only be reused if the attention channels match the hidden size
+    Tensor d_att_y = (Options.KeepAllActivations || AC != C) ? allocate(Config.DType, "d_att_y", B, T, AC) : d_lnf;
     QuantizableTensor d_qkv{Tensor{Config.DType, {B, T, Config.qkv_channels()}, nullptr, nullptr, 3, d_lnf.Device}};
     Tensor d_ln1 = Options.KeepAllActivations ? allocate(Config.DType, "d_ln1", B, T, C) : d_lnf;
     QuantizableTensor d_res_att = Options.KeepAllActivations ? QuantizableTensor{allocate(Config.DType, "d_res_att", B, T, C)} : d_res_ffn;

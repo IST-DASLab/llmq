@@ -32,7 +32,7 @@ struct sLLamaLayerActivations {
     QTensor LN2;        // (B, T, C)
     Tensor QKV;         // (B, T, QKV_C)
     Tensor LSE;         // (B, T)
-    QTensor Att;        // (B, T, C)
+    QTensor Att;        // (B, T, AC)
     Tensor AttO;        // (B, T, C)
     Tensor ResidualAtt; // (B, T, C)
     Tensor MlpUp;       // (B, T, 2*Ch)
@@ -48,7 +48,7 @@ struct sLLamaLayerGradients {
     QTensor DMlpUp;                    // (B, T, 2*Ch)
     Tensor DLN2;                       // (B, T, C)
     QTensor DResAtt;                   // (B, T, C)
-    Tensor DAttY;                      // (B, T, C)
+    Tensor DAttY;                      // (B, T, AC)
     QTensor DQKV;                      // (B, T, QKV_C)
     Tensor DLN1;                       // (B, T, C)
 };

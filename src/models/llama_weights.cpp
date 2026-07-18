@@ -40,10 +40,9 @@ void allocate_matrix_params(sLLamaBlockWeights<T>& target, const TransformerConf
     long C = config.HiddenSize;
     long H = config.IntermediateSize;
 
-    long head_size = C / config.NumQueryHeads;
-    long attn_intermediate_size = (config.NumQueryHeads + 2 * config.NumKeyValHeads) * head_size;
+    long attn_intermediate_size = (config.NumQueryHeads + 2 * config.NumKeyValHeads) * config.head_size();
     target.Attn_QKV_w = alloc.allocate_shard(dtype, shard_idx, num_shards, "att_qkv_w", {attn_intermediate_size, C}, kind);
-    target.Attn_Out_w = alloc.allocate_shard(dtype, shard_idx, num_shards, "attproj_w", {C, C}, kind);
+    target.Attn_Out_w = alloc.allocate_shard(dtype, shard_idx, num_shards, "attproj_w", {C, (long)config.attn_channels()}, kind);
     target.MLP_Up_w = alloc.allocate_shard(dtype, shard_idx, num_shards, "mlp_up_w", {2 * H, C}, kind);
     target.MLP_Down_w = alloc.allocate_shard(dtype, shard_idx, num_shards, "mlp_down_w", {C, H}, kind);
 }
@@ -64,10 +63,9 @@ void fill_matrix_shapes(sLLamaBlockWeights<TensorShard>& target, const Transform
         tgt.GlobalShape[1] = cols;
     };
 
-    long head_size = C / config.NumQueryHeads;
-    long attn_intermediate_size = (config.NumQueryHeads + 2 * config.NumKeyValHeads) * head_size;
+    long attn_intermediate_size = (config.NumQueryHeads + 2 * config.NumKeyValHeads) * config.head_size();
     create_matrix_shard(target.Attn_QKV_w, attn_intermediate_size, C);
-    create_matrix_shard(target.Attn_Out_w, C, C);
+    create_matrix_shard(target.Attn_Out_w, C, config.attn_channels());
     create_matrix_shard(target.MLP_Up_w, 2 * H, C);
     create_matrix_shard(target.MLP_Down_w, C, H);
 }
