@@ -48,6 +48,9 @@ TransformerConfig load_transformer_config(const char* file_name, ETensorDType dt
     result.NumQueryHeads = config_json["num_attention_heads"].get<int>();
     result.NumKeyValHeads = config_json["num_key_value_heads"].get<int>();
     result.NumLayers = config_json["num_hidden_layers"].get<int>();
+    if (config_json.contains("head_dim")) {
+        result.HeadDim = config_json["head_dim"].get<int>();
+    }
     result.MaxPositionEmbeddings = config_json["max_position_embeddings"].get<int>();
     result.RopeTheta = config_json["rope_theta"].get<float>();
     result.TiedWordEmbeddings = config_json["tie_word_embeddings"].get<bool>();
@@ -101,6 +104,9 @@ void save_transformer_config(const TransformerConfig& config, const char* file_n
     config_json["num_attention_heads"] = config.NumQueryHeads;
     config_json["num_key_value_heads"] = config.NumKeyValHeads;
     config_json["num_hidden_layers"] = config.NumLayers;
+    if (config.HeadDim != 0) {
+        config_json["head_dim"] = config.HeadDim;
+    }
     config_json["max_position_embeddings"] = config.MaxPositionEmbeddings;
     config_json["rope_theta"] = config.RopeTheta;
     config_json["rms_norm_eps"] = config.RmsNormEps;
@@ -157,6 +163,7 @@ static TransformerConfig create_qwen3_config(int hidden_size, int intermediate_s
         .NumQueryHeads = q_heads,
         .NumKeyValHeads = kv_heads,
         .NumLayers = depth,
+        .HeadDim = 128,
         .MaxPositionEmbeddings = 40960,
         .RopeTheta = 1'000'000.f,
         .RmsNormEps = rms,

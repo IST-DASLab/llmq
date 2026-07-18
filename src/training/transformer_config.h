@@ -28,6 +28,7 @@ struct TransformerConfig {
     int NumQueryHeads;
     int NumKeyValHeads;
     int NumLayers;
+    int HeadDim = 0;        // 0: derived as HiddenSize / NumQueryHeads
 
     int MaxPositionEmbeddings;
     float RopeTheta;
@@ -38,8 +39,11 @@ struct TransformerConfig {
 
     ETensorDType DType = ETensorDType::BF16;
 
-    [[nodiscard]] int head_size() const { return HiddenSize / NumQueryHeads; }
+    [[nodiscard]] int head_size() const { return HeadDim != 0 ? HeadDim : HiddenSize / NumQueryHeads; }
+    //! number of channels consumed by the attention operation
     [[nodiscard]] int qkv_channels() const { return head_size() * (NumQueryHeads + 2 * NumKeyValHeads); }
+    //! number of channels produced by the attention operation
+    [[nodiscard]] int attn_channels() const { return head_size() * NumQueryHeads; }
     [[nodiscard]] std::string_view model_name() const;
 };
 
