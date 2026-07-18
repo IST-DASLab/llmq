@@ -41,6 +41,7 @@ public:
 
 protected:
     SimpleTensorContainer& get_block_from(int layer_idx, cudaStream_t stream, SimpleTensorContainer& buf);
+    [[nodiscard]] ETensorDType non_matrix_m_type() const;
     TransformerConfig mConfig;
 
     bool mOffloadM;

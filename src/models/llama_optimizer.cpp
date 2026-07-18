@@ -23,27 +23,26 @@ struct OptStateWrapper : ITensorContainer {
 };
 
 void OptStateWrapper::iterate_tensors(const std::function<void(std::string, const TensorShard&)>& callback) {
-    callback("model.embed_tokens.weight", NonBlock->get_tensor(LLamaWeightID::EMBEDDING));
-    if(NonBlock->get_tensor(LLamaWeightID::LM_HEAD)) {
-        callback("lm_head.weight", NonBlock->get_tensor(LLamaWeightID::LM_HEAD));
-    }
-    callback("model.norm.weight", NonBlock->get_tensor(LLamaWeightID::LNF_W));
+    auto cb = [&callback](std::string name, const Tensor& t) {
+        if (t) {
+            callback(std::move(name), t);
+        }
+    };
+
+    cb("model.embed_tokens.weight", NonBlock->get_tensor(LLamaWeightID::EMBEDDING));
+    cb("lm_head.weight", NonBlock->get_tensor(LLamaWeightID::LM_HEAD));
+    cb("model.norm.weight", NonBlock->get_tensor(LLamaWeightID::LNF_W));
 
     for(int i = 0; i < Blocks->size(); i++) {
         auto& layer = Blocks->at(i);
-        const Tensor& qkv_w = layer.get_tensor(LLamaWeightID::QKV_W);
-        const Tensor& up_proj = layer.get_tensor(LLamaWeightID::UP_W);
         std::string prefix = "model.layers." + std::to_string(i);
-        callback(prefix + ".self_attn.qkv.weight", qkv_w);
-        if (layer.get_tensor(LLamaWeightID::QKV_B)) {
-            callback(prefix + ".self_attn.qkv.bias", layer.get_tensor(LLamaWeightID::QKV_B));
-        }
-
-        callback(prefix + ".self_attn.o_proj.weight", layer.get_tensor(LLamaWeightID::ATTO_W));
-        callback(prefix + ".mlp.up.weight", up_proj);
-        callback(prefix + ".mlp.down_proj.weight", layer.get_tensor(LLamaWeightID::DOWN_W));
-        callback(prefix + ".input_layernorm.weight", layer.get_tensor(LLamaWeightID::LN1_W));
-        callback(prefix + ".post_attention_layernorm.weight", layer.get_tensor(LLamaWeightID::LN2_W));
+        cb(prefix + ".self_attn.qkv.weight", layer.get_tensor(LLamaWeightID::QKV_W));
+        cb(prefix + ".self_attn.qkv.bias", layer.get_tensor(LLamaWeightID::QKV_B));
+        cb(prefix + ".self_attn.o_proj.weight", layer.get_tensor(LLamaWeightID::ATTO_W));
+        cb(prefix + ".mlp.up.weight", layer.get_tensor(LLamaWeightID::UP_W));
+        cb(prefix + ".mlp.down_proj.weight", layer.get_tensor(LLamaWeightID::DOWN_W));
+        cb(prefix + ".input_layernorm.weight", layer.get_tensor(LLamaWeightID::LN1_W));
+        cb(prefix + ".post_attention_layernorm.weight", layer.get_tensor(LLamaWeightID::LN2_W));
     }
 }
 
