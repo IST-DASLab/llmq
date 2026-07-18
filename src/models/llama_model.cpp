@@ -776,7 +776,7 @@ void LLamaModel::_calculate_gradient_norm(NCCLCommunicator& comm, float grad_cli
     auto& rs = RunState;
 
     fill_zero(rs->NormBuffer, stream);
-    auto norm_squared = [&](const TensorShard& grad){
+    auto norm_squared = [&](const Tensor& grad){
         global_norm_squared(rs->NormBuffer, grad, grad.nelem(), rs->DeviceProp, stream);
     };
 

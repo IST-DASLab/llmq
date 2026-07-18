@@ -100,6 +100,9 @@ TensorShard::TensorShard(const Tensor& src) : Tensor(src), GlobalShape(src.Sizes
 }
 
 std::size_t TensorShard::global_nelem() const {
+    // rank 0 denotes a disabled tensor holding no elements, same as Tensor::nelem()
+    if (Rank == 0)
+        return 0;
     std::size_t sz = 1;
     for (int i = 0; i < Rank; ++i)
         sz *= GlobalShape[i];

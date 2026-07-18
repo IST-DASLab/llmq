@@ -37,6 +37,11 @@ struct Tensor {
     }
 
     [[nodiscard]] constexpr std::size_t nelem() const {
+        // rank 0 denotes a default-constructed/disabled tensor, not a scalar,
+        // so it holds no elements (rather than the empty product 1)
+        if(Rank == 0) {
+            return 0;
+        }
         std::size_t sz = 1;
         for(int i = 0; i < Rank; ++i) {
             sz *= Sizes[i];
