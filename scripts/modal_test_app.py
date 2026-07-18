@@ -38,10 +38,12 @@ def create_image(cuda_version: str = "12.8.1"):
         # install dependencies for pyllmq, so that rebuild steps are faster
         .uv_pip_install("huggingface_hub", "transformers", "datasets", "numpy", "torch", "accelerate",
                         "nvidia-cuda-runtime-cu12>=12.8", "nvidia-cudnn-cu12>=9.0", "nvidia-nccl-cu12>=2.0", "nvidia-cublas-cu12>=12.8")
-        .run_commands("hf download Qwen/Qwen2.5-0.5B")
+        .run_commands("hf download Qwen/Qwen2.5-0.5B",
+                      "hf download HuggingFaceTB/SmolLM2-135M")
         .add_local_file("scripts/tokenize_data.py", "/root/tokenize_data.py", copy=True)
         .run_commands(
-            "uv run /root/tokenize_data.py --dataset tiny-shakespeare --model qwen --out-dir /root/data"
+            "uv run /root/tokenize_data.py --dataset tiny-shakespeare --model qwen --out-dir /root/data",
+            "uv run /root/tokenize_data.py --dataset tiny-shakespeare --model smollm --out-dir /root/data"
         )
         .add_local_file(str(wheel_file), f"/tmp/{wheel_file.name}", copy=True)
         .pip_install(f"/tmp/{wheel_file.name}")
@@ -55,6 +57,21 @@ else:
 
 
 app = modal.App("llmq-test")
+
+
+# data files baked into the image, keyed by the models they were tokenized for
+TEST_DATA_FILES = {
+    "Qwen/Qwen2.5-0.5B": "/root/data/tiny-shakespeare-qwen/train.bin",
+    "HuggingFaceTB/SmolLM2-135M": "/root/data/tiny-shakespeare-smollm/train.bin",
+}
+
+
+def select_test_data(config):
+    """Point the config at the data file matching its model (default: Qwen)."""
+    if config.model not in TEST_DATA_FILES:
+        config.model = "Qwen/Qwen2.5-0.5B"
+    config.train_file = TEST_DATA_FILES[config.model]
+    config.eval_file = config.train_file
 
 
 def compare_and_create_report(result, expected):
@@ -81,8 +98,7 @@ def run_recompute_test(test_args: list[str]):
 
     # Parse test arguments into config
     config = parse_args(test_args)
-    config.train_file = "/root/data/tiny-shakespeare-qwen/train.bin"
-    config.model = "Qwen/Qwen2.5-0.5B"
+    select_test_data(config)
 
     test_run = run_training(config)
     ref_run = run_training(disable_recompute(config))
@@ -92,8 +108,7 @@ def run_recompute_test(test_args: list[str]):
 def run_with_config(test_args: list[str]):
     from pyllmq.tests.run import parse_args, run_training
     config = parse_args(test_args)
-    config.train_file = "/root/data/tiny-shakespeare-qwen/train.bin"
-    config.model = "Qwen/Qwen2.5-0.5B"
+    select_test_data(config)
     result = run_training(config)
     return result
 
@@ -154,8 +169,7 @@ def run_torch_compare_step(test_args: list):
     from pyllmq.tests.run import parse_args
 
     config = parse_args(test_args)
-    config.train_file = "/root/data/tiny-shakespeare-qwen/train.bin"
-    config.model = "Qwen/Qwen2.5-0.5B"
+    select_test_data(config)
     report_buffer = io.StringIO()
     passed = compare_single_step(config, file=report_buffer)
     report = report_buffer.getvalue()
