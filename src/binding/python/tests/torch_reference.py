@@ -48,13 +48,17 @@ def torch_grad_one_step(config: TrainingConfig):
 def llmq_grad_one_step(config: TrainingConfig):
     options = _create_options(config)
 
-    # Create trainer
+    if config.batch_size % config.gpus != 0:
+        raise ValueError(f"batch size {config.batch_size} must be divisible by the number of GPUs ({config.gpus})")
+
+    # Create trainer. `batch_size` is the per-GPU micro-batch; `step()` takes the global batch,
+    # so the total amount of data (and thus the gradient) is independent of the GPU count.
     trainer = pyllmq.LLMQTrainer.from_pretrained(
         name=config.model,
         ngpu=config.gpus,
         dtype=config.model_dtype,
         options=options,
-        batch_size=config.batch_size,
+        batch_size=config.batch_size // config.gpus,
         seq_len=config.seq_len,
         grad_accum=config.grad_accumulation,
         memcpy_all_gather=config.memcpy_all_gather,
@@ -75,7 +79,15 @@ def llmq_grad_one_step(config: TrainingConfig):
     for j in range(config.grad_accumulation):
         train_loader.load_batch(in_tokens, out_tokens)
         trainer.step(in_tokens, out_tokens)
-    return {k: torch.from_dlpack(v).cpu().to(torch.float32).numpy() for k, v in trainer.get_gradients(0).items()}
+
+    # each GPU returns its (dim-0) shard of the gradients; concatenate to reconstruct the
+    # full tensors. GPUs whose shard of a tensor is empty do not report it at all.
+    grads = {}
+    for g in range(config.gpus):
+        for k, v in trainer.get_gradients(g).items():
+            arr = torch.from_dlpack(v).cpu().to(torch.float32).numpy().flatten()
+            grads.setdefault(k, []).append(arr)
+    return {k: np.concatenate(parts) for k, parts in grads.items()}
 
 
 def compare_single_step(config, file=None):
