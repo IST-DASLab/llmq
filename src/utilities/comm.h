@@ -21,7 +21,6 @@ namespace std
 }
 
 struct Tensor;
-struct TensorShard;
 
 typedef struct ncclComm* ncclComm_t;
 typedef struct CUevent_st* cudaEvent_t;
@@ -47,7 +46,7 @@ public:
     void begin_transaction(cudaEvent_t ready);
     void begin_transaction(cudaStream_t wait_for_stream);
     void schedule_reduce_scatter(Tensor& tensor);
-    void schedule_all_gather(const TensorShard& src, Tensor& tgt);
+    void schedule_all_gather(const Tensor& src, Tensor& tgt);
     // like all-to-all, except the local shard will *not* be preserved, and results will be shifted cyclically
     void schedule_destructive_all_to_all(Tensor& tensor);
     void execute_transaction(cudaEvent_t signal);
