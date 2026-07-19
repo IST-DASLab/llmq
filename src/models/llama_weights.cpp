@@ -27,7 +27,7 @@ void allocate_non_matrix_params(sLLamaBlockWeights<T>& target, const Transformer
         target.KNorm_w = Tensor{};
     }
 
-    long attn_intermediate_size = (config.NumQueryHeads + 2 * config.NumKeyValHeads) * HS;
+    long attn_intermediate_size = config.qkv_channels();
     if(config.UseQKVBias) {
         target.Attn_QKV_b = alloc.allocate_shard(dtype, shard_idx, num_shards, "att_qkv_b", {attn_intermediate_size}, kind);
     } else {
@@ -40,7 +40,7 @@ void allocate_matrix_params(sLLamaBlockWeights<T>& target, const TransformerConf
     long C = config.HiddenSize;
     long H = config.IntermediateSize;
 
-    long attn_intermediate_size = (config.NumQueryHeads + 2 * config.NumKeyValHeads) * config.head_size();
+    long attn_intermediate_size = config.qkv_channels();
     target.Attn_QKV_w = alloc.allocate_shard(dtype, shard_idx, num_shards, "att_qkv_w", {attn_intermediate_size, C}, kind);
     target.Attn_Out_w = alloc.allocate_shard(dtype, shard_idx, num_shards, "attproj_w", {C, (long)config.attn_channels()}, kind);
     target.MLP_Up_w = alloc.allocate_shard(dtype, shard_idx, num_shards, "mlp_up_w", {2 * H, C}, kind);
@@ -63,7 +63,7 @@ void fill_matrix_shapes(sLLamaBlockWeights<TensorShard>& target, const Transform
         tgt.GlobalShape[1] = cols;
     };
 
-    long attn_intermediate_size = (config.NumQueryHeads + 2 * config.NumKeyValHeads) * config.head_size();
+    long attn_intermediate_size = config.qkv_channels();
     create_matrix_shard(target.Attn_QKV_w, attn_intermediate_size, C);
     create_matrix_shard(target.Attn_Out_w, C, config.attn_channels());
     create_matrix_shard(target.MLP_Up_w, 2 * H, C);
@@ -88,7 +88,7 @@ void fill_non_matrix_shapes(sLLamaBlockWeights<TensorShard>& target, const Trans
     create_vector_shard(target.LN2_w, C);
     create_vector_shard(target.QNorm_w, config.UseQKNorm ? HS : 0);
     create_vector_shard(target.KNorm_w, config.UseQKNorm ? HS : 0);
-    long attn_intermediate_size = (config.NumQueryHeads + 2 * config.NumKeyValHeads) * HS;
+    long attn_intermediate_size = config.qkv_channels();
     create_vector_shard(target.Attn_QKV_b, config.UseQKVBias ? attn_intermediate_size : 0);
 }
 
