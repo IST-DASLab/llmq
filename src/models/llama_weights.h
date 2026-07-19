@@ -35,6 +35,11 @@ namespace LLamaWeightID {
     inline constexpr unsigned EMBEDDING = 0;
     inline constexpr unsigned LM_HEAD = 1;
     inline constexpr unsigned LNF_W = 2;
+
+    //! HF-checkpoint name of the block tensor `id` in layer `layer`
+    std::string block_weight_name(int layer, unsigned id);
+    //! HF-checkpoint name of the non-block tensor `id`
+    std::string non_block_weight_name(unsigned id);
 };
 
 template<class TTensor>
@@ -66,6 +71,11 @@ struct sLLamaBlockWeights : public SimpleTensorContainer {
             default:
                 throw std::out_of_range("Invalid tensor index");
         }
+    }
+
+    //! Like `get_tensor`, but preserves the field type; valid because all fields are `TTensor`s.
+    const TTensor& get(std::size_t idx) const {
+        return static_cast<const TTensor&>(get_tensor(idx));
     }
 
     using SimpleTensorContainer::get_tensor;

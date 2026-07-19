@@ -23,28 +23,20 @@ struct OptStateWrapper : ITensorContainer {
 };
 
 void OptStateWrapper::iterate_tensors(const std::function<void(std::string, const TensorShard&)>& callback) {
-    auto cb = [&callback](std::string name, const Tensor& t) {
-        if (t) {
-            callback(std::move(name), t);
+    using namespace LLamaWeightID;
+    for(unsigned id = 0; id < NonBlock->num_tensors(); ++id) {
+        if(const Tensor& tensor = NonBlock->get_tensor(id)) {
+            callback(non_block_weight_name(id), tensor);
         }
-    };
-
-    cb("model.embed_tokens.weight", NonBlock->get_tensor(LLamaWeightID::EMBEDDING));
-    cb("lm_head.weight", NonBlock->get_tensor(LLamaWeightID::LM_HEAD));
-    cb("model.norm.weight", NonBlock->get_tensor(LLamaWeightID::LNF_W));
+    }
 
     for(int i = 0; i < Blocks->size(); i++) {
         auto& layer = Blocks->at(i);
-        std::string prefix = "model.layers." + std::to_string(i);
-        cb(prefix + ".self_attn.qkv.weight", layer.get_tensor(LLamaWeightID::QKV_W));
-        cb(prefix + ".self_attn.qkv.bias", layer.get_tensor(LLamaWeightID::QKV_B));
-        cb(prefix + ".self_attn.o_proj.weight", layer.get_tensor(LLamaWeightID::ATTO_W));
-        cb(prefix + ".self_attn.q_norm.weight", layer.get_tensor(LLamaWeightID::QNORM_W));
-        cb(prefix + ".self_attn.k_norm.weight", layer.get_tensor(LLamaWeightID::KNORM_W));
-        cb(prefix + ".mlp.up.weight", layer.get_tensor(LLamaWeightID::UP_W));
-        cb(prefix + ".mlp.down_proj.weight", layer.get_tensor(LLamaWeightID::DOWN_W));
-        cb(prefix + ".input_layernorm.weight", layer.get_tensor(LLamaWeightID::LN1_W));
-        cb(prefix + ".post_attention_layernorm.weight", layer.get_tensor(LLamaWeightID::LN2_W));
+        for(unsigned id = 0; id < layer.num_tensors(); ++id) {
+            if(const Tensor& tensor = layer.get_tensor(id)) {
+                callback(block_weight_name(i, id), tensor);
+            }
+        }
     }
 }
 
