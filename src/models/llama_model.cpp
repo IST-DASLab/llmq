@@ -17,9 +17,6 @@
 LLamaModel::LLamaModel(TransformerConfig config, const LLamaOptions& options, int rank, int world, const std::shared_ptr<TensorAllocator>& alloc) :
         Config(config), Options(options), Allocator(alloc ? alloc : std::make_shared<TensorAllocator>())
 {
-    if (Config.UseQKNorm)
-        throw std::runtime_error("UseQKNorm is not yet supported");
-
     Parameters = LLamaWeightsManager::create(Config, options, rank, world, *Allocator);
 }
 
@@ -195,10 +192,22 @@ void LLamaModel::_forward_block(sLLamaBlockWeights<Tensor>& weights, sLLamaLayer
                 rs->CublasLtHandle, rs->CuBlasWorkspace,
                 B, T, C, Config.qkv_channels(),
                 rs->DeviceProp, false, main_stream, rs->MatmulBackend);
-    // 2) apply RoPE to q,k (potentially in place)
-    rope_forward(acts.QKV, acts.QKV, rs->FreqCis, nullptr, B, T, Hq, Hkv, Hs, main_stream);
+    // 2) apply qk-norm (if enabled) and RoPE to q,k. With qk-norm, acts.QKV keeps the
+    //    pre-norm projection for the backward pass; only the rotated copy is norm-scaled.
     // 3) attention: att <- softmax(qk^T)v
-    attention_forward_cudnn(acts.Att.Value, acts.LSE, acts.QKV, rs->CuBlasWorkspace, rs->CudnnHandle, B, T, Hq, Hkv, Hs, main_stream);
+    if (Config.UseQKNorm) {
+        bool transient = Options.recompute_qk_rope();
+        if (transient) rs->temp_acquire(rs->QKVRope);
+        Tensor& post_rope = transient ? rs->QKVRope : acts.PostRopeQKV;
+        qk_norm_and_rope_forward(post_rope, acts.QK_Rstd, nullptr, acts.QKV,
+                                 weights.QNorm_w, weights.KNorm_w, rs->FreqCis,
+                                 Config.RmsNormEps, B, T, Hq, Hkv, Hs, main_stream);
+        attention_forward_cudnn(acts.Att.Value, acts.LSE, post_rope, rs->CuBlasWorkspace, rs->CudnnHandle, B, T, Hq, Hkv, Hs, main_stream);
+        if (transient) rs->temp_free(rs->QKVRope);
+    } else {
+        rope_forward(acts.QKV, acts.QKV, rs->FreqCis, nullptr, B, T, Hq, Hkv, Hs, main_stream);
+        attention_forward_cudnn(acts.Att.Value, acts.LSE, acts.QKV, rs->CuBlasWorkspace, rs->CudnnHandle, B, T, Hq, Hkv, Hs, main_stream);
+    }
     // quantize attention if necessary
     if(acts.Att.Quant) {
         abs_max(acts.Att.Quant.abs_max(), acts.Att.Value, acts.Att.Value.nelem(), rs->DeviceProp, main_stream);
@@ -580,11 +589,24 @@ void LLamaModel::_recompute_block(sLLamaBlockWeights<Tensor>& weights, sLLamaLay
                      rs->CublasLtHandle, rs->CuBlasWorkspace,
                      B, T, C, Config.qkv_channels(),
                      rs->DeviceProp, !recompute_ln1, main_stream, rs->MatmulBackend);
-        rope_forward(acts.QKV, acts.QKV, rs->FreqCis, nullptr, B, T, Hq, Hkv, Hs, main_stream);
+        // with qk-norm, acts.QKV keeps the pre-norm projection
+        if (!Config.UseQKNorm) {
+            rope_forward(acts.QKV, acts.QKV, rs->FreqCis, nullptr, B, T, Hq, Hkv, Hs, main_stream);
+        }
     }
 
     if (recompute_att) {
-        attention_forward_cudnn(acts.Att.Value, acts.LSE, acts.QKV, rs->CuBlasWorkspace, rs->CudnnHandle, B, T, Hq, Hkv, Hs, main_stream);
+        // recompute-att implies recompute_qk_rope(), so PostRopeQKV is never populated here
+        if (Config.UseQKNorm) {
+            rs->temp_acquire(rs->QKVRope);
+            qk_norm_and_rope_forward(rs->QKVRope, acts.QK_Rstd, nullptr, acts.QKV,
+                                     weights.QNorm_w, weights.KNorm_w, rs->FreqCis,
+                                     Config.RmsNormEps, B, T, Hq, Hkv, Hs, main_stream);
+            attention_forward_cudnn(acts.Att.Value, acts.LSE, rs->QKVRope, rs->CuBlasWorkspace, rs->CudnnHandle, B, T, Hq, Hkv, Hs, main_stream);
+            rs->temp_free(rs->QKVRope);
+        } else {
+            attention_forward_cudnn(acts.Att.Value, acts.LSE, acts.QKV, rs->CuBlasWorkspace, rs->CudnnHandle, B, T, Hq, Hkv, Hs, main_stream);
+        }
         // AttO not needed in backward pass; but if we want to recompute the entire transformer block, we need its output
         // to recompute the FFN part
         if (opt.RecomputeBlock) {
@@ -663,6 +685,16 @@ void LLamaModel::_backward_block(bool accumulate, sLLamaBlockWeights<Tensor>& we
                  accumulate, *rs, B, T, Hq * Hs, C, false, main_stream);
 
     rs->temp_acquire(d_acts.DQKV.Value);
+    bool rematerialize = Config.UseQKNorm && Options.recompute_qk_rope();
+    if (rematerialize) {
+        // rematerialize the post-norm+rope qkv for attention backward; also rewrites QK_Rstd
+        rs->temp_acquire(rs->QKVRope);
+        qk_norm_and_rope_forward(rs->QKVRope, acts.QK_Rstd, nullptr, acts.QKV,
+                                 weights.QNorm_w, weights.KNorm_w, rs->FreqCis,
+                                 Config.RmsNormEps, B, T, Hq, Hkv, Hs, main_stream);
+    }
+    const Tensor& att_qkv = !Config.UseQKNorm ? acts.QKV
+                          : (rematerialize ? rs->QKVRope : acts.PostRopeQKV);
     rs->temp_acquire(rs->CuDNNWorkspace);
     for (int i=0; i < Options.AttBwdChunks; ++i) {
         long chunk_batch_size = div_exact(B, (long)Options.AttBwdChunks);
@@ -670,12 +702,23 @@ void LLamaModel::_backward_block(bool accumulate, sLLamaBlockWeights<Tensor>& we
         Tensor lse = shard_view(acts.LSE, i, Options.AttBwdChunks);
         Tensor att = shard_view(acts.Att.Value, i, Options.AttBwdChunks);
         Tensor d_atty = shard_view(d_acts.DAttY, i, Options.AttBwdChunks);
-        Tensor qkv = shard_view(acts.QKV, i, Options.AttBwdChunks);
+        Tensor qkv = shard_view(att_qkv, i, Options.AttBwdChunks);
         attention_backward_cudnn(d_qkv, lse, att, d_atty, qkv, rs->CuDNNWorkspace, rs->CudnnHandle,
             chunk_batch_size, T, Hq, Hkv, Hs, main_stream);
     }
     rs->temp_free(rs->CuDNNWorkspace);
-    rope_backward(d_acts.DQKV.Value, d_acts.DQKV.Value, rs->FreqCis, d_acts.DQKV.Quant.abs_max(), B, T, Hq, Hkv, Hs, main_stream);
+    if (Config.UseQKNorm) {
+        if (rematerialize) rs->temp_free(rs->QKVRope);
+        // dq_wgt/dk_wgt accumulate, like the other norm-weight backwards
+        qk_norm_and_rope_backward(d_acts.DQKV.Value,
+                                  d_weights.get_tensor(QNORM_W), d_weights.get_tensor(KNORM_W),
+                                  rs->QKNormScratch, d_acts.DQKV.Value, acts.QKV,
+                                  weights.QNorm_w, weights.KNorm_w, acts.QK_Rstd, rs->FreqCis,
+                                  d_acts.DQKV.Quant.abs_max(),
+                                  B, T, Hq, Hkv, Hs, rs->DeviceProp, main_stream);
+    } else {
+        rope_backward(d_acts.DQKV.Value, d_acts.DQKV.Value, rs->FreqCis, d_acts.DQKV.Quant.abs_max(), B, T, Hq, Hkv, Hs, main_stream);
+    }
 
     backward_qmm(d_acts.DLN1, d_weights.get_tensor(QKV_W), d_weights.get_tensor(QKV_B), d_acts.DQKV, acts.LN1, weights.Attn_QKV_w, rs->MatmulBiasScratch,
                  accumulate, *rs, B, T, C, Config.qkv_channels(), !recompute_ln1, main_stream);
@@ -860,6 +903,10 @@ void LLamaModel::update(NCCLCommunicator& comm, float learning_rate, float beta_
         auto& sm = OptimizerState->get_block_scales_m(i);
         run_update(bw.get_tensor(LN1_W), bg.get_tensor(LN1_W), bm.get_tensor(LN1_W), bv.get_tensor(LN1_W), sm.get_tensor(LN1_W), 0.f);
         run_update(bw.get_tensor(LN2_W), bg.get_tensor(LN2_W), bm.get_tensor(LN2_W), bv.get_tensor(LN2_W), sm.get_tensor(LN2_W), 0.f);
+        if(Config.UseQKNorm) {
+            run_update(bw.get_tensor(QNORM_W), bg.get_tensor(QNORM_W), bm.get_tensor(QNORM_W), bv.get_tensor(QNORM_W), sm.get_tensor(QNORM_W), 0.f);
+            run_update(bw.get_tensor(KNORM_W), bg.get_tensor(KNORM_W), bm.get_tensor(KNORM_W), bv.get_tensor(KNORM_W), sm.get_tensor(KNORM_W), 0.f);
+        }
 
         run_update(bw.get_tensor(QKV_W), bg.get_tensor(QKV_W), bm.get_tensor(QKV_W), bv.get_tensor(QKV_W),
                    sm.get_tensor(QKV_W), weight_decay);
