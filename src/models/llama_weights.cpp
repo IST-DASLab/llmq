@@ -930,6 +930,8 @@ void LLamaWeightsManager::import_from_file(const std::string& file_name, bool al
             } else {
                 throw std::runtime_error("Unexpected tensor name: " + entry.name());
             }
+        } else if (entry.name() == "lm_head.weight" && mConfig.TiedWordEmbeddings) {
+            // some checkpoints of tied models store a redundant copy of the embeddings
         } else {
             throw std::runtime_error("Unexpected tensor name: " + entry.name());
         }
