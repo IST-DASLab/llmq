@@ -61,6 +61,11 @@ struct LLamaOptions {
         return MatmulType.value_or(ModelType.value());
     }
 
+    //! the post-norm+rope qkv is dropped and rematerialized along with the buffers it derives from
+    bool recompute_qk_rope() const {
+        return RecomputeQKV || RecomputeAtt || RecomputeBlock;
+    }
+
     ETensorDType grad_dtype() const {
         return GradientType.value_or(matmul_dtype());
     }

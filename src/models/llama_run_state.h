@@ -38,6 +38,8 @@ struct sLLamaLayerActivations {
     Tensor MlpUp;       // (B, T, 2*Ch)
     Tensor MlpDown;     // (B, T, C)
     QTensor SwiGLu;     // (B, T, Ch)
+    Tensor QK_Rstd;     // (B, T, Hq+2*Hkv); only if qk-norm is enabled
+    Tensor PostRopeQKV; // (B, T, QKV_C); only with qk-norm, unless recompute_qk_rope()
 };
 
 struct sLLamaLayerGradients {
@@ -94,6 +96,8 @@ struct LLamaRunState : public IRunState {
 
     // scratch buffers
     Tensor RMSNormScratch;      // (#Blocks*C+128)
+    Tensor QKNormScratch;       // per-block dweight partials; only if qk-norm is enabled
+    Tensor QKVRope;             // (B, T, QKV_C) stack temp for the post-norm+rope qkv; only if qk-norm is enabled
     Tensor MatmulBiasScratch;   // TODO
     Tensor CuDNNWorkspace;
     Tensor EncoderBwdScratch;   // (B, T, 5 * C / (x128::size * 32))

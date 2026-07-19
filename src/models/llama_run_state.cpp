@@ -62,6 +62,7 @@ private:
     Tensor tSwiGluBuffer;
     Tensor tMlpUpBuffer;
     Tensor tQKVBuffer;
+    Tensor tQKRstdBuffer;
     Tensor tAttBuffer;
     Tensor tLN1Buffer;
     Tensor tResAttBuffer;
@@ -95,6 +96,17 @@ LLamaRunState::LayerActivations RunStateBuilder::allocate_basic_fwd_tensors(Tens
     Tensor ln2_v = allocate_or_reuse(reuse_ln_buffer || Options.RecomputeFFN, lnf, Config.DType, "ln2", B, T, C);
 
     Tensor qkv = allocate_or_reuse(Options.RecomputeQKV, tQKVBuffer, Config.DType, "qkv", B, T, Config.qkv_channels());
+    // qk-norm rstd, saved for backward; shareable across layers iff rematerialization rewrites it
+    Tensor qk_rstd;
+    Tensor post_rope_qkv;
+    if (Config.UseQKNorm) {
+        qk_rstd = allocate_or_reuse(Options.recompute_qk_rope(), tQKRstdBuffer,
+                                    ETensorDType::FP32, "qk_rstd",
+                                    B, T, (long)Config.NumQueryHeads + 2 * Config.NumKeyValHeads);
+        if (!Options.recompute_qk_rope()) {
+            post_rope_qkv = allocate(Config.DType, "post_rope_qkv", B, T, Config.qkv_channels());
+        }
+    }
     Tensor res_att = allocate_or_reuse(Options.RecomputeBlock, tResAttBuffer, Config.DType, "res_att", B, T, C);
     Tensor lse = allocate(ETensorDType::FP32, "lse", B, T, Config.NumQueryHeads);
     Tensor att_v = allocate_or_reuse(Options.RecomputeAtt, tAttBuffer, Config.DType, "att_v", B, T, AC);
@@ -116,7 +128,7 @@ LLamaRunState::LayerActivations RunStateBuilder::allocate_basic_fwd_tensors(Tens
     Tensor mlp_down = allocate_or_reuse(true, lnf, Config.DType, "mlp_down", B, T, C);
 
     return LLamaRunState::LayerActivations{ln1_rstd, ln1, ln2_rstd, ln2, qkv, lse, att, atto,
-                                           res_att, mlp_up, mlp_down, swiglu};
+                                           res_att, mlp_up, mlp_down, swiglu, qk_rstd, post_rope_qkv};
 }
 
 void RunStateBuilder::allocate_fwd_quant_tensors(LLamaRunState::LayerActivations& act) {
@@ -278,6 +290,12 @@ LLamaRunState::LLamaRunState(TransformerConfig config, LLamaOptions options, lon
     LNF = alloc->allocate(Config.DType, "lnf", {B, T, C});
     LNF_Rstd = alloc->allocate(ETensorDType::FP32, "lnf_rstd", {B, T});
     DLNF = alloc->allocate(Config.DType, "d_lnf", {B, T, C});
+    if (Config.UseQKNorm) {
+        long qknorm_scratch_size = qk_norm_and_rope_backward_scratch_size(
+            Config.NumQueryHeads, Config.NumKeyValHeads, Config.head_size(), Config.DType, DeviceProp);
+        QKNormScratch = alloc->allocate(ETensorDType::BYTE, "qknorm_scratch", {qknorm_scratch_size});
+        QKVRope = Tensor{Config.DType, {B, T, (long)Config.qkv_channels()}, nullptr, nullptr, 3, Inputs.Device};
+    }
     long rms_scratch_size = get_rmsnorm_backward_scratch_size(C, DeviceProp);
     long bias_scratch_size = get_bias_backward_scratch_size(Config.DType, Config.qkv_channels(), DeviceProp);
     RMSNormScratch = alloc->allocate(ETensorDType::BYTE, "rms_scratch", {rms_scratch_size});
@@ -376,7 +394,14 @@ LLamaRunState::LLamaRunState(TransformerConfig config, LLamaOptions options, lon
     // simulate to determine required stack size
     auto mlp_up = stack.allocate(Config.DType, {B, T, 2 * Config.IntermediateSize}, "mlp_up");
     auto ws = stack.allocate(CuDNNWorkspace.bytes(), "workspace");
-    stack.free(stack.allocate(DActs[0].DQKV.Value.bytes(), "dqkv"));   // attention
+    if (Config.UseQKNorm && Options.recompute_qk_rope()) {
+        // backward holds dqkv, the rematerialized post-rope qkv, and the workspace at once
+        auto dqkv = stack.allocate(DActs[0].DQKV.Value.bytes(), "dqkv");
+        stack.free(stack.allocate(QKVRope.bytes(), "qkv_rope"));
+        stack.free(dqkv);
+    } else {
+        stack.free(stack.allocate(DActs[0].DQKV.Value.bytes(), "dqkv"));   // attention
+    }
     stack.free(ws);   // attention
 
     auto dswi = stack.allocate(DActs[0].DSwiGLU.bytes(), "dswiglu");

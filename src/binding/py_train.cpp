@@ -297,6 +297,10 @@ std::vector<std::pair<std::string, Tensor>> MultiGPUPyTrainer::get_gradients(int
             if (block.get_tensor(QKV_B))
                 result.emplace_back(prefix + ".self_attn.qkv.bias", block.get_tensor(QKV_B));
             result.emplace_back(prefix + ".self_attn.o_proj.weight", block.get_tensor(ATTO_W));
+            if (block.get_tensor(QNORM_W))
+                result.emplace_back(prefix + ".self_attn.q_norm.weight", block.get_tensor(QNORM_W));
+            if (block.get_tensor(KNORM_W))
+                result.emplace_back(prefix + ".self_attn.k_norm.weight", block.get_tensor(KNORM_W));
             result.emplace_back(prefix + ".mlp.up.weight", block.get_tensor(UP_W));
             result.emplace_back(prefix + ".mlp.down_proj.weight", block.get_tensor(DOWN_W));
             result.emplace_back(prefix + ".input_layernorm.weight", block.get_tensor(LN1_W));
