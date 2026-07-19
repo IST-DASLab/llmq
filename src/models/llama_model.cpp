@@ -780,7 +780,7 @@ void LLamaModel::fill_block_shapes(GenericTensorContainer& target, const Transfo
         tgt.Sizes[1] = cols;
     };
 
-    long attn_intermediate_size = (config.NumQueryHeads + 2 * config.NumKeyValHeads) * HS;
+    long attn_intermediate_size = config.qkv_channels();
     create(target.get_tensor(LLamaWeightID::QKV_W), attn_intermediate_size, C, matrix_dtype);
     create(target.get_tensor(LLamaWeightID::ATTO_W), C, config.attn_channels(), matrix_dtype);
     create(target.get_tensor(LLamaWeightID::UP_W), 2 * H, C, matrix_dtype);
