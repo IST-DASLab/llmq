@@ -100,13 +100,17 @@ def run_training(config: TrainingConfig) -> RunResult:
 
     options = _create_options(config)
 
-    # Create trainer
+    if config.batch_size % config.gpus != 0:
+        raise ValueError(f"batch size {config.batch_size} must be divisible by the number of GPUs ({config.gpus})")
+
+    # Create trainer. `batch_size` is the per-GPU micro-batch; `step()` takes the global batch,
+    # so results are comparable across GPU counts.
     trainer = pyllmq.LLMQTrainer.from_pretrained(
         name=config.model,
-        ngpu=1,
+        ngpu=config.gpus,
         dtype=config.model_dtype,
         options=options,
-        batch_size=config.batch_size,
+        batch_size=config.batch_size // config.gpus,
         seq_len=config.seq_len,
         grad_accum=config.grad_accumulation,
         memcpy_all_gather=config.memcpy_all_gather,
