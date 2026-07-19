@@ -4,6 +4,8 @@
 
 #include "llama_weights.h"
 
+#include <array>
+
 #include "kernels/kernels.h"
 #include "llama_model.h"
 #include "llama_run_state.h"
@@ -552,35 +554,47 @@ void LLamaWeightsManager::release_head(cudaStream_t stream) {
     release_status(mEmbStatus, mHeadID, stream);
 }
 
+namespace LLamaWeightID {
+std::string block_weight_name(int layer, unsigned id) {
+    constexpr std::array<const char*, 9> suffixes = {
+        ".input_layernorm.weight",              // LN1_W
+        ".post_attention_layernorm.weight",     // LN2_W
+        ".self_attn.qkv.weight",                // QKV_W
+        ".self_attn.qkv.bias",                  // QKV_B
+        ".self_attn.o_proj.weight",             // ATTO_W
+        ".mlp.up.weight",                       // UP_W
+        ".mlp.down_proj.weight",                // DOWN_W
+        ".self_attn.q_norm.weight",             // QNORM_W
+        ".self_attn.k_norm.weight",             // KNORM_W
+    };
+    return "model.layers." + std::to_string(layer) + suffixes.at(id);
+}
+
+std::string non_block_weight_name(unsigned id) {
+    constexpr std::array<const char*, 3> names = {
+        "model.embed_tokens.weight",            // EMBEDDING
+        "lm_head.weight",                       // LM_HEAD
+        "model.norm.weight",                    // LNF_W
+    };
+    return names.at(id);
+}
+}
+
 void sLLamaWeights::iterate_tensors(const std::function<void(std::string, const TensorShard&)>& callback) {
-    callback("model.embed_tokens.weight", NonBlocks.Embeddings);
+    using namespace LLamaWeightID;
+    callback(non_block_weight_name(EMBEDDING), NonBlocks.Embeddings);
     if(NonBlocks.LMHead.Data != NonBlocks.Embeddings.Data) {
-        callback("lm_head.weight", NonBlocks.LMHead);
+        callback(non_block_weight_name(LM_HEAD), NonBlocks.LMHead);
     }
-    callback("model.norm.weight", NonBlocks.LNF_w);
+    callback(non_block_weight_name(LNF_W), NonBlocks.LNF_w);
 
-    const auto& Layers = Blocks;
-    for(int i = 0; i < Layers.size(); i++) {
-        auto& layer = Layers[i];
-        const Tensor& qkv_w = layer.Attn_QKV_w;
-        const Tensor& up_proj = layer.MLP_Up_w;
-        std::string prefix = "model.layers." + std::to_string(i);
-        callback(prefix + ".self_attn.qkv.weight", qkv_w);
-        if (layer.Attn_QKV_b) {
-            callback(prefix + ".self_attn.qkv.bias", layer.Attn_QKV_b);
+    for(int i = 0; i < Blocks.size(); i++) {
+        auto& layer = Blocks[i];
+        for(unsigned id = 0; id < layer.num_tensors(); ++id) {
+            if(const TensorShard& tensor = layer.get(id)) {
+                callback(block_weight_name(i, id), tensor);
+            }
         }
-        if (layer.QNorm_w) {
-            callback(prefix + ".self_attn.q_norm.weight", layer.QNorm_w);
-        }
-        if (layer.KNorm_w) {
-            callback(prefix + ".self_attn.k_norm.weight", layer.KNorm_w);
-        }
-
-        callback(prefix + ".self_attn.o_proj.weight", layer.Attn_Out_w);
-        callback(prefix + ".mlp.up.weight", up_proj);
-        callback(prefix + ".mlp.down_proj.weight", layer.MLP_Down_w);
-        callback(prefix + ".input_layernorm.weight", layer.LN1_w);
-        callback(prefix + ".post_attention_layernorm.weight", layer.LN2_w);
     }
 }
 
