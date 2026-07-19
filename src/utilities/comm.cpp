@@ -182,7 +182,7 @@ void NCCLCommunicator::schedule_reduce_scatter(Tensor& tensor) {
     mCmdBuf->Commands.emplace_back(CommandBuffer::ScatterReduce{.DType = tensor.DType, .Tensor = tensor.Data, .Elements = tensor.nelem()});
 }
 
-void NCCLCommunicator::schedule_all_gather(const TensorShard& src, Tensor& tgt) {
+void NCCLCommunicator::schedule_all_gather(const Tensor& src, Tensor& tgt) {
     if (src.Data == nullptr) {
         throw std::runtime_error("gather: Source tensor is null");
     }
