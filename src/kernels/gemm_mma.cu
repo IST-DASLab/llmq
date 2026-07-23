@@ -75,11 +75,13 @@ __device__ void gemm_mma_tn_impl(nv_bfloat16* __restrict__ out,
 
     const uint4* g_ptr;
     uint4* s_ptr;
+    // 64 bit on purpose: `m * k` (and `m * n` in the epilogue) exceeds INT_MAX at ordinary
+    // large-model shapes, and the wrapped product becomes an illegal address.
     if(wid < 2) {
-        g_ptr = reinterpret_cast<const uint4*>(a) + (bi + wid) * TI * stride;
+        g_ptr = reinterpret_cast<const uint4*>(a) + (long)(bi + wid) * TI * stride;
         s_ptr = input_tiles + wid * ROW_OFFSET;
     } else {
-        g_ptr = reinterpret_cast<const uint4*>(b) + (bj + wid - 2) * TJ * stride;
+        g_ptr = reinterpret_cast<const uint4*>(b) + (long)(bj + wid - 2) * TJ * stride;
         s_ptr = input_tiles + (wid - 2) * ROW_OFFSET + DEPTH * PIPE_OFFSET;
     }
 
@@ -211,24 +213,26 @@ __device__ void gemm_mma_tn_impl(nv_bfloat16* __restrict__ out,
             __syncwarp();
             int c = threadIdx.x % 2;
             int r = threadIdx.x / 2;
+            // 64 bit: (row index) * n overflows int once m * n exceeds 2^31
+            long out_offset = ((long)(i + ii) * TI + r) * n + (j + jj) * TJ + 8 * c;
 
             if(accumulate) {
-                auto old = GenericVector<nv_bfloat16, 8>::load(out + ((i + ii) * TI + r) * n + (j + jj) * TJ + 8 * c);
+                auto old = GenericVector<nv_bfloat16, 8>::load(out + out_offset);
                 auto upd = GenericVector<nv_bfloat16, 8>::load(out_shared + (c + 2 * r) * 8);
                 for(int l = 0; l < 8; ++l) {
                     old[l] += upd[l];
                 }
-                old.store(out + ((i + ii) * TI + r) * n + (j + jj) * TJ + 8 * c);
+                old.store(out + out_offset);
             } else if (bias != nullptr) {
                 auto old = GenericVector<BiasType, 8>::load(bias + (j + jj) * TJ + 8 * c);
                 auto upd = GenericVector<nv_bfloat16, 8>::load(out_shared + (c + 2 * r) * 8);
                 for(int l = 0; l < 8; ++l) {
                     old[l] += (nv_bfloat16)upd[l];
                 }
-                old.store(out + ((i + ii) * TI + r) * n + (j + jj) * TJ + 8 * c);
+                old.store(out + out_offset);
             } else {
                 uint4 load = reinterpret_cast<uint4*>(out_shared)[c + 2 * r];
-                *reinterpret_cast<uint4*>(out + ((i + ii) * TI + r) * n + (j + jj) * TJ + 8 * c) = load;
+                *reinterpret_cast<uint4*>(out + out_offset) = load;
             }
         }
     }
