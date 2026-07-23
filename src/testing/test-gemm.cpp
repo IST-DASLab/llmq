@@ -260,3 +260,50 @@ TEST_CASE("matmul fp8 x fp8 -> bfloat16", "[gemm][fp8]") {
     }
     run_test<__nv_fp8_e4m3, __nv_fp8_e4m3, nv_bfloat16>(m, n, k, 4.0f / k, accumulate, bias);
 }
+
+// The epilogue indexes `out` as (row * n), which overflowed int once m * n passed 2^31 and
+// faulted rather than returning wrong results. Needs ~5 GB, so it skips where that does not fit.
+TEST_CASE("matmul indexes outputs larger than INT_MAX", "[gemm][fp8][large]") {
+    const long m = 16384;
+    const long n = 147456;              // m * n = 2.42e9, comfortably past INT_MAX
+    const long k = 128;
+    const std::size_t out_bytes = (std::size_t)m * n * sizeof(nv_bfloat16);
+
+    std::size_t free_mem = 0, total_mem = 0;
+    CUDA_CHECK(cudaMemGetInfo(&free_mem, &total_mem));
+    if(free_mem < out_bytes + (std::size_t)256 * 1024 * 1024) {
+        SUCCEED("not enough device memory for the >INT_MAX output test");
+        return;
+    }
+    REQUIRE((double)m * n > 2147483647.0);
+
+    __nv_fp8_e4m3 *a, *b;
+    nv_bfloat16* c;
+    float *scale_a, *scale_b;
+    CUDA_CHECK(cudaMalloc(&a, (std::size_t)m * k));
+    CUDA_CHECK(cudaMalloc(&b, (std::size_t)n * k));
+    CUDA_CHECK(cudaMalloc(&c, out_bytes));
+    CUDA_CHECK(cudaMalloc(&scale_a, sizeof(float)));
+    CUDA_CHECK(cudaMalloc(&scale_b, sizeof(float)));
+    CUDA_CHECK(cudaMemset(a, 0x38, (std::size_t)m * k));
+    CUDA_CHECK(cudaMemset(b, 0x38, (std::size_t)n * k));
+    CUDA_CHECK(cudaMemset(c, 0, out_bytes));
+    float one = 1.f;
+    CUDA_CHECK(cudaMemcpy(scale_a, &one, sizeof(float), cudaMemcpyHostToDevice));
+    CUDA_CHECK(cudaMemcpy(scale_b, &one, sizeof(float), cudaMemcpyHostToDevice));
+
+    cublasLtHandle_t handle = create_cublaslt_handle();
+    std::byte* workspace;
+    std::size_t workspace_size = 32 * 1024 * 1024;
+    CUDA_CHECK(cudaMalloc(&workspace, workspace_size));
+
+    matmul(c, a, b, (const nv_bfloat16*)nullptr, scale_a, scale_b, handle, workspace, workspace_size,
+           (int)m, (int)n, (int)k, EMMTranspose::TN, false, nullptr, EMatmulBackend::Custom);
+    CHECK(cudaDeviceSynchronize() == cudaSuccess);
+
+    CUDA_CHECK(cudaFree(a));       CUDA_CHECK(cudaFree(b));
+    CUDA_CHECK(cudaFree(c));
+    CUDA_CHECK(cudaFree(scale_a)); CUDA_CHECK(cudaFree(scale_b));
+    CUDA_CHECK(cudaFree(workspace));
+    cublasLtDestroy(handle);
+}
