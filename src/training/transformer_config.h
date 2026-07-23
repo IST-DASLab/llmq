@@ -15,6 +15,7 @@
 struct TransformerConfig {
     enum EArchitecture {
         LLAMA,
+        MISTRAL,
         QWEN2,
         QWEN3,
     } Architecture;

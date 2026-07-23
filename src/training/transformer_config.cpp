@@ -25,6 +25,8 @@ TransformerConfig load_transformer_config(const char* file_name, ETensorDType dt
     TransformerConfig::EArchitecture arch_id;
     if(archs.front() == "LlamaForCausalLM") {
         arch_id = TransformerConfig::LLAMA;
+    } else if(archs.front() == "MistralForCausalLM") {
+        arch_id = TransformerConfig::MISTRAL;
     } else if(archs.front() == "Qwen2ForCausalLM") {
         arch_id = TransformerConfig::QWEN2;
     }  else if(archs.front() == "Qwen3ForCausalLM") {
@@ -60,8 +62,47 @@ TransformerConfig load_transformer_config(const char* file_name, ETensorDType dt
         result.RmsNormEps = result.Architecture == TransformerConfig::LLAMA ? 1e-5 : 1e-6;
     }
 
+    // value() throws on a present-but-null key, and Mistral writes `attention_bias: null`.
+    auto get_or = [&](const char* key, auto fallback) {
+        auto it = config_json.find(key);
+        if(it == config_json.end() || it->is_null()) {
+            return fallback;
+        }
+        return it->template get<decltype(fallback)>();
+    };
+
     result.UseQKNorm = arch_id == TransformerConfig::QWEN3;
+    // Qwen2 biases q/k/v only and carries no flag for it; that is not HF's
+    // attention_bias, which also biases o_proj, so the flag does not feed in here.
     result.UseQKVBias = arch_id == TransformerConfig::QWEN2;
+
+    // Anything we cannot represent exactly has to fail here: silently training a model
+    // that differs from the checkpoint only shows up as degraded quality later.
+    auto reject = [&](std::string_view key, std::string_view value) {
+        throw std::runtime_error(fmt::format("config {}: cannot represent '{}' = {}", file_name, key, value));
+    };
+
+    if(auto it = config_json.find("rope_scaling"); it != config_json.end() && !it->is_null()) {
+        reject("rope_scaling", it->dump());
+    }
+    if(get_or("mlp_bias", false)) {
+        reject("mlp_bias", "true");
+    }
+    if(get_or("attention_bias", false)) {
+        reject("attention_bias", "true, which implies an o_proj bias we have no tensor for");
+    }
+    if(auto act = get_or("hidden_act", std::string{"silu"}); act != "silu") {
+        reject("hidden_act", act);
+    }
+    if(float dropout = get_or("attention_dropout", 0.f); dropout != 0.f) {
+        reject("attention_dropout", fmt::format("{}", dropout));
+    }
+    // Qwen's sliding_window stays inactive unless use_sliding_window is set; Mistral has
+    // no such flag, so a non-null window there is always active.
+    if(auto it = config_json.find("sliding_window"); it != config_json.end() && !it->is_null()
+       && get_or("use_sliding_window", true)) {
+        reject("sliding_window", it->dump());
+    }
 
     return result;
 }
@@ -74,6 +115,8 @@ TransformerConfig load_transformer_config(const char* file_name, ETensorDType dt
             return "Qwen2";
         case TransformerConfig::LLAMA:
             return "LLaMA";
+        case TransformerConfig::MISTRAL:
+            return "Mistral";
         default:
             throw std::logic_error("Unknown architecture");
     }
@@ -92,6 +135,8 @@ void save_transformer_config(const TransformerConfig& config, const char* file_n
         archs = {"Qwen3ForCausalLM"};
     } else if (config.Architecture == TransformerConfig::LLAMA) {
         archs = {"LlamaForCausalLM"};
+    } else if (config.Architecture == TransformerConfig::MISTRAL) {
+        archs = {"MistralForCausalLM"};
     }
 
     nlohmann::json config_json;
@@ -123,10 +168,22 @@ void save_transformer_config(const TransformerConfig& config, const char* file_n
         config_json["sliding_window"] = config.MaxPositionEmbeddings;
         config_json["use_sliding_window"] = false;
         config_json["use_mrope"] = false;
-    } else if (config.Architecture == TransformerConfig::LLAMA) {
-        config_json["model_type"] = "llama";
+    } else if (config.Architecture == TransformerConfig::LLAMA || config.Architecture == TransformerConfig::MISTRAL) {
+        bool is_llama = config.Architecture == TransformerConfig::LLAMA;
+        config_json["model_type"] = is_llama ? "llama" : "mistral";
+        // A q/k/v-only bias has no faithful spelling here: true would promise an o_proj
+        // bias we lack, false would disclaim biases we have.
+        if(config.UseQKVBias) {
+            throw std::runtime_error(fmt::format(
+                "cannot save a {} config with QKV biases: HF's attention_bias also implies an o_proj bias",
+                config.model_name()));
+        }
         config_json["attention_bias"] = false;
         config_json["mlp_bias"] = false;
+        if(!is_llama) {
+            // we only support Mistral variants that keep the window disabled
+            config_json["sliding_window"] = nullptr;
+        }
     }
 
     file << config_json.dump(4);
