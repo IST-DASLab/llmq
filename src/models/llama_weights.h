@@ -32,9 +32,11 @@ namespace LLamaWeightID {
     inline constexpr unsigned DOWN_W = 6;
     inline constexpr unsigned QNORM_W = 7;
     inline constexpr unsigned KNORM_W = 8;
+    inline constexpr unsigned NUM_BLOCK_TENSORS = 9;
     inline constexpr unsigned EMBEDDING = 0;
     inline constexpr unsigned LM_HEAD = 1;
     inline constexpr unsigned LNF_W = 2;
+    inline constexpr unsigned NUM_NON_BLOCK_TENSORS = 3;
 
     //! HF-checkpoint name of the block tensor `id` in layer `layer`
     std::string block_weight_name(int layer, unsigned id);
@@ -54,7 +56,7 @@ struct sLLamaBlockWeights : public SimpleTensorContainer {
     TTensor QNorm_w;         // Hd; optional
     TTensor KNorm_w;         // Hd; optional
 
-    std::size_t num_tensors() const noexcept override { return 9; }
+    std::size_t num_tensors() const noexcept override { return LLamaWeightID::NUM_BLOCK_TENSORS; }
 
     const Tensor& get_tensor(std::size_t idx) const override {
         using namespace LLamaWeightID;
@@ -87,7 +89,7 @@ struct sLLamaNonBlockWeights : public SimpleTensorContainer {
     TTensor LMHead;          // V, C
     TTensor LNF_w;           // C
 
-    std::size_t num_tensors() const noexcept override { return 3; }
+    std::size_t num_tensors() const noexcept override { return LLamaWeightID::NUM_NON_BLOCK_TENSORS; }
 
     const Tensor& get_tensor(std::size_t idx) const override {
         using namespace LLamaWeightID;
