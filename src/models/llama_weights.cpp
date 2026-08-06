@@ -231,32 +231,32 @@ LLamaWeightsManager::~LLamaWeightsManager() {
     }
 }
 
+// Each tensor gets two floats of stats (abs-max and scale), assigned in tensor-ID order.
+static constexpr int STATS_PER_TENSOR = 2;
+static constexpr int NON_BLOCK_STATS = STATS_PER_TENSOR * LLamaWeightID::NUM_NON_BLOCK_TENSORS;
+static constexpr int BLOCK_STATS = STATS_PER_TENSOR * LLamaWeightID::NUM_BLOCK_TENSORS;
+
 void LLamaWeightsManager::setup_scales(TensorAllocator& alloc) {
     int layers = mMaster.Blocks.size();
-    mAbsMaxes = alloc.allocate(ETensorDType::FP32, "abs_maxes", EAllocationType::ON_DEVICE, {6 + layers * 18});
+    mAbsMaxes = alloc.allocate(ETensorDType::FP32, "abs_maxes", EAllocationType::ON_DEVICE,
+                               {NON_BLOCK_STATS + layers * BLOCK_STATS});
     float* abs_maxes = mAbsMaxes.get<float>();
-    mMaster.NonBlocks.Embeddings.Stats = abs_maxes + 0;
-    mMaster.NonBlocks.LNF_w.Stats = abs_maxes + 2;
-    mMaster.NonBlocks.LMHead.Stats = abs_maxes + 4;
+    for(unsigned id = 0; id < LLamaWeightID::NUM_NON_BLOCK_TENSORS; ++id) {
+        mMaster.NonBlocks.get_tensor(id).Stats = abs_maxes + STATS_PER_TENSOR * id;
+    }
     for(int i = 0; i < layers; ++i) {
-        float* a = abs_maxes + 6 + i * 14;
-        mMaster.Blocks[i].Attn_QKV_w.Stats = a + 0;
-        mMaster.Blocks[i].Attn_Out_w.Stats = a + 2;
-        mMaster.Blocks[i].MLP_Up_w.Stats = a + 4;
-        mMaster.Blocks[i].MLP_Down_w.Stats = a + 6;
-        mMaster.Blocks[i].Attn_QKV_b.Stats = a + 8;
-        mMaster.Blocks[i].LN1_w.Stats = a + 10;
-        mMaster.Blocks[i].LN2_w.Stats = a + 12;
-        mMaster.Blocks[i].QNorm_w.Stats = a + 14;
-        mMaster.Blocks[i].KNorm_w.Stats = a + 16;
+        float* a = abs_maxes + NON_BLOCK_STATS + i * BLOCK_STATS;
+        for(unsigned id = 0; id < LLamaWeightID::NUM_BLOCK_TENSORS; ++id) {
+            mMaster.Blocks[i].get_tensor(id).Stats = a + STATS_PER_TENSOR * id;
+        }
     }
 }
 
 
 std::pair<float*, float*> LLamaWeightsManager::get_scales_for_block(int layer_idx) {
     float* abs_maxes = mAbsMaxes.get<float>();
-    float* begin = abs_maxes + 6 + layer_idx * 18;
-    return {begin + 0, begin + 18};
+    float* begin = abs_maxes + NON_BLOCK_STATS + layer_idx * BLOCK_STATS;
+    return {begin + 0, begin + BLOCK_STATS};
 }
 
 
