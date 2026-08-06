@@ -122,6 +122,7 @@ __global__ void adamw_kernel(floatX* params_memory, const floatX* grads_memory, 
     if(threadIdx.x == 0) {
         block_abs_max = 0.f;
     }
+    __syncthreads();
 
     float thread_abs_max = 0.0f;
     vec_x_t p_new = adamw_update(params_memory,
