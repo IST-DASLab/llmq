@@ -3,6 +3,7 @@
 //
 
 #include "comm.h"
+#include "bounded_cleanup.h"
 
 #include <stdexcept>
 #include <utility>
@@ -70,35 +71,42 @@ NCCLCommunicator::NCCLCommunicator(int rank, int world, const void* nccl_id) :
 #include <pthread.h>
 
 NCCLCommunicator::~NCCLCommunicator() {
-    // When used with the python bindings, ncclCommFinalize() can hang forever;
-    // I haven't found a fix, so here we just make sure that the hang gets localized
-    // to a helper thread (which we leak, but generally ~NCCLCommunicator is expected
-    // to run at program shutdown anyway)
-    auto terminate_future = std::async(std::launch::async, [this]() {
-        this->terminate_nccl();
-    });
+    struct CleanupState {
+        ncclComm_t comm;
+        cudaEvent_t sync;
+        cudaStream_t stream;
+        bool clean_exit;
+    };
+    CleanupState state{mNcclComm, mCommsSync, mCommsStream, std::uncaught_exceptions() == 0};
+    mNcclComm = nullptr;
+    mCommsSync = nullptr;
+    mCommsStream = nullptr;
 
-    if (terminate_future.wait_for(std::chrono::seconds(2)) == std::future_status::timeout) {
-        fprintf(stderr, "NCCL termination timed out, detaching\n");
-        // this *will* leak resources, but at least we're not hanging forever
-        new auto(std::move(terminate_future));
-    }
-    CUDA_CHECK(cudaEventDestroy(mCommsSync));
-    CUDA_CHECK(cudaStreamDestroy(mCommsStream));
-}
-
-void NCCLCommunicator::terminate_nccl() {
-    ncclResult_t result;
-    ncclCheck(ncclCommGetAsyncError(mNcclComm, &result));
-    // do "nice" shutdown if we're in a good state,
-    // just abort if there is something weird going on.
-    if (std::uncaught_exceptions() == 0 && result == ncclSuccess) {
-        CUDA_CHECK(cudaStreamSynchronize(mCommsStream));
-        CUDA_CHECK(cudaDeviceSynchronize());
-        ncclCheck(ncclCommFinalize(mNcclComm));
-        ncclCheck(ncclCommDestroy(mNcclComm));
-    } else {
-        ncclCheck(ncclCommAbort(mNcclComm));
+    const auto outcome = run_bounded_cleanup(
+        state,
+        [](CleanupState owned) {
+            try {
+                ncclResult_t result;
+                ncclCheck(ncclCommGetAsyncError(owned.comm, &result));
+                if (owned.clean_exit && result == ncclSuccess) {
+                    CUDA_CHECK(cudaStreamSynchronize(owned.stream));
+                    CUDA_CHECK(cudaDeviceSynchronize());
+                    ncclCheck(ncclCommFinalize(owned.comm));
+                    ncclCheck(ncclCommDestroy(owned.comm));
+                } else {
+                    ncclCheck(ncclCommAbort(owned.comm));
+                }
+                CUDA_CHECK(cudaEventDestroy(owned.sync));
+                CUDA_CHECK(cudaStreamDestroy(owned.stream));
+            } catch (const std::exception& error) {
+                fprintf(stderr, "NCCL termination failed: %s\n", error.what());
+                fflush(stderr);
+            }
+        },
+        std::chrono::seconds(2));
+    if (outcome == BoundedCleanupOutcome::TimedOut) {
+        fprintf(stderr, "NCCL termination timed out; cleanup retains exclusive handle ownership\n");
+        fflush(stderr);
     }
 }
 

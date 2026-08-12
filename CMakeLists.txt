@@ -265,4 +265,11 @@ if (BUILD_TESTS)
     target_compile_options(unit-tests PUBLIC $<$<COMPILE_LANGUAGE:CUDA>:--expt-relaxed-constexpr> $<$<COMPILE_LANGUAGE:CUDA>:-lineinfo>)
 
     add_test(NAME unit-tests COMMAND unit-tests)
-endif ()
+
+    if (Threads_FOUND)
+        add_executable(bounded-cleanup-tests src/testing/test-bounded-cleanup.cpp)
+        target_include_directories(bounded-cleanup-tests PRIVATE src)
+        target_link_libraries(bounded-cleanup-tests PRIVATE Threads::Threads)
+        add_test(NAME bounded-cleanup-tests COMMAND bounded-cleanup-tests)
+    endif ()
+  endif ()
