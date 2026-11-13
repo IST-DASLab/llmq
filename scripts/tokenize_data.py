@@ -308,6 +308,9 @@ def generate_tokenized_dataset(dataset: str, model: str, out_dir: str = "data", 
     elif model.lower() == "llama":
         model_name = "unsloth/llama-2-7b"
         dst += "-llama"
+    elif model.lower() == "smollm":
+        model_name = "HuggingFaceTB/SmolLM2-135M"
+        dst += "-smollm"
     else:
         assert False, f"unknown model {model}"
 

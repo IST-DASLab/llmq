@@ -162,16 +162,6 @@ sLLamaNonBlockWeights<TensorShard> shard_non_block(const sLLamaNonBlockWeights<T
     return result;
 }
 
-sLLamaWeightsSet<Tensor> allocate_full_weights(const TransformerConfig& config, EAllocationType kind, TensorAllocator& alloc) {
-    sLLamaWeightsSet<Tensor> result;
-    result.Blocks.resize(config.NumLayers);
-    for(auto& block : result.Blocks) {
-        block = allocate_block_full(config, config.DType, config.DType, kind, alloc);
-    }
-    result.NonBlocks = allocate_non_block_full(config, config.DType, kind, alloc);
-    return result;
-}
-
 sLLamaWeights allocate_weights(const TransformerConfig& config, EAllocationType kind, int shard_idx, int num_shards, TensorAllocator& alloc) {
     sLLamaWeights result;
     result.Blocks.resize(config.NumLayers);

@@ -9,13 +9,14 @@
 
 #include <type_traits>
 #include <cassert>
+#include <algorithm>
 
 
 template<class floatO, class floatB>
 __global__ void add_bias_kernel(floatO* out, const floatB* bias, int B, int T, int OC) {
-    int idx = blockIdx.x * blockDim.x + threadIdx.x;
-    int stride = blockDim.x * gridDim.x;
-    for (int i = idx; i < B * T * OC; i += stride) {
+    long idx = (long)blockIdx.x * blockDim.x + threadIdx.x;
+    long stride = (long)blockDim.x * gridDim.x;
+    for (long i = idx; i < (long)B * T * OC; i += stride) {
         int col = i % OC;
         out[i] += bias[col];
     }
@@ -24,7 +25,9 @@ __global__ void add_bias_kernel(floatO* out, const floatB* bias, int B, int T, i
 template<class floatO, class floatB>
 void add_bias_impl(floatO* out, const floatB* bias, int B, int T, int OC, cudaStream_t stream) {
     int block_size = 256;
-    int grid_size = div_ceil(OC * B * T, block_size);
+    long total = (long)OC * B * T;
+    long wanted = div_ceil(total, (long)block_size);
+    int grid_size = (int)std::min<long>(wanted, 2147483647L);
     add_bias_kernel<<<grid_size, block_size, 0, stream>>>(out, bias, B, T, OC);
     CUDA_CHECK(cudaGetLastError());
 }
@@ -72,7 +75,7 @@ __global__ void matmul_backward_bias_kernel(OutFloat* dbias, const floatX* dout,
     if(global_oc < OC) {
         // sum up over all bt within registers
         for (int idx = blockIdx.y * bt_per_block + local_bt; idx < B * T; idx += gridDim.y * bt_per_block) {
-            x128 packed_dout = x128::load(dout + global_oc + idx*OC);
+            x128 packed_dout = x128::load(dout + global_oc + (long)idx*OC);
             for (int k = 0; k < x128::size; k++) {
                 accumulators[k] += (float)packed_dout[k];
             }

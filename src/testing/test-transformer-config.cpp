@@ -66,7 +66,7 @@ void save_with(const TransformerConfig& config, const ScratchFile& file, const n
 
 }
 
-TEST_CASE("transformer config survives a save/load round trip") {
+TEST_CASE("transformer config survives a save/load round trip", "[cpu][config]") {
     for(auto arch : {TransformerConfig::LLAMA, TransformerConfig::MISTRAL,
                      TransformerConfig::QWEN2, TransformerConfig::QWEN3}) {
         auto original = make_config(arch);
@@ -90,7 +90,7 @@ TEST_CASE("transformer config survives a save/load round trip") {
     }
 }
 
-TEST_CASE("a decoupled head_dim round trips") {
+TEST_CASE("a decoupled head_dim round trips", "[cpu][config]") {
     auto original = make_config(TransformerConfig::QWEN3);
     original.HeadDim = 128;     // HiddenSize / NumQueryHeads would be 256 / 4 == 64
     REQUIRE(original.head_size() == 128);
@@ -102,7 +102,7 @@ TEST_CASE("a decoupled head_dim round trips") {
     CHECK(loaded.head_size() == 128);
 }
 
-TEST_CASE("saving a llama-family config with QKV biases is refused") {
+TEST_CASE("saving a llama-family config with QKV biases is refused", "[cpu][config]") {
     // neither spelling of attention_bias is correct for a q/k/v-only bias, so we must
     // not write a config.json that we would refuse to load again
     for(auto arch : {TransformerConfig::LLAMA, TransformerConfig::MISTRAL}) {
@@ -113,7 +113,7 @@ TEST_CASE("saving a llama-family config with QKV biases is refused") {
     }
 }
 
-TEST_CASE("configs we cannot represent are rejected on load") {
+TEST_CASE("configs we cannot represent are rejected on load", "[cpu][config]") {
     auto base = make_config(TransformerConfig::LLAMA);
 
     auto rejects = [&](const nlohmann::json& overrides) {
@@ -131,7 +131,7 @@ TEST_CASE("configs we cannot represent are rejected on load") {
     rejects({{"architectures", nlohmann::json::array({"GemmaForCausalLM"})}});
 }
 
-TEST_CASE("a sliding window is only rejected when it is active") {
+TEST_CASE("a sliding window is only rejected when it is active", "[cpu][config]") {
     auto base = make_config(TransformerConfig::QWEN2);
 
     ScratchFile inactive;
@@ -143,7 +143,7 @@ TEST_CASE("a sliding window is only rejected when it is active") {
     CHECK_THROWS(load_transformer_config(active.c_str(), base.DType));
 }
 
-TEST_CASE("a null-valued key is treated as absent") {
+TEST_CASE("a null-valued key is treated as absent", "[cpu][config]") {
     // Mistral writes `attention_bias: null`, which value() would throw on
     auto base = make_config(TransformerConfig::MISTRAL);
     ScratchFile file;

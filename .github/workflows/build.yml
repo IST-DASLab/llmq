@@ -75,7 +75,11 @@ jobs:
           cmake -B build -S . -DCMAKE_CUDA_ARCHITECTURES=80
 
       - name: CMake Build
-        run: cmake --build build --parallel --target export-checkpoint train
+        run: cmake --build build --parallel --target export-checkpoint train unit-tests
+
+      - name: Run CPU unit tests
+        # the runners have no GPU, so only the tests tagged [cpu] can execute here
+        run: ./build/unit-tests "[cpu]"
 
       - name: CMake Install to staging
         run: |
